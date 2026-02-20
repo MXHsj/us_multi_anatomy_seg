@@ -1,0 +1,6 @@
+path: ./cae_lung_phantom_yolo_dataset
+train: images/train
+val: images/val
+names:
+  0: pleural_line
+  1: rib_shadow
