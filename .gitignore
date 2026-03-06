@@ -1,4 +1,6 @@
 .DS*
+__pycache__/
+*.pyc
 
 # pretrained weights
 *.pth
