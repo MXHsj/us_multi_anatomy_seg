@@ -10,16 +10,15 @@ us_multi_anatomy_seg/
 │   ├── common.py                  # Unified sample schema + shared preprocessing helpers
 │   ├── thyroid_TNSC2020.py        # TNSC2020 raw-data decoder
 │   ├── heart_CAMUS.py             # CAMUS raw-data decoder
-│   ├── TNSC2020/                  # Raw TNSC2020 data
-│   └── CAMUS/                     # Raw CAMUS data (optional, add when available)
-├── preprocessing/                 # Dataset-level preprocessing scripts (future)
-├── postprocessing/                # Postprocessing and analysis utils (future)
+│   ├── kidney_OKU.py              # OKU raw-data decoder
+│   ├── TNSC2020/                  # TNSC2020 data
+│   ├── CAMUS/                     # CAMUS data (not uploaded due to large size)
+│   └── OKU/                       # Open Kidney Ultrasound Dataset 
 ├── benchmarks/
 │   └── test_medsam_inference.py   # GT-box prompted MedSAM benchmark
 ├── results/                       # Metrics CSV/JSON + visualizations
 ├── notebooks/                     # Result exploration notebooks
-├── work_dir/MedSAM/               # MedSAM checkpoint
-└── MedSAM_Inference.py            # Existing single-image inference script
+└── work_dir/MedSAM/               # MedSAM checkpoint
 ```
 
 ## Decoding Scripts
@@ -79,3 +78,9 @@ Outputs:
 
 ### Thyroid
 - [TNSC2020](https://tn-scui2020.grand-challenge.org/Dataset/)
+
+### Kidney
+- [Open Kidney Ultrasound Dataset](https://github.com/rsingla92/kidneyUS/tree/main)
+
+## Breast
+- [Breast Lesion USG](https://www.cancerimagingarchive.net/collection/breast-lesions-usg/)
