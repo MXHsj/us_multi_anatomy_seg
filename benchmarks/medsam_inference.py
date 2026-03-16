@@ -134,7 +134,7 @@ def main() -> None:
     )
     parser.add_argument("--dataset-root", type=str, default="datasets/TNSC2020")
     parser.add_argument("--checkpoint", type=str, default="work_dir/MedSAM/medsam_vit_b.pth")
-    parser.add_argument("--device", type=str, default="mps")
+    parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--max-samples", type=int, default=20)
     parser.add_argument("--box-padding", type=int, default=0)
     parser.add_argument("--save-vis", type=int, default=8)

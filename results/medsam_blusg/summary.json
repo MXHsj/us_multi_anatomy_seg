@@ -1,0 +1,12 @@
+{
+  "dataset": "blusg",
+  "dataset_root": "datasets/BLUSG",
+  "num_evaluated": 30,
+  "num_skipped_empty_mask": 0,
+  "dice_mean": 0.8781281113624573,
+  "dice_std": 0.0766126960515976,
+  "iou_mean": 0.7902988195419312,
+  "iou_std": 0.11128464341163635,
+  "infer_ms_mean": 1121.799560546875,
+  "infer_ms_std": 39.28604507446289
+}
