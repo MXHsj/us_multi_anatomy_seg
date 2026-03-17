@@ -1,0 +1,12 @@
+{
+  "dataset": "oku",
+  "dataset_root": "datasets/OKU",
+  "num_evaluated": 100,
+  "num_skipped_empty_mask": 0,
+  "dice_mean": 0.8432784080505371,
+  "dice_std": 0.0840827003121376,
+  "iou_mean": 0.737678050994873,
+  "iou_std": 0.11946709454059601,
+  "infer_ms_mean": 1113.8260498046875,
+  "infer_ms_std": 19.010099411010742
+}

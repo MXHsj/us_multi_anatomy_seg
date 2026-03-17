@@ -10,11 +10,15 @@ DEFAULT_ARGS = [
     "--dataset-root",
     "datasets/TNSC2020",
     "--max-samples",
-    "30",
+    "100",
+    "--bbox-jitter-prob",
+    "0.0",
     "--device",
     "mps",
+    "--save-vis",
+    "20",
     "--output-dir",
-    "results/medsam_tnsc2020",
+    "results/medsam_gt_tnsc2020",
 ]
 
 

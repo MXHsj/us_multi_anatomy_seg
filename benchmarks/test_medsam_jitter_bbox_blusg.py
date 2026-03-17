@@ -6,21 +6,21 @@ import sys
 
 DEFAULT_ARGS = [
     "--dataset",
-    "oku",
+    "blusg",
     "--dataset-root",
-    "datasets/OKU",
+    "datasets/BLUSG",
     "--max-samples",
     "100",
     "--bbox-jitter-prob",
-    "0.0",
+    "1.0",
+    "--bbox-jitter-fraction",
+    "0.2",
     "--device",
     "mps",
     "--save-vis",
     "20",
     "--output-dir",
-    "results/medsam_gt_oku",
-    "--oku-anatomy",
-    "Capsule",
+    "results/medsam_jitter_bbox_blusg",
 ]
 
 

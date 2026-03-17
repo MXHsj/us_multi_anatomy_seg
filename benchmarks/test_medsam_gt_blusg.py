@@ -10,11 +10,15 @@ DEFAULT_ARGS = [
     "--dataset-root",
     "datasets/BLUSG",
     "--max-samples",
-    "30",
+    "100",
+    "--bbox-jitter-prob",
+    "0.0",
     "--device",
     "mps",
+    "--save-vis",
+    "20",
     "--output-dir",
-    "results/medsam_blusg",
+    "results/medsam_gt_blusg",
 ]
 
 

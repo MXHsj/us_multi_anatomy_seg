@@ -81,6 +81,20 @@ def build_decoder(args: argparse.Namespace):
         )
     raise ValueError(f"Unsupported dataset: {args.dataset}")
 
+def jitter_bbox(
+    bbox: np.ndarray, jitter_frac: float, height: int, width: int
+) -> np.ndarray:
+    if jitter_frac <= 0:
+        return bbox
+    w = bbox[2] - bbox[0]
+    h = bbox[3] - bbox[1]
+    dx = np.random.uniform(-jitter_frac * w, jitter_frac * w)
+    dy = np.random.uniform(-jitter_frac * h, jitter_frac * h)
+    new_x0 = np.clip(bbox[0] + dx, 0, width - 1)
+    new_y0 = np.clip(bbox[1] + dy, 0, height - 1)
+    new_x1 = np.clip(bbox[2] + dx, 0, width - 1)
+    new_y1 = np.clip(bbox[3] + dy, 0, height - 1)
+    return np.array([new_x0, new_y0, new_x1, new_y1], dtype=np.int32)
 
 def save_vis(
     vis_dir: Path,
@@ -137,6 +151,18 @@ def main() -> None:
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--max-samples", type=int, default=20)
     parser.add_argument("--box-padding", type=int, default=0)
+    parser.add_argument(
+        "--bbox-jitter-prob",
+        type=float,
+        default=0.0,
+        help="Whether to apply bbox degradation (0.0 = never, 1.0 = always, intermediate values = probability of degrading each sample)",
+    )
+    parser.add_argument(
+        "--bbox-jitter-fraction",
+        type=float,
+        default=0.2,
+        help="Max jitter as fraction of bbox size (per axis)",
+    )
     parser.add_argument("--save-vis", type=int, default=8)
     parser.add_argument("--output-dir", type=str, default="results/medsam_test")
     parser.add_argument("--include-half-sequence", action="store_true")
@@ -180,16 +206,21 @@ def main() -> None:
     skipped = 0
 
     for idx, sample in enumerate(decoder.iter_samples(max_samples=args.max_samples)):
+        image_3c = ensure_three_channels(sample.image)
+        H, W = image_3c.shape[:2]
+
         gt_mask = (sample.mask > 0).astype(np.uint8)
         bbox = bbox_from_mask(gt_mask, padding=args.box_padding)
         if bbox is None:
             skipped += 1
             continue
-
-        image_3c = ensure_three_channels(sample.image)
-        H, W = image_3c.shape[:2]
+        if (
+            args.bbox_jitter_fraction > 0
+            and np.random.rand() < args.bbox_jitter_prob
+        ):
+            bbox = jitter_bbox(bbox, args.bbox_jitter_fraction, H, W)
+        
         image_1024 = prepare_medsam_image(image_3c)
-
         image_1024_tensor = (
             torch.tensor(image_1024).float().permute(2, 0, 1).unsqueeze(0).to(args.device)
         )

@@ -1,0 +1,12 @@
+{
+  "dataset": "tnsc2020",
+  "dataset_root": "datasets/TNSC2020",
+  "num_evaluated": 100,
+  "num_skipped_empty_mask": 0,
+  "dice_mean": 0.8141275644302368,
+  "dice_std": 0.0872163474559784,
+  "iou_mean": 0.695071280002594,
+  "iou_std": 0.11708667129278183,
+  "infer_ms_mean": 1114.405029296875,
+  "infer_ms_std": 24.15092658996582
+}
