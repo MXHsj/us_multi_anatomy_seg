@@ -26,6 +26,7 @@ from datasets.heart_CAMUS import HeartCAMUSDecoder
 from datasets.thyroid_TNSC2020 import ThyroidTNSC2020Decoder
 from datasets.breast_BLUSG import BreastBLUSGDecoder
 from datasets.kidney_OKU import KidneyOKUDecoder
+from datasets.bone_UltraBones100k import UltraBones100kDecoder
 
 
 @torch.no_grad()
@@ -79,6 +80,8 @@ def build_decoder(args: argparse.Namespace):
             anatomy_filter=anatomy_filter,
             prefer_labels_2=not args.oku_prefer_labels_1,
         )
+    if args.dataset == "ultrabones100k":
+        return UltraBones100kDecoder(root=args.dataset_root)
     raise ValueError(f"Unsupported dataset: {args.dataset}")
 
 def jitter_bbox(
@@ -144,7 +147,7 @@ def main() -> None:
         "--dataset",
         type=str,
         default="tnsc2020",
-        choices=["tnsc2020", "camus", "blusg", "oku"],
+        choices=["tnsc2020", "camus", "blusg", "oku", "ultrabones100k"],
     )
     parser.add_argument("--dataset-root", type=str, default="datasets/TNSC2020")
     parser.add_argument("--checkpoint", type=str, default="work_dir/MedSAM/medsam_vit_b.pth")
