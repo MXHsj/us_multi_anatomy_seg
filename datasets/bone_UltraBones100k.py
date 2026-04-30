@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, Iterator, Optional
 
 import numpy as np
-from scipy.ndimage import distance_transform_edt
+from scipy.ndimage import binary_fill_holes, distance_transform_edt
 from skimage import io
 
 try:
@@ -19,12 +19,14 @@ class UltraBones100kDecoder:
     def __init__(
         self,
         root: str | Path = "datasets/UltraBones100k",
-        label_folder: str = "Labels",
-        thicken_radius: int = 3,
+        label_folder: str = "Labels_full",
+        thicken_radius: int = 0,
+        fill_mask: bool = True,
     ):
         self.root = Path(root)
         self.label_folder = label_folder
         self.thicken_radius = thicken_radius
+        self.fill_mask = fill_mask
 
         if not self.root.exists():
             raise FileNotFoundError(f"UltraBones100k root '{self.root}' not found.")
@@ -60,10 +62,13 @@ class UltraBones100kDecoder:
 
     def _prepare_mask(self, mask) -> np.ndarray:
         mask_bin = to_binary_mask(mask)
+        if self.fill_mask:
+            mask_bin = binary_fill_holes(mask_bin.astype(bool)).astype(np.uint8)
+
         if self.thicken_radius <= 0:
             return mask_bin
 
-        # Match upstream training: use a distance transform to expand the thin bone label.
+        # Optional distance-transform expansion for thin surface labels.
         distance_map = distance_transform_edt(~mask_bin.astype(bool))
         return (distance_map <= self.thicken_radius).astype(np.uint8)
 
@@ -98,6 +103,7 @@ class UltraBones100kDecoder:
                     "raw_mask_path": str(label_path),
                     "label_folder": self.label_folder,
                     "thicken_radius": self.thicken_radius,
+                    "fill_mask": self.fill_mask,
                 }
                 if image_path.stem in tracking:
                     # Keep the synchronized probe pose/tracking row available downstream.
@@ -186,14 +192,19 @@ if __name__ == "__main__":
     parser.add_argument(
         "--label-folder",
         type=str,
-        default="Labels",
+        default="Labels_full",
         help="Label folder inside each record directory",
     )
     parser.add_argument(
         "--thicken-radius",
         type=int,
-        default=3,
+        default=0,
         help="Distance-transform radius used to thicken labels; use 0 for original masks",
+    )
+    parser.add_argument(
+        "--no-fill-mask",
+        action="store_true",
+        help="Do not fill internal regions in the binary label mask",
     )
     parser.add_argument(
         "--max-samples",
@@ -218,6 +229,7 @@ if __name__ == "__main__":
         args.root,
         label_folder=args.label_folder,
         thicken_radius=args.thicken_radius,
+        fill_mask=not args.no_fill_mask,
     )
 
     if args.export_dir:
