@@ -9,8 +9,10 @@ import yaml
 
 # --- Configuration ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_SOURCE_DIR = os.path.join(BASE_DIR, 'cae_lung_phantom')
-DATASET_OUTPUT_DIR = os.path.join(BASE_DIR, 'cae_lung_phantom_yolo_dataset')
+# DATA_SOURCE_DIR = os.path.join(BASE_DIR, 'cae_lung_phantom')
+# DATASET_OUTPUT_DIR = os.path.join(BASE_DIR, 'cae_lung_phantom_yolo_dataset')
+DATA_SOURCE_DIR = os.path.join(BASE_DIR, 'RobLUS')
+DATASET_OUTPUT_DIR = os.path.join(BASE_DIR, 'RobLUS_yolo_dataset')
 CLASSES = ['pleural_line', 'rib_shadow']
 VALIDATION_SPLIT = 0.2
 RANDOM_STATE = 42

@@ -1,0 +1,6 @@
+path: /Users/xihanma/Documents/GitHub/us_multi_anatomy_seg/combined_yolo_dataset
+train: images/train
+val: images/val
+names:
+  0: pleural_line
+  1: rib_shadow

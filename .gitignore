@@ -1,1 +1,7 @@
 .DS*
+
+# *.pth
+
+work_dir/*
+
+*.pyc
