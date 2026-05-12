@@ -23,7 +23,7 @@ DEFAULT_ARGS = [
 
 
 def main() -> None:
-    cmd = ["python", "benchmarks/medsam_inference.py", *DEFAULT_ARGS, *sys.argv[1:]]
+    cmd = ["python3", "./medsam_inference.py", *DEFAULT_ARGS, *sys.argv[1:]]
     subprocess.run(cmd, check=True)
 
 

@@ -4,3 +4,16 @@ __pycache__/
 
 # pretrained weights
 *.pth
+
+# raw/local dataset materializations
+datasets/TNSC2020/
+datasets/BLUSG/
+datasets/OKU/
+datasets/CAMUS/
+datasets/UltraBones100k/
+.cache/
+data_cache/
+
+# generated benchmark artifacts
+results/
+*.zip

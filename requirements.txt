@@ -1,0 +1,18 @@
+# Core numerical and image processing stack
+numpy
+scipy
+scikit-image
+
+# Model inference and MedSAM/SAM runtime
+torch
+torchvision
+segment-anything
+
+# Hugging Face dataset materialization
+huggingface_hub
+
+# Visualization outputs from benchmark scripts
+matplotlib
+
+# CAMUS NIfTI decoder support
+nibabel

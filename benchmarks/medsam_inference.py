@@ -23,6 +23,7 @@ from datasets.common import (
     prepare_medsam_image,
 )
 from datasets.heart_CAMUS import HeartCAMUSDecoder
+from datasets.hf_materialize import DEFAULT_HF_REPO_ID
 from datasets.thyroid_TNSC2020 import ThyroidTNSC2020Decoder
 from datasets.breast_BLUSG import BreastBLUSGDecoder
 from datasets.kidney_OKU import KidneyOKUDecoder
@@ -61,7 +62,13 @@ def medsam_inference(medsam_model, img_embed: torch.Tensor, box_1024: np.ndarray
 
 def build_decoder(args: argparse.Namespace):
     if args.dataset == "tnsc2020":
-        return ThyroidTNSC2020Decoder(root=args.dataset_root)
+        return ThyroidTNSC2020Decoder(
+            root=args.dataset_root,
+            auto_download=not args.no_auto_download,
+            hf_repo_id=args.hf_repo_id,
+            hf_repo_path=args.hf_repo_path or None,
+            hf_revision=args.hf_revision,
+        )
     if args.dataset == "camus":
         return HeartCAMUSDecoder(
             root=args.dataset_root,
@@ -150,6 +157,29 @@ def main() -> None:
         choices=["tnsc2020", "camus", "blusg", "oku", "ultrabones100k"],
     )
     parser.add_argument("--dataset-root", type=str, default="datasets/TNSC2020")
+    parser.add_argument(
+        "--no-auto-download",
+        action="store_true",
+        help="Require local dataset files instead of downloading missing supported datasets.",
+    )
+    parser.add_argument(
+        "--hf-repo-id",
+        type=str,
+        default=DEFAULT_HF_REPO_ID,
+        help="Hugging Face dataset repo used by on-demand dataset loaders.",
+    )
+    parser.add_argument(
+        "--hf-repo-path",
+        type=str,
+        default="",
+        help="Explicit zip path inside the Hugging Face repo for the selected dataset.",
+    )
+    parser.add_argument(
+        "--hf-revision",
+        type=str,
+        default="main",
+        help="Hugging Face repo revision used by on-demand dataset loaders.",
+    )
     parser.add_argument("--checkpoint", type=str, default="work_dir/MedSAM/medsam_vit_b.pth")
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--max-samples", type=int, default=20)

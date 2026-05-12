@@ -1,24 +1,46 @@
 ## Ultrasound Multi-Anatomy Segmentator
 
-This repo is organized for cross-dataset benchmarking of pretrained and future foundation segmentation models (starting with MedSAM).
+This repo is organized for cross-dataset benchmarking of pretrained and future foundation segmentation models, starting with MedSAM.
 
-## Recommended Project Structure
+## Hugging Face Dataset
+
+Curated ultrasound datasets are hosted on Hugging Face:
+
+- Dataset repo: https://huggingface.co/datasets/us-segmentator/us-segmentation-dataset
+- Zip layout: `zips/<Anatomy>/<dataset>.zip`
+- TNSC2020 lives under the `Thyroid` anatomy category.
+
+Raw datasets should not be committed to this repository. Dataset decoders can materialize supported datasets into ignored local cache folders on demand. For TNSC2020:
+
+```bash
+python datasets/hf_materialize.py --output-dir datasets/TNSC2020
+python datasets/thyroid_TNSC2020.py --root datasets/TNSC2020 --max-samples 10
+```
+
+If more than one Thyroid zip exists, pass the exact Hugging Face path:
+
+```bash
+python datasets/hf_materialize.py \
+  --repo-path zips/Thyroid/TNSC2020.zip \
+  --output-dir datasets/TNSC2020
+```
+
+## Project Structure
 
 ```text
 us_multi_anatomy_seg/
-├── datasets/
-│   ├── common.py                  # Unified sample schema + shared preprocessing helpers
-│   ├── thyroid_TNSC2020.py        # TNSC2020 raw-data decoder
-│   ├── heart_CAMUS.py             # CAMUS raw-data decoder
-│   ├── kidney_OKU.py              # OKU raw-data decoder
-│   ├── TNSC2020/                  # TNSC2020 data
-│   ├── CAMUS/                     # CAMUS data (not uploaded due to large size)
-│   └── OKU/                       # Open Kidney Ultrasound Dataset 
-├── benchmarks/
-│   └── test_medsam_inference.py   # GT-box prompted MedSAM benchmark
-├── results/                       # Metrics CSV/JSON + visualizations
-├── notebooks/                     # Result exploration notebooks
-└── work_dir/MedSAM/               # MedSAM checkpoint
+|-- datasets/
+|   |-- common.py                  # Unified sample schema + shared preprocessing helpers
+|   |-- thyroid_TNSC2020.py        # TNSC2020 decoder with HF-backed materialization
+|   |-- heart_CAMUS.py             # CAMUS raw-data decoder
+|   |-- kidney_OKU.py              # OKU raw-data decoder
+|   |-- hf_materialize.py          # Hugging Face zip download/extraction helpers
+|   `-- <dataset cache dirs>/      # ignored local materializations
+|-- benchmarks/
+|   `-- test_medsam_inference.py   # GT-box prompted MedSAM benchmark
+|-- results/                       # Metrics CSV/JSON + visualizations
+|-- notebooks/                     # Result exploration notebooks
+`-- work_dir/MedSAM/               # MedSAM checkpoint
 ```
 
 ## Decoding Scripts
@@ -57,30 +79,40 @@ python benchmarks/test_medsam_inference.py \
   --output-dir results/medsam_test_tnsc
 ```
 
+If `datasets/TNSC2020` is missing, the TNSC2020 decoder downloads the Thyroid zip from Hugging Face automatically before benchmarking. Use `--no-auto-download` to require an existing local cache.
+
 Outputs:
+
 - `per_sample_metrics.csv`
 - `summary.json`
 - `visualizations/*.png`
 
 ## Baseline Foundation Models
+
 - [UltraSAM](https://arxiv.org/html/2411.16222v1)
 
 ## Dataset References
 
 ### Heart
+
 - [CAMUS](https://www.creatis.insa-lyon.fr/Challenge/camus/)
 
 ### Liver
+
 - [Liver Ultrasound Semantic Segmentation Dataset](https://universe.roboflow.com/romain-hardy-6ehro/liver-ultrasound-semantic-segmentation)
 
 ### Bone
+
 - [UltraBones100k](https://github.com/luohwu/UltraBones100k)
 
 ### Thyroid
+
 - [TNSC2020](https://tn-scui2020.grand-challenge.org/Dataset/)
 
 ### Kidney
+
 - [Open Kidney Ultrasound Dataset](https://github.com/rsingla92/kidneyUS/tree/main)
 
 ## Breast
+
 - [Breast Lesion USG](https://www.cancerimagingarchive.net/collection/breast-lesions-usg/)
