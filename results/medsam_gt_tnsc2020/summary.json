@@ -3,10 +3,10 @@
   "dataset_root": "datasets/TNSC2020",
   "num_evaluated": 100,
   "num_skipped_empty_mask": 0,
-  "dice_mean": 0.9443680047988892,
-  "dice_std": 0.03575745224952698,
-  "iou_mean": 0.8966211676597595,
-  "iou_std": 0.0597832165658474,
-  "infer_ms_mean": 1110.78466796875,
-  "infer_ms_std": 18.11618995666504
+  "dice_mean": 0.9443695545196533,
+  "dice_std": 0.035754457116127014,
+  "iou_mean": 0.8966238498687744,
+  "iou_std": 0.059779584407806396,
+  "infer_ms_mean": 216.43814086914062,
+  "infer_ms_std": 52.11722946166992
 }

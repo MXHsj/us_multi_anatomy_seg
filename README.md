@@ -9,6 +9,7 @@ Curated ultrasound datasets are hosted on Hugging Face:
 - Dataset repo: https://huggingface.co/datasets/us-segmentator/us-segmentation-dataset
 - Zip layout: `zips/<Anatomy>/<dataset>.zip`
 - TNSC2020 lives under the `Thyroid` anatomy category.
+- BCU_PD lives under the `Breast` anatomy category.
 
 Raw datasets should not be committed to this repository. Dataset decoders can materialize supported datasets into ignored local cache folders on demand. For TNSC2020:
 
@@ -65,6 +66,14 @@ python datasets/heart_CAMUS.py --root datasets/CAMUS --export-dir results/camus_
 
 Note: CAMUS decoding requires `nibabel`.
 
+### BCU_PD
+
+Decode breast BCU_PD data after it is materialized from Hugging Face:
+
+```bash
+python datasets/breast_BCU_PD.py --root datasets/BCU_PD --max-samples 10
+```
+
 ## MedSAM Test Benchmark
 
 Use ground-truth masks to build bounding-box prompts, then run MedSAM and report Dice/IoU/latency.
@@ -80,6 +89,14 @@ python benchmarks/test_medsam_inference.py \
 ```
 
 If `datasets/TNSC2020` is missing, the TNSC2020 decoder downloads the Thyroid zip from Hugging Face automatically before benchmarking. Use `--no-auto-download` to require an existing local cache.
+
+If `work_dir/MedSAM/medsam_vit_b.pth` is missing, the benchmark downloads the checkpoint from `GleghornLab/medsam-vit-b` on Hugging Face. Use `--no-auto-download-checkpoint` to require a local checkpoint or pass a custom path with `--checkpoint`.
+
+For the BCU_PD GT-box benchmark:
+
+```bash
+python benchmarks/test_medsam_gt_bcu_pd.py
+```
 
 Outputs:
 

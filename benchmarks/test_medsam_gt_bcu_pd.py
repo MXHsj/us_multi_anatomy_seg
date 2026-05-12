@@ -7,12 +7,12 @@ import sys
 
 DEVICE = "mps" if platform.system() == "Darwin" else "cuda:0"
 BENCHMARK_SCRIPT = "benchmarks/medsam_inference.py"
-DATASET_ROOT = "datasets/TNSC2020"
-OUTPUT_DIR = "results/medsam_gt_tnsc2020"
+DATASET_ROOT = "datasets/BCU_PD"
+OUTPUT_DIR = "results/medsam_gt_bcu_pd"
 
 DEFAULT_ARGS = [
     "--dataset",
-    "tnsc2020",
+    "bcu_pd",
     "--dataset-root",
     DATASET_ROOT,
     "--max-samples",

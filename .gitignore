@@ -7,6 +7,7 @@ __pycache__/
 
 # raw/local dataset materializations
 datasets/TNSC2020/
+datasets/BCU_PD/
 datasets/BLUSG/
 datasets/OKU/
 datasets/CAMUS/
