@@ -8,6 +8,9 @@ torch
 torchvision
 segment-anything
 
+# SAMUS model adapter runtime
+einops
+
 # Hugging Face dataset materialization
 huggingface_hub
 

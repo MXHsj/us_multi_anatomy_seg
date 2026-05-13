@@ -2,6 +2,22 @@
 
 This repo is organized for cross-dataset benchmarking of pretrained and future foundation segmentation models, starting with MedSAM.
 
+## Installation
+
+Create and activate the project conda environment:
+
+```bash
+conda create -n monai-usseg python=3.10
+conda activate monai-usseg
+```
+
+Install Python dependencies from the repository root:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
 ## Hugging Face Dataset
 
 Curated ultrasound datasets are hosted on Hugging Face:
@@ -107,29 +123,3 @@ Outputs:
 ## Baseline Foundation Models
 
 - [UltraSAM](https://arxiv.org/html/2411.16222v1)
-
-## Dataset References
-
-### Heart
-
-- [CAMUS](https://www.creatis.insa-lyon.fr/Challenge/camus/)
-
-### Liver
-
-- [Liver Ultrasound Semantic Segmentation Dataset](https://universe.roboflow.com/romain-hardy-6ehro/liver-ultrasound-semantic-segmentation)
-
-### Bone
-
-- [UltraBones100k](https://github.com/luohwu/UltraBones100k)
-
-### Thyroid
-
-- [TNSC2020](https://tn-scui2020.grand-challenge.org/Dataset/)
-
-### Kidney
-
-- [Open Kidney Ultrasound Dataset](https://github.com/rsingla92/kidneyUS/tree/main)
-
-## Breast
-
-- [Breast Lesion USG](https://www.cancerimagingarchive.net/collection/breast-lesions-usg/)

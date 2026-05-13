@@ -1,11 +1,24 @@
 from __future__ import annotations
 
-import platform
 import subprocess
 import sys
 
+import torch
 
-DEVICE = "mps" if platform.system() == "Darwin" else "cuda:0"
+
+def mps_is_available() -> bool:
+    return hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+
+
+def default_device() -> str:
+    if torch.cuda.is_available():
+        return "cuda:0"
+    if mps_is_available():
+        return "mps"
+    return "cpu"
+
+
+DEVICE = default_device()
 BENCHMARK_SCRIPT = "benchmarks/medsam_inference.py"
 DATASET_ROOT = "datasets/TNSC2020"
 OUTPUT_DIR = "results/medsam_gt_tnsc2020"
@@ -29,6 +42,8 @@ DEFAULT_ARGS = [
 
 
 def main() -> None:
+    print(f"Starting MedSAM GT benchmark: {' '.join(DEFAULT_ARGS)}", flush=True)
+
     cmd = [sys.executable, BENCHMARK_SCRIPT, *DEFAULT_ARGS, *sys.argv[1:]]
     subprocess.run(cmd, check=True)
 

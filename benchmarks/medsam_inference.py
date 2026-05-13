@@ -36,6 +36,39 @@ DEFAULT_MEDSAM_CHECKPOINT_REPO_ID = "GleghornLab/medsam-vit-b"
 DEFAULT_MEDSAM_CHECKPOINT_FILENAME = "medsam_vit_b.pth"
 
 
+def mps_is_available() -> bool:
+    return hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+
+
+def resolve_torch_device(requested_device: str) -> torch.device:
+    requested = torch.device(requested_device)
+    if requested.type == "cuda" and not torch.cuda.is_available():
+        if mps_is_available():
+            print(
+                f"Requested device '{requested_device}' but CUDA is unavailable; using 'mps'.",
+                flush=True,
+            )
+            return torch.device("mps")
+        print(
+            f"Requested device '{requested_device}' but CUDA is unavailable; using 'cpu'.",
+            flush=True,
+        )
+        return torch.device("cpu")
+    if requested.type == "mps" and not mps_is_available():
+        if torch.cuda.is_available():
+            print(
+                f"Requested device '{requested_device}' but MPS is unavailable; using 'cuda:0'.",
+                flush=True,
+            )
+            return torch.device("cuda:0")
+        print(
+            f"Requested device '{requested_device}' but MPS is unavailable; using 'cpu'.",
+            flush=True,
+        )
+        return torch.device("cpu")
+    return requested
+
+
 def ensure_checkpoint(
     checkpoint: str | Path,
     auto_download: bool,
@@ -70,6 +103,15 @@ def ensure_checkpoint(
     )
     shutil.copy2(downloaded, checkpoint)
     return checkpoint
+
+
+def load_medsam_model(sam_model_registry, checkpoint: Path, device: torch.device) -> torch.nn.Module:
+    model = sam_model_registry["vit_b"](checkpoint=None)
+    state_dict = torch.load(str(checkpoint), map_location="cpu")
+    model.load_state_dict(state_dict)
+    model = model.to(device)
+    model.eval()
+    return model
 
 
 @torch.no_grad()
@@ -312,9 +354,8 @@ def main() -> None:
         revision=args.checkpoint_revision,
     )
 
-    model = sam_model_registry["vit_b"](checkpoint=str(checkpoint))
-    model = model.to(args.device)
-    model.eval()
+    device = resolve_torch_device(args.device)
+    model = load_medsam_model(sam_model_registry, checkpoint, device)
 
     rows = []
     skipped = 0
@@ -336,7 +377,7 @@ def main() -> None:
         
         image_1024 = prepare_medsam_image(image_3c)
         image_1024_tensor = (
-            torch.tensor(image_1024).float().permute(2, 0, 1).unsqueeze(0).to(args.device)
+            torch.tensor(image_1024).float().permute(2, 0, 1).unsqueeze(0).to(device)
         )
         box_np = bbox[None, :]
         box_1024 = box_np / np.array([W, H, W, H]) * 1024

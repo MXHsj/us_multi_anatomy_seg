@@ -3,14 +3,14 @@
   "dataset_root": "datasets/OKU",
   "checkpoint": "work_dir/SAMUS/ckp/SAMUS.pth",
   "sam_ckpt": "work_dir/SAMUS/checkpoints/sam_vit_b_01ec64.pth",
-  "batch_size": 32,
-  "num_workers": 2,
+  "batch_size": 1,
+  "num_workers": 0,
   "num_evaluated": 487,
   "num_skipped_empty_mask": 0,
-  "dice_mean": 0.853808581829071,
-  "dice_std": 0.04447195306420326,
-  "iou_mean": 0.7474387884140015,
-  "iou_std": 0.06529997289180756,
-  "infer_ms_mean": 27.26993179321289,
-  "infer_ms_std": 4.081576347351074
+  "dice_mean": 0.8540327548980713,
+  "dice_std": 0.04397854954004288,
+  "iou_mean": 0.7477306127548218,
+  "iou_std": 0.06472166627645493,
+  "infer_ms_mean": 248.73524475097656,
+  "infer_ms_std": 12.59786605834961
 }

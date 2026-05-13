@@ -3,14 +3,14 @@
   "dataset_root": "datasets/BLUSG",
   "checkpoint": "work_dir/SAMUS/ckp/SAMUS.pth",
   "sam_ckpt": "work_dir/SAMUS/checkpoints/sam_vit_b_01ec64.pth",
-  "batch_size": 32,
-  "num_workers": 2,
+  "batch_size": 1,
+  "num_workers": 0,
   "num_evaluated": 252,
   "num_skipped_empty_mask": 0,
-  "dice_mean": 0.8108790516853333,
-  "dice_std": 0.07560039311647415,
-  "iou_mean": 0.6878169178962708,
-  "iou_std": 0.09368540346622467,
-  "infer_ms_mean": 26.17310333251953,
-  "infer_ms_std": 4.528547763824463
+  "dice_mean": 0.8109033703804016,
+  "dice_std": 0.07559764385223389,
+  "iou_mean": 0.6878512501716614,
+  "iou_std": 0.09368550032377243,
+  "infer_ms_mean": 245.71205139160156,
+  "infer_ms_std": 12.18380355834961
 }
