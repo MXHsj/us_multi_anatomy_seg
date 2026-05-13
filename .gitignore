@@ -4,6 +4,7 @@ __pycache__/
 
 # pretrained weights
 *.pth
+work_dir/SAMUS/ckp/SAMUS.pth
 
 # raw/local dataset materializations
 datasets/TNSC2020/
