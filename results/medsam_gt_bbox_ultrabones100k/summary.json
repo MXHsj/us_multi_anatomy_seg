@@ -1,0 +1,12 @@
+{
+  "dataset": "ultrabones100k",
+  "dataset_root": "datasets/UltraBones100k",
+  "num_evaluated": 100,
+  "num_skipped_empty_mask": 0,
+  "dice_mean": 0.8764857649803162,
+  "dice_std": 0.029605969786643982,
+  "iou_mean": 0.7813650369644165,
+  "iou_std": 0.046958718448877335,
+  "infer_ms_mean": 214.30662536621094,
+  "infer_ms_std": 30.35238265991211
+}

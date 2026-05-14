@@ -74,14 +74,14 @@ Available Hugging Face zips scanned from the dataset repo:
 
 ### Dataset Structures
 
-Each decoder normalizes its source dataset into the shared `DecodedSample` schema from `datasets/common.py`: `dataset`, `sample_id`, `image`, `mask`, and `metadata`. Images are normalized to `uint8`; masks are binary for the current GT-box benchmarks.
+Each decoder normalizes its source dataset into the shared `DecodedSample` schema from `datasets/common.py`: `dataset`, `sample_id`, `image`, `mask`, and `metadata`. Images are normalized to `uint8`; masks are binary for the current GT-box benchmarks. Decoders preserve the original dataset annotation semantics by default, except UltraBones100k, where thin bone-surface annotations are intentionally hole-filled into a bone-shadow region.
 
 | Key | Local root | Source layout interpreted by decoder | Benchmark sample definition |
 | --- | --- | --- | --- |
 | `tnsc2020` | `datasets/TNSC2020` | `image/*.PNG` paired with same-named `mask/*.PNG`; optional `train.csv` category metadata keyed by image ID. | One thyroid image/mask pair per PNG. |
 | `blusg` | `datasets/BLUSG` | Flat `case*.png` images; masks are sibling `case*_tumor.png` plus optional `case*_other*.png`. | One breast image with tumor mask, optionally merged with other lesion masks unless `--blusg-only-tumor` is used. |
 | `oku` | `datasets/OKU` | Flat kidney PNG images plus `reviewed_labels_1.csv` / `reviewed_labels_2.csv` polygon annotations. | One image with polygons rasterized for selected anatomy; default benchmark anatomy is `Capsule`. |
-| `ultrabones100k` | `datasets/UltraBones100k` | Nested `specimen*/<anatomy>/record*/UltrasoundImages/*.png` paired with `<label-folder>/<timestamp>_label.png`, plus optional `tracking.csv`. | One ultrasound frame and bone surface label per paired timestamp; benchmark wrappers use `--box-padding 10` for thin masks. |
+| `ultrabones100k` | `datasets/UltraBones100k` | Nested `specimen*/<anatomy>/record*/UltrasoundImages/*.png` paired with `<label-folder>/<timestamp>_label.png`, plus optional `tracking.csv`. | One ultrasound frame and filled bone-shadow mask per paired timestamp. Source labels often trace only the visible bone surface; filling is kept explicitly because line-based segmentation is difficult for region-prompted foundation models, and the filled region has clinical meaning as the acoustic bone shadow. Use decoder option `--no-fill-mask` only for thin-label sensitivity checks. |
 | `camus` | `datasets/CAMUS` | `patient*/patient*_2CH|4CH_ED|ES|half_sequence.nii.gz` paired with `_gt.nii.gz`; per-view `Info_*.cfg` files may also be present. | By default, ED/ES only: 500 patients x 2 views x 2 phases = 2000 samples. `--include-half-sequence` also expands cine volumes into frame-level samples. |
 | `aulid` | `datasets/AULID` | Category folders `Benign/`, `Malignant/`, `Normal/`, each with `image/*.jpg` and `segmentation/<label>/*.json` polygon masks. | One liver image with selected JSON polygon label; default label is `mass`. |
 | `uns` | `datasets/UNS` | `train/*.tif` images paired with same-stem `*_mask.tif`. | One nerve image/mask pair per training TIFF. |
@@ -144,7 +144,7 @@ If `work_dir/SAMUS/ckp/SAMUS.pth` is missing, the SAMUS benchmark downloads the 
 - `--hf-revision`: pin a Hugging Face dataset revision for reproducibility.
 - `--oku-anatomy Capsule`: choose OKU annotation anatomy.
 - `--aulid-label mass`: choose AULID mask label from `mass`, `liver`, or `outline`.
-- `--box-padding 10`: useful for thin/line-like masks such as UltraBones100k.
+- `--box-padding 10`: used by the UltraBones100k wrappers to give the GT box prompt context around the filled bone-shadow mask.
 
 Outputs:
 

@@ -54,6 +54,7 @@ The CAMUS local materialization contains 500 patient folders. By default, the de
 ## Completed Hygiene / Infrastructure
 
 - Raw dataset folders, checkpoints, generated results, cache folders, and zips are ignored by `.gitignore`.
+- Dataset decoders preserve original annotation semantics by default. UltraBones100k is the explicit exception: thin bone-surface labels are hole-filled into a bone-shadow region for the main benchmarks because line-based segmentation is not a natural target for region-prompted foundation models, and the filled acoustic shadow is clinically meaningful.
 - Dataset access is Hugging Face-backed and local-cache aware.
 - `python -m datasets.registry` works and lists the supported registered datasets.
 - CAMUS dependencies are represented in `requirements.txt` through `nibabel`.
@@ -74,7 +75,7 @@ Interpret older results carefully:
 
 1. Finish GT-box model benchmarking:
    - Run full MedSAM and SAMUS GT benchmarks on the selected datasets using the wrapper defaults documented in `README.md`.
-   - Confirm UltraBones100k mask handling and whether filled/thin surface labels are the intended benchmark target.
+   - Keep UltraBones100k filled bone-shadow masks as the main benchmark target; use original thin surface labels only for sensitivity checks.
    - Keep result folders model/dataset/prompt-specific, for example `results/medsam_gt_bbox_camus`.
 
 2. Improve result visualization sampling:

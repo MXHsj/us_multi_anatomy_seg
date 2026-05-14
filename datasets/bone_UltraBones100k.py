@@ -63,6 +63,9 @@ class UltraBones100kDecoder:
     def _prepare_mask(self, mask) -> np.ndarray:
         mask_bin = to_binary_mask(mask)
         if self.fill_mask:
+            # UltraBones100k is the one decoder where filling is intentional:
+            # the source labels trace the visible bone surface, while the filled
+            # region approximates the clinically meaningful acoustic shadow.
             mask_bin = binary_fill_holes(mask_bin.astype(bool)).astype(np.uint8)
 
         if self.thicken_radius <= 0:
@@ -221,7 +224,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--no-fill-mask",
         action="store_true",
-        help="Do not fill internal regions in the binary label mask",
+        help="Use original thin surface labels instead of the default filled bone-shadow region",
     )
     parser.add_argument(
         "--max-samples",
