@@ -154,7 +154,7 @@ Outputs:
 
 ### Wrapper Benchmark Parameters
 
-The wrapper scripts under `benchmarks/test_*_gt_*.py` are the current reproducible GT-box benchmark entry points. Use extra CLI arguments after a wrapper command to override any default below.
+The wrapper scripts under `benchmarks/test_*_gt_bbox_*.py` are the current reproducible GT-box benchmark entry points. Use extra CLI arguments after a wrapper command to override any default below.
 
 | Wrapper | Model | Dataset | Max samples | Box padding | Device default | Saved visualizations | Output dir |
 | --- | --- | --- | ---: | ---: | --- | ---: | --- |

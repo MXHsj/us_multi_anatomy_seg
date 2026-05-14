@@ -4,6 +4,8 @@ import subprocess
 import sys
 
 
+BENCHMARK_SCRIPT = "benchmarks/medsam_inference.py"
+
 DEFAULT_ARGS = [
     "--dataset",
     "ultrabones100k",
@@ -25,19 +27,9 @@ DEFAULT_ARGS = [
 
 
 def main() -> None:
-    cmd = ["python", "benchmarks/medsam_inference.py", *DEFAULT_ARGS, *sys.argv[1:]]
+    cmd = [sys.executable, BENCHMARK_SCRIPT, *DEFAULT_ARGS, *sys.argv[1:]]
     subprocess.run(cmd, check=True)
 
 
 if __name__ == "__main__":
     main()
-
-
-# python benchmarks\test_medsam_gt_bbox_ultrabones100k.py `
-#   --dataset-root F:\UltraBones100k `
-#   --checkpoint work_dir\MedSAM\medsam_vit_b.pth `
-#   --device cuda:0 `
-#   --max-samples 5 `
-#   --box-padding 10 `
-#   --save-vis 5 `
-#   --output-dir results\medsam_gt_bbox_ultrabones100k_smoke

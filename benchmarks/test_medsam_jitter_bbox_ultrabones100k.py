@@ -4,6 +4,8 @@ import subprocess
 import sys
 
 
+BENCHMARK_SCRIPT = "benchmarks/medsam_inference.py"
+
 DEFAULT_ARGS = [
     "--dataset",
     "ultrabones100k",
@@ -27,7 +29,7 @@ DEFAULT_ARGS = [
 
 
 def main() -> None:
-    cmd = ["python", "benchmarks/medsam_inference.py", *DEFAULT_ARGS, *sys.argv[1:]]
+    cmd = [sys.executable, BENCHMARK_SCRIPT, *DEFAULT_ARGS, *sys.argv[1:]]
     subprocess.run(cmd, check=True)
 
 
