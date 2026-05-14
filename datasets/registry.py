@@ -26,14 +26,6 @@ DATASET_REGISTRY: dict[str, DatasetSpec] = {
         decoder_class="datasets.thyroid_TNSC2020:ThyroidTNSC2020Decoder",
         hf_repo_path="zips/Thyroid/TNSC2020.zip",
     ),
-    "bcu_pd": DatasetSpec(
-        key="bcu_pd",
-        display_name="BCU_PD",
-        anatomy="Breast",
-        default_root="datasets/BCU_PD",
-        decoder_class="datasets.breast_BCU_PD:BreastBCUPDDecoder",
-        hf_repo_path="zips/Breast/BCU_PD.zip",
-    ),
     "blusg": DatasetSpec(
         key="blusg",
         display_name="BrEaST Lesions USG",

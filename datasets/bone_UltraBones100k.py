@@ -33,7 +33,7 @@ class UltraBones100kDecoder:
 
     def _record_dirs(self) -> list[Path]:
         # Each record folder contains sibling UltrasoundImages and label folders.
-        image_dirs = sorted(self.root.glob("specimen*/ultrasound_records/*/record*/UltrasoundImages"))
+        image_dirs = sorted(self.root.glob("specimen*/*/record*/UltrasoundImages"))
         return [p.parent for p in image_dirs]
 
     def _tracking_map(self, record_dir: Path) -> Dict[str, Dict[str, str]]:
@@ -52,10 +52,10 @@ class UltraBones100kDecoder:
         return rows
 
     def _record_metadata(self, record_dir: Path) -> Dict[str, str]:
-        # Path layout: specimenXX/ultrasound_records/{anatomy}/recordXX.
+        # Path layout: specimenXX/{anatomy}/recordXX.
         parts = record_dir.parts
         return {
-            "specimen_id": parts[-4],
+            "specimen_id": parts[-3],
             "anatomy": parts[-2],
             "record": parts[-1],
         }
@@ -71,6 +71,23 @@ class UltraBones100kDecoder:
         # Optional distance-transform expansion for thin surface labels.
         distance_map = distance_transform_edt(~mask_bin.astype(bool))
         return (distance_map <= self.thicken_radius).astype(np.uint8)
+
+    def count_samples(self, max_samples: Optional[int] = None) -> int:
+        count = 0
+        for record_dir in self._record_dirs():
+            image_dir = record_dir / "UltrasoundImages"
+            label_dir = record_dir / self.label_folder
+            if not label_dir.exists():
+                continue
+
+            for image_path in sorted(image_dir.glob("*.png")):
+                label_path = label_dir / f"{image_path.stem}_label.png"
+                if not label_path.exists():
+                    continue
+                count += 1
+                if max_samples is not None and count >= max_samples:
+                    return count
+        return count
 
     def iter_samples(self, max_samples: Optional[int] = None) -> Iterator[DecodedSample]:
         count = 0
