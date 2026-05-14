@@ -1,4 +1,4 @@
-# Project Context: Ultrasound Multi-Anatomy Segmentation Benchmark
+﻿# Project Context: Ultrasound Multi-Anatomy Segmentation Benchmark
 
 ## Research Goal
 
@@ -75,7 +75,7 @@ Interpret older results carefully:
 1. Finish GT-box model benchmarking:
    - Run full MedSAM and SAMUS GT benchmarks on the selected datasets using the wrapper defaults documented in `README.md`.
    - Confirm UltraBones100k mask handling and whether filled/thin surface labels are the intended benchmark target.
-   - Keep result folders model/dataset/prompt-specific, for example `results/medsam_gt_camus`.
+   - Keep result folders model/dataset/prompt-specific, for example `results/medsam_gt_bbox_camus`.
 
 2. Improve result visualization sampling:
    - Add a post-run visualization mode that saves best, median, worst, plus evenly spaced cases.
@@ -118,3 +118,4 @@ Interpret older results carefully:
 - GT-box benchmarking is the current priority; degraded-prompt experiments should be revisited later.
 - Mean performance is not enough; the project should emphasize stratified results, tail failures, and qualitative inspection.
 - All reported runs should be reproducible from dataset version, decoder options, sample subset, model checkpoint, prompt protocol, and environment metadata.
+

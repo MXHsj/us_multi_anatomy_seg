@@ -1,4 +1,4 @@
-## Ultrasound Multi-Anatomy Segmentator
+﻿## Ultrasound Multi-Anatomy Segmentator
 
 This repo is organized for cross-dataset benchmarking of pretrained and future foundation segmentation models, starting with MedSAM.
 
@@ -158,20 +158,20 @@ The wrapper scripts under `benchmarks/test_*_gt_*.py` are the current reproducib
 
 | Wrapper | Model | Dataset | Max samples | Box padding | Device default | Saved visualizations | Output dir |
 | --- | --- | --- | ---: | ---: | --- | ---: | --- |
-| `test_medsam_gt_tnsc2020.py` | MedSAM | `tnsc2020` | 100 | 0 | auto CUDA/MPS/CPU | 20 | `results/medsam_gt_tnsc2020` |
-| `test_medsam_gt_blusg.py` | MedSAM | `blusg` | 100 | 0 | `mps` | 20 | `results/medsam_gt_blusg` |
-| `test_medsam_gt_oku.py` | MedSAM | `oku` | 100 | 0 | `mps` | 20 | `results/medsam_gt_oku` |
-| `test_medsam_gt_ultrabones100k.py` | MedSAM | `ultrabones100k` | 100 | 10 | `cuda:0` | 20 | `results/medsam_gt_ultrabones100k` |
-| `test_medsam_gt_camus.py` | MedSAM | `camus` | 2000 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_camus` |
-| `test_medsam_gt_aulid.py` | MedSAM | `aulid` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_aulid` |
-| `test_medsam_gt_uns.py` | MedSAM | `uns` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_uns` |
-| `test_samus_gt_tnsc2020.py` | SAMUS | `tnsc2020` | full dataset | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_tnsc2020` |
-| `test_samus_gt_blusg.py` | SAMUS | `blusg` | full dataset | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_blusg` |
-| `test_samus_gt_oku.py` | SAMUS | `oku` | full dataset | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_oku` |
-| `test_samus_gt_ultrabones100k.py` | SAMUS | `ultrabones100k` | full dataset | 10 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_ultrabones100k` |
-| `test_samus_gt_camus.py` | SAMUS | `camus` | full default CAMUS ED/ES set | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_camus` |
-| `test_samus_gt_aulid.py` | SAMUS | `aulid` | full dataset | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_aulid` |
-| `test_samus_gt_uns.py` | SAMUS | `uns` | full dataset | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_uns` |
+| `test_medsam_gt_bbox_tnsc2020.py` | MedSAM | `tnsc2020` | 100 | 0 | auto CUDA/MPS/CPU | 20 | `results/medsam_gt_bbox_tnsc2020` |
+| `test_medsam_gt_bbox_blusg.py` | MedSAM | `blusg` | 100 | 0 | `mps` | 20 | `results/medsam_gt_bbox_blusg` |
+| `test_medsam_gt_bbox_oku.py` | MedSAM | `oku` | 100 | 0 | `mps` | 20 | `results/medsam_gt_bbox_oku` |
+| `test_medsam_gt_bbox_ultrabones100k.py` | MedSAM | `ultrabones100k` | 100 | 10 | `cuda:0` | 20 | `results/medsam_gt_bbox_ultrabones100k` |
+| `test_medsam_gt_bbox_camus.py` | MedSAM | `camus` | 2000 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_camus` |
+| `test_medsam_gt_bbox_aulid.py` | MedSAM | `aulid` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_aulid` |
+| `test_medsam_gt_bbox_uns.py` | MedSAM | `uns` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_uns` |
+| `test_samus_gt_bbox_tnsc2020.py` | SAMUS | `tnsc2020` | full dataset | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_tnsc2020` |
+| `test_samus_gt_bbox_blusg.py` | SAMUS | `blusg` | full dataset | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_blusg` |
+| `test_samus_gt_bbox_oku.py` | SAMUS | `oku` | full dataset | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_oku` |
+| `test_samus_gt_bbox_ultrabones100k.py` | SAMUS | `ultrabones100k` | full dataset | 10 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_ultrabones100k` |
+| `test_samus_gt_bbox_camus.py` | SAMUS | `camus` | full default CAMUS ED/ES set | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_camus` |
+| `test_samus_gt_bbox_aulid.py` | SAMUS | `aulid` | full dataset | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_aulid` |
+| `test_samus_gt_bbox_uns.py` | SAMUS | `uns` | full dataset | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_uns` |
 
 Shared defaults: GT masks are converted to bounding-box prompts; jitter is disabled for GT wrappers (`--bbox-jitter-prob 0.0` for MedSAM); MedSAM defaults to `--max-samples 20` when called directly, while SAMUS defaults to all available decoded samples when called directly. Dataset-specific options include `--oku-anatomy Capsule`, `--aulid-label mass`, `--camus-labels 1,2,3`, and `--include-half-sequence`.
 
@@ -205,3 +205,4 @@ python benchmarks/medsam_inference.py \
 
 - [MedSAM]()
 - [UltraSAM](https://arxiv.org/html/2411.16222v1)
+
