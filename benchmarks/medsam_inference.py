@@ -30,6 +30,46 @@ DEFAULT_MEDSAM_CHECKPOINT_REPO_ID = "GleghornLab/medsam-vit-b"
 DEFAULT_MEDSAM_CHECKPOINT_FILENAME = "medsam_vit_b.pth"
 
 
+def format_duration(seconds: float) -> str:
+    total_seconds = max(int(seconds), 0)
+    minutes, secs = divmod(total_seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours > 0:
+        return f"{hours:d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def print_progress(
+    current: int,
+    total: int | None,
+    evaluated: int,
+    skipped: int,
+    sample_id: str,
+    elapsed_s: float,
+    bar_width: int = 24,
+) -> None:
+    if total and total > 0:
+        frac = min(max(current / total, 0.0), 1.0)
+        filled = min(int(round(frac * bar_width)), bar_width)
+        bar = "#" * filled + "-" * (bar_width - filled)
+        total_str = str(total)
+        progress = f"[{bar}] {frac * 100:5.1f}%"
+    else:
+        total_str = "?"
+        progress = "[" + "?" * bar_width + "]"
+
+    sample_label = sample_id if len(sample_id) <= 48 else f"...{sample_id[-45:]}"
+    avg_rate = evaluated / elapsed_s if elapsed_s > 0 and evaluated > 0 else 0.0
+    print(
+        "\r"
+        f"{progress} {current}/{total_str} | evaluated={evaluated} | skipped={skipped} "
+        f"| avg={avg_rate:.2f} samples/s | elapsed={format_duration(elapsed_s)} "
+        f"| last={sample_label}",
+        end="",
+        flush=True,
+    )
+
+
 def mps_is_available() -> bool:
     return hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
 
@@ -153,6 +193,23 @@ def jitter_bbox(
     new_y1 = np.clip(bbox[3] + dy, 0, height - 1)
     return np.array([new_x0, new_y0, new_x1, new_y1], dtype=np.int32)
 
+
+def get_total_iterations(decoder, max_samples: int | None) -> int | None:
+    count_fn = getattr(decoder, "count_samples", None)
+    if callable(count_fn):
+        return count_fn(max_samples=max_samples)
+    return max_samples
+
+
+def evenly_spaced_indices(total: int | None, count: int) -> set[int]:
+    if count <= 0:
+        return set()
+    if total is None or total <= 0:
+        return set(range(count))
+    save_count = min(count, total)
+    return {int(round(idx)) for idx in np.linspace(0, total - 1, save_count)}
+
+
 def save_vis(
     vis_dir: Path,
     sample_id: str,
@@ -245,6 +302,8 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     decoder = build_decoder_from_args(args)
+    total_iterations = get_total_iterations(decoder, args.max_samples)
+    vis_indices = evenly_spaced_indices(total_iterations, args.save_vis)
 
     try:
         from segment_anything import sam_model_registry
@@ -267,6 +326,9 @@ def main() -> None:
 
     rows = []
     skipped = 0
+    benchmark_tic = time.perf_counter()
+    total_label = str(total_iterations) if total_iterations is not None else "all available"
+    print(f"Running MedSAM benchmark for dataset '{args.dataset}' on {total_label} samples...")
 
     for idx, sample in enumerate(decoder.iter_samples(max_samples=args.max_samples)):
         image_3c = ensure_three_channels(sample.image)
@@ -276,6 +338,14 @@ def main() -> None:
         bbox = bbox_from_mask(gt_mask, padding=args.box_padding)
         if bbox is None:
             skipped += 1
+            print_progress(
+                current=idx + 1,
+                total=total_iterations,
+                evaluated=len(rows),
+                skipped=skipped,
+                sample_id=sample.sample_id,
+                elapsed_s=time.perf_counter() - benchmark_tic,
+            )
             continue
         if (
             args.bbox_jitter_fraction > 0
@@ -311,7 +381,7 @@ def main() -> None:
             }
         )
 
-        if idx < args.save_vis:
+        if idx in vis_indices:
             save_vis(
                 vis_dir=out_dir / "visualizations",
                 sample_id=sample.sample_id,
@@ -320,6 +390,18 @@ def main() -> None:
                 pred_mask=pred,
                 bbox=bbox,
             )
+
+        print_progress(
+            current=idx + 1,
+            total=total_iterations,
+            evaluated=len(rows),
+            skipped=skipped,
+            sample_id=sample.sample_id,
+            elapsed_s=time.perf_counter() - benchmark_tic,
+        )
+
+    if rows or skipped:
+        print()
 
     metrics_csv = out_dir / "per_sample_metrics.csv"
     with metrics_csv.open("w", newline="", encoding="utf-8") as f:

@@ -49,6 +49,25 @@ class HeartCAMUSDecoder:
             return files
         return [p for p in files if "half_sequence" not in p.name]
 
+    def _frame_count_from_shape(self, shape: tuple[int, ...]) -> int:
+        squeezed = tuple(dim for dim in shape if dim != 1)
+        if len(squeezed) == 2:
+            return 1
+        if len(squeezed) != 3:
+            raise ValueError(f"Unsupported CAMUS shape {shape}")
+        return int(min(squeezed))
+
+    def count_samples(self, max_samples: Optional[int] = None) -> int:
+        total = 0
+        for gt_path in self._gt_files():
+            match = _FILE_RE.search(gt_path.name)
+            if not match:
+                continue
+            total += self._frame_count_from_shape(self.nib.load(str(gt_path)).shape)
+            if max_samples is not None and total >= max_samples:
+                return max_samples
+        return total
+
     def _iter_frames(self, img: np.ndarray, msk: np.ndarray) -> Iterator[tuple[np.ndarray, np.ndarray, int]]:
         if img.shape != msk.shape:
             raise ValueError(f"Image/mask shape mismatch: {img.shape} vs {msk.shape}")

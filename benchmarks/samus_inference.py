@@ -84,6 +84,15 @@ def get_total_iterations(decoder, max_samples: int | None) -> int | None:
     return max_samples
 
 
+def evenly_spaced_indices(total: int | None, count: int) -> set[int]:
+    if count <= 0:
+        return set()
+    if total is None or total <= 0:
+        return set(range(1, count + 1))
+    save_count = min(count, total)
+    return {int(round(idx)) + 1 for idx in np.linspace(0, total - 1, save_count)}
+
+
 def iter_samples_with_workers(decoder, max_samples: int | None, num_workers: int):
     if num_workers <= 0:
         yield from decoder.iter_samples(max_samples=max_samples)
@@ -314,7 +323,7 @@ def save_vis(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Test SAMUS inference with GT box prompts")
-    add_dataset_args(parser, include_camus=False)
+    add_dataset_args(parser, include_camus=True)
     parser.add_argument(
         "--checkpoint",
         type=str,
@@ -378,6 +387,7 @@ def main() -> None:
     decoder = build_decoder_from_args(args)
     model = build_model(args)
     total_iterations = get_total_iterations(decoder, args.max_samples)
+    vis_indices = evenly_spaced_indices(total_iterations, args.save_vis)
 
     rows = []
     skipped = 0
@@ -467,7 +477,7 @@ def main() -> None:
                 }
             )
 
-            if entry["idx"] <= args.save_vis:
+            if entry["idx"] in vis_indices:
                 save_vis(
                     vis_dir=out_dir / "visualizations",
                     sample_id=entry["sample"].sample_id,
@@ -521,7 +531,7 @@ def main() -> None:
                 }
             )
 
-            if entry["idx"] <= args.save_vis:
+            if entry["idx"] in vis_indices:
                 save_vis(
                     vis_dir=out_dir / "visualizations",
                     sample_id=entry["sample"].sample_id,

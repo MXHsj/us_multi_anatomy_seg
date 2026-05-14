@@ -2,152 +2,120 @@
 
 ## Research Goal
 
-This project benchmarks state-of-the-art foundation models for medical image segmentation on curated ultrasound datasets. The intended study is not only a leaderboard-style comparison, but a research-oriented analysis of when and why segmentation foundation models succeed or fail across anatomy, dataset source, object type, and prompt quality.
+This project benchmarks segmentation foundation models on curated ultrasound datasets across multiple anatomies. The study should go beyond a leaderboard: the benchmark should help identify when models succeed or fail by anatomy, dataset source, object type, prompt quality, and image/mask characteristics.
 
-The current focus is ultrasound segmentation across multiple anatomies. MedSAM is the first implemented model baseline, and the project is moving toward a larger Hugging Face-hosted dataset workflow, multiple model environments, and more meaningful benchmark criteria.
+The current practical focus is GT-box prompted benchmarking. Prompt jitter and other degraded-prompt protocols exist for MedSAM, but near-term runs should prioritize clean ground-truth-box comparisons across models and datasets.
 
 ## Current Repository Status
 
-The repository currently contains:
+The repository now has a registry-driven dataset layer:
 
-- Unified dataset sample schema and preprocessing helpers in `datasets/common.py`.
-- Dataset decoders for:
-  - `TNSC2020`: thyroid ultrasound image/mask pairs.
-  - `BLUSG`: breast lesion ultrasound images with tumor and optional other lesion masks.
-  - `OKU`: kidney ultrasound images with polygon annotations from reviewed label CSVs.
-  - `UltraBones100k`: bone ultrasound records with image/label pairing support.
-  - `CAMUS`: heart ultrasound NIfTI decoder support, but local data is not present.
-- A MedSAM inference benchmark in `benchmarks/medsam_inference.py`.
-- Wrapper scripts for MedSAM ground-truth bounding-box prompts and jittered bounding-box prompts.
-- Locally stored raw datasets under `datasets/`, currently including `BLUSG`, `OKU`, and `TNSC2020`.
-- Existing MedSAM result folders under `results/`.
+- `datasets/registry.py` records dataset keys, local cache roots, decoder classes, and Hugging Face zip paths.
+- `datasets/hf_materialize.py` materializes registered dataset zips on demand.
+- `datasets/loader.py` builds dataset decoders from benchmark CLI args.
+- `datasets/common.py` defines the shared `DecodedSample` schema and common image/mask helpers.
 
-The benchmark currently uses ground-truth masks to derive bounding-box prompts, optionally applies bounding-box jitter as a prompt degradation experiment, then reports Dice, IoU, and inference latency.
+Implemented decoders:
 
-## Existing MedSAM Benchmark Results
+| Dataset key | Anatomy | Decoder status |
+| --- | --- | --- |
+| `tnsc2020` | Thyroid | PNG image/mask pairs with optional category metadata. |
+| `blusg` | Breast | Flat case PNGs with tumor and optional other-lesion masks. |
+| `oku` | Kidney | PNG images plus reviewed polygon CSV annotations; default anatomy is `Capsule`. |
+| `ultrabones100k` | Bone | Nested specimen/anatomy/record folders with timestamped image/label pairs. |
+| `camus` | Heart | NIfTI ED/ES and optional cine half-sequence volumes, paired with `_gt.nii.gz` masks. |
+| `aulid` | Liver | JPG images with JSON polygon masks for `mass`, `liver`, or `outline`. |
+| `uns` | Nerve | TIFF images paired with `_mask.tif` masks. |
+| `ftp` | Fetus | Fetal Planes / FTP paired-image/mask decoder for curated segmentation materializations; public classification-only layouts yield zero segmentation samples. |
 
-The following completed runs are present in `results/`:
+BCU_PD has been removed and is no longer part of the registry or benchmark wrappers.
 
-| Dataset | Prompt setting | Samples | Dice mean | Dice std | IoU mean | IoU std |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| TNSC2020 | GT bbox | 100 | 0.9444 | 0.0358 | 0.8966 | 0.0598 |
-| TNSC2020 | Jittered bbox | 100 | 0.8141 | 0.0872 | 0.6951 | 0.1171 |
-| BLUSG | GT bbox | 100 | 0.8660 | 0.0891 | 0.7731 | 0.1203 |
-| BLUSG | Jittered bbox | 100 | 0.7771 | 0.1357 | 0.6525 | 0.1550 |
-| OKU | GT bbox | 100 | 0.9376 | 0.0340 | 0.8842 | 0.0556 |
-| OKU | Jittered bbox | 100 | 0.8433 | 0.0841 | 0.7377 | 0.1195 |
+## Benchmark Harness
 
-These early results suggest that MedSAM performs strongly with oracle bounding boxes, but accuracy drops substantially under degraded prompts. The drop is especially important for the planned prompt-sensitivity study because it approximates realistic user or detector imperfections.
+Current model engines:
 
-## Immediate Action Items
+- `benchmarks/medsam_inference.py`: GT-box prompted MedSAM benchmark with optional bbox jitter controls, checkpoint auto-download, Dice/IoU/latency reporting, and a progress bar.
+- `benchmarks/samus_inference.py`: GT-box prompted SAMUS benchmark with checkpoint auto-download, batching, optional threaded loading, Dice/IoU/latency reporting, and progress output.
 
-### 1. Remove Locally Stored Raw Data
+Both engines write:
 
-The repository currently tracks or contains raw data under `datasets/BLUSG`, `datasets/OKU`, and `datasets/TNSC2020`. The next cleanup should:
+- `per_sample_metrics.csv`
+- `summary.json`
+- `visualizations/*.png`
 
-- Remove raw image and mask files from the repository.
-- Keep only lightweight code, manifests, dataset cards, or small synthetic fixtures if needed for tests.
-- Update `.gitignore` to prevent raw datasets, checkpoints, generated visualizations, and large benchmark artifacts from being committed.
-- Preserve decoder code and document the expected local cache layout.
+Visualization dumping now samples evenly across the evaluated run when `--save-vis N` is used, instead of saving only the first `N` consecutive cases.
 
-### 2. Move Dataset Management to Hugging Face
+Current GT wrapper scripts cover:
 
-The larger curated ultrasound dataset should live on Hugging Face and be loaded on demand. The repository should gain a dataset access layer that:
+- MedSAM: TNSC2020, BLUSG, OKU, UltraBones100k, CAMUS, AULID, FTP.
+- SAMUS: TNSC2020, BLUSG, OKU, UltraBones100k, CAMUS, AULID, FTP.
 
-- Downloads or streams data from Hugging Face using `datasets` or `huggingface_hub`.
-- Supports local caching without committing raw data.
-- Normalizes all datasets into the existing `DecodedSample`-style schema.
-- Records dataset version, split, sample ID, anatomy, source dataset, label definition, and license/provenance metadata.
-- Supports deterministic subsets for development, validation, and reproducible benchmark runs.
+The CAMUS local materialization contains 500 patient folders. By default, the decoder excludes cine half-sequences and benchmarks 2000 ED/ES samples: 500 patients x 2 views x 2 phases. With `--include-half-sequence`, cine volumes are expanded into frame-level samples.
 
-Useful target design:
+## Completed Hygiene / Infrastructure
 
-- `datasets/registry.py` for dataset names, split definitions, and loader construction.
-- `datasets/hf_loader.py` for Hugging Face-backed loading.
-- Dataset manifests or metadata files that define anatomy/task-specific label mappings.
-- A small fixture dataset for CI or smoke tests.
+- Raw dataset folders, checkpoints, generated results, cache folders, and zips are ignored by `.gitignore`.
+- Dataset access is Hugging Face-backed and local-cache aware.
+- `python -m datasets.registry` works and lists the supported registered datasets.
+- CAMUS dependencies are represented in `requirements.txt` through `nibabel`.
+- SAMUS benchmark CLI now accepts CAMUS.
+- MedSAM benchmark now has progress reporting similar to SAMUS.
 
-### 3. Benchmark More Segmentation Models
+## Existing Results Snapshot
 
-The benchmark should evolve from MedSAM-specific scripts into a model-agnostic interface. Each model adapter should expose a common contract such as:
+Existing local result folders include early MedSAM GT and jittered runs for TNSC2020, BLUSG, and OKU, plus SAMUS GT runs for TNSC2020, BLUSG, OKU, UltraBones100k, and CAMUS-related work in progress.
 
-- Load model/checkpoint/environment.
-- Preprocess input image.
-- Accept prompt configuration where applicable.
-- Run inference.
-- Return binary or multiclass masks plus runtime metadata.
+Interpret older results carefully:
 
-Candidate model families to consider include:
+- Some earlier MedSAM wrappers capped runs at 100 samples.
+- CAMUS MedSAM was initially run on 100 samples, which covered only the first 25 patients across 2CH/4CH ED/ES. The CAMUS GT wrapper now targets the full default ED/ES set of 2000 samples.
+- Prompt-jitter outputs are useful for future prompt-sensitivity analysis but are not the immediate benchmark priority.
 
-- MedSAM / SAM-derived medical variants.
-- SAM 2 or other general segmentation foundation models adapted to medical images.
-- Ultrasound-specific models such as UltraSAM.
-- Specialist supervised baselines such as nnU-Net trained per dataset.
+## Near-Term TODOs
 
-Because these models may require incompatible dependencies, the project should support multiple model environments. Practical options include per-model Conda environments, Docker/Singularity containers, or thin CLI adapters that write predictions to a shared results format.
+1. Finish GT-box model benchmarking:
+   - Run full MedSAM and SAMUS GT benchmarks on the selected datasets using the wrapper defaults documented in `README.md`.
+   - Confirm UltraBones100k mask handling and whether filled/thin surface labels are the intended benchmark target.
+   - Keep result folders model/dataset/prompt-specific, for example `results/medsam_gt_camus`.
 
-### 4. Define Research-Meaningful Benchmark Criteria
+2. Improve result visualization sampling:
+   - Add a post-run visualization mode that saves best, median, worst, plus evenly spaced cases.
+   - Ranking should use Dice or IoU and ideally avoid duplicates when a best/median/worst case is already part of the evenly spaced set.
+   - This will make qualitative folders include representative successes, typical cases, and clear failures.
 
-The benchmark should support the current research questions:
+3. Expand metric reporting:
+   - Add Hausdorff distance, average surface distance, precision, recall, false-positive area, and false-negative area.
+   - Add mask/image descriptors such as mask area fraction, connected components, bounding-box size, and image resolution.
 
-- Identify common failure and underperforming modes across models and datasets.
-- Identify performance-deciding factors such as anatomy, image quality, lesion size, boundary ambiguity, acoustic shadowing, speckle, device/source domain, and mask complexity.
-- Quantify how suboptimal prompts affect segmentation accuracy.
-- Compare zero-shot foundation model capability against small supervised models trained on specific datasets, such as nnU-Net.
+4. Improve reproducibility metadata:
+   - Save model checkpoint path/version, dataset revision, decoder options, prompt protocol, device, package versions, and command line in every `summary.json`.
+   - Add deterministic sample selection or manifest-based subsets for comparable cross-model runs.
 
-Recommended criteria and analysis dimensions:
+5. Add unified benchmark hyperparameter control:
+   - Introduce one shared configuration layer for all benchmark cases so values such as `max-samples`, `save-vis`, `box-padding`, device, prompt protocol, and output naming do not need to be edited separately in `medsam_inference.py`, `samus_inference.py`, or each wrapper script.
+   - Prefer a small YAML/JSON config or central Python defaults module that wrappers can import and model engines can record into `summary.json`.
 
-- Standard segmentation metrics: Dice, IoU, Hausdorff distance, average surface distance, precision, recall, false-positive area, and false-negative area.
-- Robustness to prompts: bbox jitter magnitude, bbox padding, shifted boxes, enlarged boxes, shrunken boxes, missing target coverage, point prompts, negative points, and mixed prompt quality.
-- Stratified performance: anatomy, dataset source, object size, object shape complexity, image resolution, mask area fraction, number of connected components, and acquisition/source metadata.
-- Failure taxonomy: missed object, leakage into background, boundary undersegmentation, boundary oversegmentation, wrong structure selected, fragmented mask, and prompt instability.
-- Statistical reporting: confidence intervals, paired comparisons across models on identical samples, per-dataset and pooled summaries, and worst-case or tail-performance analysis.
-- Runtime/resource reporting: latency, GPU memory, preprocessing time, model loading time, and batchability.
+6. Move toward model-agnostic adapters:
+   - Keep MedSAM and SAMUS working as concrete baselines.
+   - Define a common model adapter contract for loading, preprocessing, prompt ingestion, inference, and prediction output.
+   - Add future model families such as UltraSAM, SAM 2 variants, and supervised baselines such as nnU-Net.
 
-## Suggested Near-Term Milestones
-
-1. Repository hygiene:
-   - Remove raw data and large artifacts from version control.
-   - Strengthen `.gitignore`.
-   - Add a documented local cache path.
-
-2. Hugging Face dataset path:
-   - Define dataset schema and metadata fields.
-   - Upload or prepare curated dataset on Hugging Face.
-   - Implement on-demand loading and deterministic subset selection.
-
-3. Benchmark harness refactor:
-   - Separate dataset loading, model adapters, prompt generation, metric calculation, and result writing.
-   - Preserve MedSAM as the first adapter.
-   - Save model, dataset, prompt, and environment metadata with every run.
-
-4. Prompt sensitivity experiments:
-   - Generalize the existing bbox jitter code into named prompt perturbation protocols.
-   - Run controlled sweeps over perturbation severity.
-   - Report accuracy degradation curves per dataset/anatomy/model.
-
-5. Supervised baseline:
-   - Add nnU-Net training/evaluation workflow for selected datasets.
-   - Compare dataset-trained performance against zero-shot foundation model performance on the same splits.
-
-6. Failure analysis:
-   - Add per-sample feature extraction from images and masks.
-   - Generate ranked failure cases and stratified summaries.
-   - Build notebooks or scripts for qualitative review.
+7. Add failure analysis:
+   - Generate ranked failure cases and stratified summaries by anatomy, dataset, object size, view/phase, and mask complexity.
+   - Use notebooks or scripts under `notebooks/` for qualitative review and figure preparation.
 
 ## Open Design Decisions
 
-- Whether the Hugging Face dataset should store raw source-like files, normalized image/mask pairs, or both.
-- Whether to stream samples directly from Hugging Face or require explicit local materialization before benchmarking.
-- How to represent multi-anatomy and multiclass masks in the shared schema.
-- Which prompt protocols should be considered clinically realistic versus stress tests.
-- Which model environments should be standardized first: Conda, Docker/Singularity, or external CLI adapters.
-- Which supervised baseline datasets and train/test splits should be prioritized for nnU-Net.
+- Whether Hugging Face should store source-like raw files, normalized image/mask pairs, or both.
+- Whether benchmark runs should always materialize data locally or support streaming.
+- How to represent multiclass and multi-object masks beyond the current binary GT-box setup.
+- Which prompt perturbation protocols are clinically realistic versus stress tests.
+- Which model environment strategy should be standardized first: Conda, Docker/Singularity, or external CLI adapters.
+- Which datasets should be prioritized for supervised nnU-Net baselines.
 
 ## Working Assumptions
 
 - Raw medical imaging data should not live in the Git repository.
-- All benchmark runs should be reproducible from dataset version, split, model version/checkpoint, prompt protocol, and environment metadata.
-- Foundation models should be evaluated both under oracle prompts and degraded/realistic prompts.
-- Mean performance alone is insufficient; the project should emphasize failure modes, stratified results, and prompt robustness.
-
+- GT-box benchmarking is the current priority; degraded-prompt experiments should be revisited later.
+- Mean performance is not enough; the project should emphasize stratified results, tail failures, and qualitative inspection.
+- All reported runs should be reproducible from dataset version, decoder options, sample subset, model checkpoint, prompt protocol, and environment metadata.

@@ -8,10 +8,10 @@ work_dir/SAMUS/ckp/SAMUS.pth
 
 # raw/local dataset materializations
 datasets/TNSC2020/
-datasets/BCU_PD/
 datasets/BLUSG/
 datasets/OKU/
 datasets/CAMUS/
+datasets/FTP/
 datasets/UltraBones100k/
 datasets/AULID/
 datasets/UNS/
