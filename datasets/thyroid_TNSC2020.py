@@ -9,29 +9,13 @@ from skimage import io
 
 try:
     from datasets.common import DecodedSample, export_samples, normalize_to_uint8, to_binary_mask
-    from datasets.hf_materialize import DEFAULT_HF_REPO_ID, ensure_tnsc2020_dataset
 except ModuleNotFoundError:
     from common import DecodedSample, export_samples, normalize_to_uint8, to_binary_mask
-    from hf_materialize import DEFAULT_HF_REPO_ID, ensure_tnsc2020_dataset
 
 
 class ThyroidTNSC2020Decoder:
-    def __init__(
-        self,
-        root: str | Path = "datasets/TNSC2020",
-        auto_download: bool = True,
-        hf_repo_id: str = DEFAULT_HF_REPO_ID,
-        hf_repo_path: Optional[str] = None,
-        hf_revision: str = "main",
-    ):
+    def __init__(self, root: str | Path = "datasets/TNSC2020"):
         self.root = Path(root)
-        if auto_download:
-            self.root = ensure_tnsc2020_dataset(
-                root=self.root,
-                repo_id=hf_repo_id,
-                repo_path=hf_repo_path,
-                revision=hf_revision,
-            )
         self.image_dir = self.root / "image"
         self.mask_dir = self.root / "mask"
         self.train_csv = self.root / "train.csv"
@@ -60,6 +44,10 @@ class ThyroidTNSC2020Decoder:
         image_ids = {p.name for p in self.image_dir.glob("*.PNG")}
         mask_ids = {p.name for p in self.mask_dir.glob("*.PNG")}
         return sorted(image_ids & mask_ids)
+
+    def count_samples(self, max_samples: Optional[int] = None) -> int:
+        total = len(self._sample_ids())
+        return min(total, max_samples) if max_samples is not None else total
 
     def iter_samples(self, max_samples: Optional[int] = None) -> Iterator[DecodedSample]:
         count = 0
@@ -107,35 +95,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--no-auto-download",
         action="store_true",
-        help="Require an existing local TNSC2020 directory instead of downloading from Hugging Face.",
-    )
-    parser.add_argument(
-        "--hf-repo-id",
-        type=str,
-        default=DEFAULT_HF_REPO_ID,
-        help="Hugging Face dataset repo used when local data is missing.",
-    )
-    parser.add_argument(
-        "--hf-repo-path",
-        type=str,
-        default="",
-        help="Explicit zip path inside the Hugging Face repo. If omitted, the Thyroid zip is discovered.",
-    )
-    parser.add_argument(
-        "--hf-revision",
-        type=str,
-        default="main",
-        help="Hugging Face repo revision to download.",
+        help="Deprecated; this decoder reads only local files.",
     )
     args = parser.parse_args()
 
-    decoder = ThyroidTNSC2020Decoder(
-        args.root,
-        auto_download=not args.no_auto_download,
-        hf_repo_id=args.hf_repo_id,
-        hf_repo_path=args.hf_repo_path or None,
-        hf_revision=args.hf_revision,
-    )
+    decoder = ThyroidTNSC2020Decoder(args.root)
 
     if args.export_dir:
         n = export_samples(decoder.iter_samples(max_samples=args.max_samples), args.export_dir)

@@ -23,13 +23,7 @@ from datasets.common import (
     iou_score,
     prepare_medsam_image,
 )
-from datasets.heart_CAMUS import HeartCAMUSDecoder
-from datasets.hf_materialize import DEFAULT_HF_REPO_ID
-from datasets.thyroid_TNSC2020 import ThyroidTNSC2020Decoder
-from datasets.breast_BCU_PD import BreastBCUPDDecoder
-from datasets.breast_BLUSG import BreastBLUSGDecoder
-from datasets.kidney_OKU import KidneyOKUDecoder
-from datasets.bone_UltraBones100k import UltraBones100kDecoder
+from datasets.loader import add_dataset_args, build_decoder_from_args
 
 
 DEFAULT_MEDSAM_CHECKPOINT_REPO_ID = "GleghornLab/medsam-vit-b"
@@ -144,45 +138,6 @@ def medsam_inference(medsam_model, img_embed: torch.Tensor, box_1024: np.ndarray
     return (low_res_pred > 0.5).astype(np.uint8)
 
 
-def build_decoder(args: argparse.Namespace):
-    if args.dataset == "tnsc2020":
-        return ThyroidTNSC2020Decoder(
-            root=args.dataset_root,
-            auto_download=not args.no_auto_download,
-            hf_repo_id=args.hf_repo_id,
-            hf_repo_path=args.hf_repo_path or None,
-            hf_revision=args.hf_revision,
-        )
-    if args.dataset == "bcu_pd":
-        return BreastBCUPDDecoder(
-            root=args.dataset_root,
-            auto_download=not args.no_auto_download,
-            hf_repo_id=args.hf_repo_id,
-            hf_repo_path=args.hf_repo_path or None,
-            hf_revision=args.hf_revision,
-        )
-    if args.dataset == "camus":
-        return HeartCAMUSDecoder(
-            root=args.dataset_root,
-            include_half_sequence=args.include_half_sequence,
-            positive_labels=tuple(int(x) for x in args.camus_labels.split(",") if x.strip()),
-        )
-    if args.dataset == "blusg":
-        return BreastBLUSGDecoder(
-            root=args.dataset_root,
-            include_other=not args.blusg_only_tumor,
-        )
-    if args.dataset == "oku":
-        anatomy_filter = [a.strip() for a in args.oku_anatomy.split(",") if a.strip()]
-        return KidneyOKUDecoder(
-            root=args.dataset_root,
-            anatomy_filter=anatomy_filter,
-            prefer_labels_2=not args.oku_prefer_labels_1,
-        )
-    if args.dataset == "ultrabones100k":
-        return UltraBones100kDecoder(root=args.dataset_root)
-    raise ValueError(f"Unsupported dataset: {args.dataset}")
-
 def jitter_bbox(
     bbox: np.ndarray, jitter_frac: float, height: int, width: int
 ) -> np.ndarray:
@@ -242,36 +197,7 @@ def save_vis(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Test MedSAM inference with GT box prompts")
-    parser.add_argument(
-        "--dataset",
-        type=str,
-        default="tnsc2020",
-        choices=["tnsc2020", "bcu_pd", "camus", "blusg", "oku", "ultrabones100k"],
-    )
-    parser.add_argument("--dataset-root", type=str, default="datasets/TNSC2020")
-    parser.add_argument(
-        "--no-auto-download",
-        action="store_true",
-        help="Require local dataset files instead of downloading missing supported datasets.",
-    )
-    parser.add_argument(
-        "--hf-repo-id",
-        type=str,
-        default=DEFAULT_HF_REPO_ID,
-        help="Hugging Face dataset repo used by on-demand dataset loaders.",
-    )
-    parser.add_argument(
-        "--hf-repo-path",
-        type=str,
-        default="",
-        help="Explicit zip path inside the Hugging Face repo for the selected dataset.",
-    )
-    parser.add_argument(
-        "--hf-revision",
-        type=str,
-        default="main",
-        help="Hugging Face repo revision used by on-demand dataset loaders.",
-    )
+    add_dataset_args(parser, include_camus=True)
     parser.add_argument("--checkpoint", type=str, default="work_dir/MedSAM/medsam_vit_b.pth")
     parser.add_argument(
         "--no-auto-download-checkpoint",
@@ -313,30 +239,12 @@ def main() -> None:
     )
     parser.add_argument("--save-vis", type=int, default=8)
     parser.add_argument("--output-dir", type=str, default="results/medsam_test")
-    parser.add_argument("--include-half-sequence", action="store_true")
-    parser.add_argument("--camus-labels", type=str, default="1,2,3")
-    parser.add_argument(
-        "--blusg-only-tumor",
-        action="store_true",
-        help="Use only tumor masks for BLUSG (ignore other lesion masks).",
-    )
-    parser.add_argument(
-        "--oku-anatomy",
-        type=str,
-        default="Capsule",
-        help="Comma-separated anatomy filter for OKU (e.g., Capsule,Cortex).",
-    )
-    parser.add_argument(
-        "--oku-prefer-labels-1",
-        action="store_true",
-        help="Prefer reviewed_labels_1.csv over reviewed_labels_2.csv.",
-    )
     args = parser.parse_args()
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    decoder = build_decoder(args)
+    decoder = build_decoder_from_args(args)
 
     try:
         from segment_anything import sam_model_registry

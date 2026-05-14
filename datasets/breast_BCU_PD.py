@@ -9,10 +9,8 @@ from skimage import io
 
 try:
     from datasets.common import DecodedSample, export_samples, normalize_to_uint8
-    from datasets.hf_materialize import DEFAULT_HF_REPO_ID, ensure_bcu_pd_dataset
 except ModuleNotFoundError:
     from common import DecodedSample, export_samples, normalize_to_uint8
-    from hf_materialize import DEFAULT_HF_REPO_ID, ensure_bcu_pd_dataset
 
 
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
@@ -48,22 +46,8 @@ def _image_key(path: Path) -> str:
 
 
 class BreastBCUPDDecoder:
-    def __init__(
-        self,
-        root: str | Path = "datasets/BCU_PD",
-        auto_download: bool = True,
-        hf_repo_id: str = DEFAULT_HF_REPO_ID,
-        hf_repo_path: Optional[str] = None,
-        hf_revision: str = "main",
-    ):
+    def __init__(self, root: str | Path = "datasets/BCU_PD"):
         self.root = Path(root)
-        if auto_download:
-            self.root = ensure_bcu_pd_dataset(
-                root=self.root,
-                repo_id=hf_repo_id,
-                repo_path=hf_repo_path,
-                revision=hf_revision,
-            )
         if not self.root.exists():
             raise FileNotFoundError(f"BCU_PD root '{self.root}' not found.")
 
@@ -93,6 +77,14 @@ class BreastBCUPDDecoder:
             if candidates:
                 pairs.append((image_path, sorted(candidates)[0]))
         return pairs
+
+    def count_samples(self, max_samples: Optional[int] = None) -> int:
+        total = 0
+        for _, mask_path in self._pairs:
+            mask = _mask_to_binary(io.imread(mask_path))
+            if mask.sum() > 0:
+                total += 1
+        return min(total, max_samples) if max_samples is not None else total
 
     def iter_samples(self, max_samples: Optional[int] = None) -> Iterator[DecodedSample]:
         count = 0
@@ -124,24 +116,9 @@ if __name__ == "__main__":
     parser.add_argument("--root", type=str, default="datasets/BCU_PD")
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--export-dir", type=str, default="")
-    parser.add_argument("--no-auto-download", action="store_true")
-    parser.add_argument("--hf-repo-id", type=str, default=DEFAULT_HF_REPO_ID)
-    parser.add_argument(
-        "--hf-repo-path",
-        type=str,
-        default="",
-        help="Explicit zip path inside the Hugging Face repo, e.g. zips/Breast/BCU_PD.zip.",
-    )
-    parser.add_argument("--hf-revision", type=str, default="main")
     args = parser.parse_args()
 
-    decoder = BreastBCUPDDecoder(
-        args.root,
-        auto_download=not args.no_auto_download,
-        hf_repo_id=args.hf_repo_id,
-        hf_repo_path=args.hf_repo_path or None,
-        hf_revision=args.hf_revision,
-    )
+    decoder = BreastBCUPDDecoder(args.root)
 
     if args.export_dir:
         n = export_samples(decoder.iter_samples(max_samples=args.max_samples), args.export_dir)

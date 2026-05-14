@@ -7,7 +7,7 @@ This repo is organized for cross-dataset benchmarking of pretrained and future f
 Create and activate the project conda environment:
 
 ```bash
-conda create -n monai-usseg python=3.10
+conda create -n monai-usseg python=3.9
 conda activate monai-usseg
 ```
 
@@ -24,20 +24,19 @@ Curated ultrasound datasets are hosted on Hugging Face:
 
 - Dataset repo: https://huggingface.co/datasets/us-segmentator/us-segmentation-dataset
 - Zip layout: `zips/<Anatomy>/<dataset>.zip`
-- TNSC2020 lives under the `Thyroid` anatomy category.
-- BCU_PD lives under the `Breast` anatomy category.
 
 Raw datasets should not be committed to this repository. Dataset decoders can materialize supported datasets into ignored local cache folders on demand. For TNSC2020:
 
 ```bash
-python datasets/hf_materialize.py --output-dir datasets/TNSC2020
+python -m datasets.registry
+python datasets/hf_materialize.py tnsc2020 --output-dir datasets/TNSC2020
 python datasets/thyroid_TNSC2020.py --root datasets/TNSC2020 --max-samples 10
 ```
 
-If more than one Thyroid zip exists, pass the exact Hugging Face path:
+To override the registered Hugging Face zip path:
 
 ```bash
-python datasets/hf_materialize.py \
+python datasets/hf_materialize.py tnsc2020 \
   --repo-path zips/Thyroid/TNSC2020.zip \
   --output-dir datasets/TNSC2020
 ```
@@ -48,14 +47,17 @@ python datasets/hf_materialize.py \
 us_multi_anatomy_seg/
 |-- datasets/
 |   |-- common.py                  # Unified sample schema + shared preprocessing helpers
-|   |-- thyroid_TNSC2020.py        # TNSC2020 decoder with HF-backed materialization
+|   |-- registry.py                # Dataset availability, local roots, HF zip paths
+|   |-- loader.py                  # Registry-backed decoder construction
+|   |-- hf_materialize.py          # Generic Hugging Face zip download/extraction helper
+|   |-- thyroid_TNSC2020.py        # TNSC2020 decoder
 |   |-- heart_CAMUS.py             # CAMUS raw-data decoder
 |   |-- kidney_OKU.py              # OKU raw-data decoder
-|   |-- hf_materialize.py          # Hugging Face zip download/extraction helpers
 |   `-- <dataset cache dirs>/      # ignored local materializations
 |-- benchmarks/
-|   `-- test_medsam_inference.py   # GT-box prompted MedSAM benchmark
-|-- results/                       # Metrics CSV/JSON + visualizations
+|   |-- medsam_inference.py        # GT-box prompted MedSAM benchmark engine
+|   `-- samus_inference.py         # GT-box prompted SAMUS benchmark engine
+|-- results/                       # Ignored generated metrics/visualizations
 |-- notebooks/                     # Result exploration notebooks
 `-- work_dir/MedSAM/               # MedSAM checkpoint
 ```
@@ -95,9 +97,8 @@ python datasets/breast_BCU_PD.py --root datasets/BCU_PD --max-samples 10
 Use ground-truth masks to build bounding-box prompts, then run MedSAM and report Dice/IoU/latency.
 
 ```bash
-python benchmarks/test_medsam_inference.py \
+python benchmarks/medsam_inference.py \
   --dataset tnsc2020 \
-  --dataset-root datasets/TNSC2020 \
   --checkpoint work_dir/MedSAM/medsam_vit_b.pth \
   --device cuda:0 \
   --max-samples 50 \

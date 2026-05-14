@@ -41,6 +41,10 @@ class BreastBLUSGDecoder:
             masks.extend(self.root.glob(f"{stem}_other*.png"))
         return sorted(masks)
 
+    def count_samples(self, max_samples: Optional[int] = None) -> int:
+        total = sum(1 for img_path in self._image_paths() if self._mask_paths(img_path.stem))
+        return min(total, max_samples) if max_samples is not None else total
+
     def iter_samples(self, max_samples: Optional[int] = None) -> Iterator[DecodedSample]:
         count = 0
         for img_path in self._image_paths():

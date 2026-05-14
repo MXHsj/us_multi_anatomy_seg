@@ -13,6 +13,8 @@ datasets/BLUSG/
 datasets/OKU/
 datasets/CAMUS/
 datasets/UltraBones100k/
+datasets/AULID/
+datasets/UNS/
 .cache/
 data_cache/
 

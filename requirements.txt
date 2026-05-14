@@ -17,5 +17,8 @@ huggingface_hub
 # Visualization outputs from benchmark scripts
 matplotlib
 
+# Compressed TIFF decoding for UNS
+imagecodecs
+
 # CAMUS NIfTI decoder support
 nibabel

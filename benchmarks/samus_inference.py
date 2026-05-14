@@ -14,7 +14,6 @@ import urllib.request
 import numpy as np
 import torch
 import torch.nn.functional as F
-from skimage import io
 from skimage import transform
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -24,9 +23,6 @@ for path in (ROOT_DIR, SAMUS_DIR):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from datasets.bone_UltraBones100k import UltraBones100kDecoder
-from datasets.breast_BCU_PD import BreastBCUPDDecoder
-from datasets.breast_BLUSG import BreastBLUSGDecoder
 from datasets.common import (
     bbox_from_mask,
     dice_score,
@@ -34,9 +30,7 @@ from datasets.common import (
     iou_score,
     normalize_to_uint8,
 )
-from datasets.hf_materialize import DEFAULT_HF_REPO_ID
-from datasets.kidney_OKU import KidneyOKUDecoder
-from datasets.thyroid_TNSC2020 import ThyroidTNSC2020Decoder
+from datasets.loader import add_dataset_args, build_decoder_from_args
 from models.segment_anything_samus.build_sam_us import samus_model_registry
 
 
@@ -83,72 +77,10 @@ def print_progress(
     )
 
 
-def build_decoder(args: argparse.Namespace):
-    if args.dataset == "tnsc2020":
-        return ThyroidTNSC2020Decoder(
-            root=args.dataset_root,
-            auto_download=not args.no_auto_download,
-            hf_repo_id=args.hf_repo_id,
-            hf_repo_path=args.hf_repo_path or None,
-            hf_revision=args.hf_revision,
-        )
-    if args.dataset == "bcu_pd":
-        return BreastBCUPDDecoder(
-            root=args.dataset_root,
-            auto_download=not args.no_auto_download,
-            hf_repo_id=args.hf_repo_id,
-            hf_repo_path=args.hf_repo_path or None,
-            hf_revision=args.hf_revision,
-        )
-    if args.dataset == "blusg":
-        return BreastBLUSGDecoder(
-            root=args.dataset_root,
-            include_other=not args.blusg_only_tumor,
-        )
-    if args.dataset == "oku":
-        anatomy_filter = [a.strip() for a in args.oku_anatomy.split(",") if a.strip()]
-        return KidneyOKUDecoder(
-            root=args.dataset_root,
-            anatomy_filter=anatomy_filter,
-            prefer_labels_2=not args.oku_prefer_labels_1,
-        )
-    if args.dataset == "ultrabones100k":
-        return UltraBones100kDecoder(root=args.dataset_root)
-    raise ValueError(f"Unsupported dataset: {args.dataset}")
-
-
 def get_total_iterations(decoder, max_samples: int | None) -> int | None:
     count_fn = getattr(decoder, "count_samples", None)
     if callable(count_fn):
         return count_fn(max_samples=max_samples)
-    if isinstance(decoder, ThyroidTNSC2020Decoder):
-        total = len(decoder._sample_ids())
-        return min(total, max_samples) if max_samples is not None else total
-    if isinstance(decoder, BreastBLUSGDecoder):
-        total = sum(1 for img_path in decoder._image_paths() if decoder._mask_paths(img_path.stem))
-        return min(total, max_samples) if max_samples is not None else total
-    if isinstance(decoder, KidneyOKUDecoder):
-        total = 0
-        for img_path in decoder._image_paths():
-            polys = decoder._annotations.get(img_path.name, [])
-            if not polys:
-                continue
-            if decoder.anatomy_filter:
-                if not any(anatomy in decoder.anatomy_filter for _, _, anatomy in polys):
-                    continue
-            total += 1
-        return min(total, max_samples) if max_samples is not None else total
-    if isinstance(decoder, BreastBCUPDDecoder):
-        total = 0
-        for _, mask_path in decoder._pairs:
-            mask_arr = np.asarray(io.imread(mask_path))
-            if mask_arr.ndim == 3:
-                mask = np.any(mask_arr[..., :3] > 0, axis=-1).astype(np.uint8)
-            else:
-                mask = (mask_arr > 0).astype(np.uint8)
-            if mask.sum() > 0:
-                total += 1
-        return min(total, max_samples) if max_samples is not None else total
     return max_samples
 
 
@@ -382,36 +314,7 @@ def save_vis(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Test SAMUS inference with GT box prompts")
-    parser.add_argument(
-        "--dataset",
-        type=str,
-        default="tnsc2020",
-        choices=["tnsc2020", "bcu_pd", "blusg", "oku", "ultrabones100k"],
-    )
-    parser.add_argument("--dataset-root", type=str, default="datasets/TNSC2020")
-    parser.add_argument(
-        "--no-auto-download",
-        action="store_true",
-        help="Require local dataset files instead of downloading missing supported datasets.",
-    )
-    parser.add_argument(
-        "--hf-repo-id",
-        type=str,
-        default=DEFAULT_HF_REPO_ID,
-        help="Hugging Face dataset repo used by on-demand dataset loaders.",
-    )
-    parser.add_argument(
-        "--hf-repo-path",
-        type=str,
-        default="",
-        help="Explicit zip path inside the Hugging Face repo for the selected dataset.",
-    )
-    parser.add_argument(
-        "--hf-revision",
-        type=str,
-        default="main",
-        help="Hugging Face repo revision used by on-demand dataset loaders.",
-    )
+    add_dataset_args(parser, include_camus=False)
     parser.add_argument(
         "--checkpoint",
         type=str,
@@ -467,28 +370,12 @@ def main() -> None:
         help="Low-resolution mask size expected by SAMUS configs.",
     )
     parser.add_argument("--vit-name", type=str, default="vit_b")
-    parser.add_argument(
-        "--blusg-only-tumor",
-        action="store_true",
-        help="Use only tumor masks for BLUSG (ignore other lesion masks).",
-    )
-    parser.add_argument(
-        "--oku-anatomy",
-        type=str,
-        default="Capsule",
-        help="Comma-separated anatomy filter for OKU (e.g., Capsule,Cortex).",
-    )
-    parser.add_argument(
-        "--oku-prefer-labels-1",
-        action="store_true",
-        help="Prefer reviewed_labels_1.csv over reviewed_labels_2.csv.",
-    )
     args = parser.parse_args()
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    decoder = build_decoder(args)
+    decoder = build_decoder_from_args(args)
     model = build_model(args)
     total_iterations = get_total_iterations(decoder, args.max_samples)
 

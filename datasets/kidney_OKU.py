@@ -109,6 +109,19 @@ class KidneyOKUDecoder:
             mask[rr, cc] = 1
         return mask
 
+    def count_samples(self, max_samples: Optional[int] = None) -> int:
+        total = 0
+        for img_path in self._image_paths():
+            polys = self._annotations.get(img_path.name, [])
+            if not polys:
+                continue
+            if self.anatomy_filter and not any(
+                anatomy in self.anatomy_filter for _, _, anatomy in polys
+            ):
+                continue
+            total += 1
+        return min(total, max_samples) if max_samples is not None else total
+
     def iter_samples(self, max_samples: Optional[int] = None) -> Iterator[DecodedSample]:
         count = 0
         for img_path in self._image_paths():
