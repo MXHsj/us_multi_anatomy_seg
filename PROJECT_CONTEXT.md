@@ -26,7 +26,6 @@ Implemented decoders:
 | `camus` | Heart | NIfTI ED/ES and optional cine half-sequence volumes, paired with `_gt.nii.gz` masks. |
 | `aulid` | Liver | JPG images with JSON polygon masks for `mass`, `liver`, or `outline`. |
 | `uns` | Nerve | TIFF images paired with `_mask.tif` masks. |
-| `ftp` | Fetus | Fetal Planes / FTP paired-image/mask decoder for curated segmentation materializations; public classification-only layouts yield zero segmentation samples. |
 
 BCU_PD has been removed and is no longer part of the registry or benchmark wrappers.
 
@@ -47,8 +46,8 @@ Visualization dumping now samples evenly across the evaluated run when `--save-v
 
 Current GT wrapper scripts cover:
 
-- MedSAM: TNSC2020, BLUSG, OKU, UltraBones100k, CAMUS, AULID, FTP.
-- SAMUS: TNSC2020, BLUSG, OKU, UltraBones100k, CAMUS, AULID, FTP.
+- MedSAM: TNSC2020, BLUSG, OKU, UltraBones100k, CAMUS, AULID, UNS.
+- SAMUS: TNSC2020, BLUSG, OKU, UltraBones100k, CAMUS, AULID, UNS.
 
 The CAMUS local materialization contains 500 patient folders. By default, the decoder excludes cine half-sequences and benchmarks 2000 ED/ES samples: 500 patients x 2 views x 2 phases. With `--include-half-sequence`, cine volumes are expanded into frame-level samples.
 

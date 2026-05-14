@@ -58,14 +58,6 @@ DATASET_REGISTRY: dict[str, DatasetSpec] = {
         decoder_class="datasets.heart_CAMUS:HeartCAMUSDecoder",
         hf_repo_path="zips/Heart/CAMUS.zip",
     ),
-    "ftp": DatasetSpec(
-        key="ftp",
-        display_name="Fetal Planes",
-        anatomy="Fetus",
-        default_root="datasets/FTP",
-        decoder_class="datasets.fetus_FTP:FetusFTPDecoder",
-        hf_repo_path="zips/Fetus/fetal_planes.zip",
-    ),
     "aulid": DatasetSpec(
         key="aulid",
         display_name="AULID",

@@ -4,7 +4,6 @@ from datasets.thyroid_TNSC2020 import ThyroidTNSC2020Decoder
 from datasets.breast_BLUSG import BreastBLUSGDecoder
 from datasets.kidney_OKU import KidneyOKUDecoder
 from datasets.bone_UltraBones100k import UltraBones100kDecoder
-from datasets.fetus_FTP import FetusFTPDecoder
 from datasets.liver_AULID import AULIDDecoder
 from datasets.nerve_UNS import UNSDecoder
 
@@ -15,7 +14,6 @@ __all__ = [
     "BreastBLUSGDecoder",
     "KidneyOKUDecoder",
     "UltraBones100kDecoder",
-    "FetusFTPDecoder",
     "AULIDDecoder",
     "UNSDecoder",
 ]

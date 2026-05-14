@@ -22,3 +22,6 @@ imagecodecs
 
 # CAMUS NIfTI decoder support
 nibabel
+
+# UNS decoder support
+imagecodecs

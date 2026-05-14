@@ -65,7 +65,6 @@ Available Hugging Face zips scanned from the dataset repo:
 | --- | --- | --- | --- |
 | Bone | UltraBones100k | `zips/Bone/UltraBones100k.zip` | `ultrabones100k` |
 | Breast | BrEaST Lesions USG | `zips/Breast/BrEaST-Lesions_USG.zip` | `blusg` |
-| Fetus | fetal_planes | `zips/Fetus/fetal_planes.zip` | `ftp` |
 | Heart | CAMUS | `zips/Heart/CAMUS.zip` | `camus` |
 | Kidney | OKU | `zips/kidney/OKU.zip` | `oku` |
 | Liver | AULID | `zips/Liver/AULID.zip` | `aulid` |
@@ -84,7 +83,6 @@ Each decoder normalizes its source dataset into the shared `DecodedSample` schem
 | `oku` | `datasets/OKU` | Flat kidney PNG images plus `reviewed_labels_1.csv` / `reviewed_labels_2.csv` polygon annotations. | One image with polygons rasterized for selected anatomy; default benchmark anatomy is `Capsule`. |
 | `ultrabones100k` | `datasets/UltraBones100k` | Nested `specimen*/<anatomy>/record*/UltrasoundImages/*.png` paired with `<label-folder>/<timestamp>_label.png`, plus optional `tracking.csv`. | One ultrasound frame and bone surface label per paired timestamp; benchmark wrappers use `--box-padding 10` for thin masks. |
 | `camus` | `datasets/CAMUS` | `patient*/patient*_2CH|4CH_ED|ES|half_sequence.nii.gz` paired with `_gt.nii.gz`; per-view `Info_*.cfg` files may also be present. | By default, ED/ES only: 500 patients x 2 views x 2 phases = 2000 samples. `--include-half-sequence` also expands cine volumes into frame-level samples. |
-| `ftp` | `datasets/FTP` | Fetal Planes / FTP materialization. The public dataset is primarily classification-style; the decoder looks for paired image/mask files in common mask/label/segmentation layouts and reads `FETAL_PLANES_DB_data.csv` metadata when present. | One fetal ultrasound image/mask pair when segmentation masks are available; yields zero benchmark samples for classification-only materializations. |
 | `aulid` | `datasets/AULID` | Category folders `Benign/`, `Malignant/`, `Normal/`, each with `image/*.jpg` and `segmentation/<label>/*.json` polygon masks. | One liver image with selected JSON polygon label; default label is `mass`. |
 | `uns` | `datasets/UNS` | `train/*.tif` images paired with same-stem `*_mask.tif`. | One nerve image/mask pair per training TIFF. |
 
@@ -166,14 +164,14 @@ The wrapper scripts under `benchmarks/test_*_gt_*.py` are the current reproducib
 | `test_medsam_gt_ultrabones100k.py` | MedSAM | `ultrabones100k` | 100 | 10 | `cuda:0` | 20 | `results/medsam_gt_ultrabones100k` |
 | `test_medsam_gt_camus.py` | MedSAM | `camus` | 2000 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_camus` |
 | `test_medsam_gt_aulid.py` | MedSAM | `aulid` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_aulid` |
-| `test_medsam_gt_ftp.py` | MedSAM | `ftp` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_ftp` |
+| `test_medsam_gt_uns.py` | MedSAM | `uns` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_uns` |
 | `test_samus_gt_tnsc2020.py` | SAMUS | `tnsc2020` | full dataset | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_tnsc2020` |
 | `test_samus_gt_blusg.py` | SAMUS | `blusg` | full dataset | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_blusg` |
 | `test_samus_gt_oku.py` | SAMUS | `oku` | full dataset | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_oku` |
 | `test_samus_gt_ultrabones100k.py` | SAMUS | `ultrabones100k` | full dataset | 10 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_ultrabones100k` |
 | `test_samus_gt_camus.py` | SAMUS | `camus` | full default CAMUS ED/ES set | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_camus` |
 | `test_samus_gt_aulid.py` | SAMUS | `aulid` | full dataset | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_aulid` |
-| `test_samus_gt_ftp.py` | SAMUS | `ftp` | all paired segmentation samples | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_ftp` |
+| `test_samus_gt_uns.py` | SAMUS | `uns` | full dataset | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_uns` |
 
 Shared defaults: GT masks are converted to bounding-box prompts; jitter is disabled for GT wrappers (`--bbox-jitter-prob 0.0` for MedSAM); MedSAM defaults to `--max-samples 20` when called directly, while SAMUS defaults to all available decoded samples when called directly. Dataset-specific options include `--oku-anatomy Capsule`, `--aulid-label mass`, `--camus-labels 1,2,3`, and `--include-half-sequence`.
 
