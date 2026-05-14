@@ -1,0 +1,12 @@
+{
+  "dataset": "uns",
+  "dataset_root": "datasets/UNS",
+  "num_evaluated": 39,
+  "num_skipped_empty_mask": 61,
+  "dice_mean": 0.920296311378479,
+  "dice_std": 0.04591958969831467,
+  "iou_mean": 0.8554859757423401,
+  "iou_std": 0.07359504699707031,
+  "infer_ms_mean": 1148.5216064453125,
+  "infer_ms_std": 86.69393157958984
+}

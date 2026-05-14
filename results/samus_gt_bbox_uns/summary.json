@@ -1,0 +1,16 @@
+{
+  "dataset": "uns",
+  "dataset_root": "datasets/UNS",
+  "checkpoint": "work_dir/SAMUS/ckp/SAMUS.pth",
+  "sam_ckpt": "work_dir/SAMUS/checkpoints/sam_vit_b_01ec64.pth",
+  "batch_size": 1,
+  "num_workers": 0,
+  "num_evaluated": 2323,
+  "num_skipped_empty_mask": 3312,
+  "dice_mean": 0.8034107685089111,
+  "dice_std": 0.05864045023918152,
+  "iou_mean": 0.6752045750617981,
+  "iou_std": 0.07752081751823425,
+  "infer_ms_mean": 61.95719528198242,
+  "infer_ms_std": 12.424964904785156
+}

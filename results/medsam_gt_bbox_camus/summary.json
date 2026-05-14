@@ -1,0 +1,12 @@
+{
+  "dataset": "camus",
+  "dataset_root": "datasets/CAMUS",
+  "num_evaluated": 2000,
+  "num_skipped_empty_mask": 0,
+  "dice_mean": 0.8361148238182068,
+  "dice_std": 0.04574478417634964,
+  "iou_mean": 0.7209492325782776,
+  "iou_std": 0.06543251127004623,
+  "infer_ms_mean": 1189.8812255859375,
+  "infer_ms_std": 233.51144409179688
+}
