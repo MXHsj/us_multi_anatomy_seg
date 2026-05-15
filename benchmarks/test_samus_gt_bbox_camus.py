@@ -15,6 +15,8 @@ DEFAULT_ARGS = [
     "camus",
     "--dataset-root",
     DATASET_ROOT,
+    "--max-samples",
+    "2000",
     "--device",
     DEVICE,
     "--save-vis",

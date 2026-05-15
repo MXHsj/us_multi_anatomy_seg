@@ -15,6 +15,8 @@ DEFAULT_ARGS = [
     "blusg",
     "--dataset-root",
     DATASET_ROOT,
+    "--max-samples",
+    "100",
     "--device",
     DEVICE,
     "--save-vis",

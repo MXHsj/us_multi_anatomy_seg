@@ -5,7 +5,12 @@
   "sam_ckpt": "work_dir/SAMUS/checkpoints/sam_vit_b_01ec64.pth",
   "batch_size": 1,
   "num_workers": 0,
-  "num_evaluated": 0,
+  "num_evaluated": 100,
   "num_skipped_empty_mask": 0,
-  "error": "No valid samples were evaluated."
+  "dice_mean": 0.8597434759140015,
+  "dice_std": 0.01783035136759281,
+  "iou_mean": 0.7544164061546326,
+  "iou_std": 0.027192598208785057,
+  "infer_ms_mean": 245.76922607421875,
+  "infer_ms_std": 19.25869369506836
 }

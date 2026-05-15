@@ -13,6 +13,8 @@ OUTPUT_DIR = "results/samus_gt_bbox_ultrabones100k"
 DEFAULT_ARGS = [
     "--dataset",
     "ultrabones100k",
+    "--max-samples",
+    "100",
     "--dataset-root",
     DATASET_ROOT,
     "--box-padding",

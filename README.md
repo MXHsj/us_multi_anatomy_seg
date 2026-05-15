@@ -165,15 +165,15 @@ The wrapper scripts under `benchmarks/test_*_gt_bbox_*.py` are the current repro
 | `test_medsam_gt_bbox_camus.py` | MedSAM | `camus` | 2000 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_camus` |
 | `test_medsam_gt_bbox_aulid.py` | MedSAM | `aulid` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_aulid` |
 | `test_medsam_gt_bbox_uns.py` | MedSAM | `uns` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_uns` |
-| `test_samus_gt_bbox_tnsc2020.py` | SAMUS | `tnsc2020` | full dataset | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_tnsc2020` |
-| `test_samus_gt_bbox_blusg.py` | SAMUS | `blusg` | full dataset | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_blusg` |
-| `test_samus_gt_bbox_oku.py` | SAMUS | `oku` | full dataset | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_oku` |
-| `test_samus_gt_bbox_ultrabones100k.py` | SAMUS | `ultrabones100k` | full dataset | 10 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_ultrabones100k` |
-| `test_samus_gt_bbox_camus.py` | SAMUS | `camus` | full default CAMUS ED/ES set | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_camus` |
-| `test_samus_gt_bbox_aulid.py` | SAMUS | `aulid` | full dataset | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_aulid` |
-| `test_samus_gt_bbox_uns.py` | SAMUS | `uns` | full dataset | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_uns` |
+| `test_samus_gt_bbox_tnsc2020.py` | SAMUS | `tnsc2020` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_tnsc2020` |
+| `test_samus_gt_bbox_blusg.py` | SAMUS | `blusg` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_blusg` |
+| `test_samus_gt_bbox_oku.py` | SAMUS | `oku` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_oku` |
+| `test_samus_gt_bbox_ultrabones100k.py` | SAMUS | `ultrabones100k` | 100 | 10 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_ultrabones100k` |
+| `test_samus_gt_bbox_camus.py` | SAMUS | `camus` | 2000 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_camus` |
+| `test_samus_gt_bbox_aulid.py` | SAMUS | `aulid` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_aulid` |
+| `test_samus_gt_bbox_uns.py` | SAMUS | `uns` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_uns` |
 
-Shared defaults: GT masks are converted to bounding-box prompts; jitter is disabled for GT wrappers (`--bbox-jitter-prob 0.0` for MedSAM); MedSAM defaults to `--max-samples 20` when called directly, while SAMUS defaults to all available decoded samples when called directly. Dataset-specific options include `--oku-anatomy Capsule`, `--aulid-label mass`, `--camus-labels 1,2,3`, and `--include-half-sequence`.
+Shared wrapper defaults: GT masks are converted to bounding-box prompts; MedSAM GT wrappers disable bbox jitter with `--bbox-jitter-prob 0.0`; MedSAM and SAMUS GT wrappers now use matched `--max-samples` caps per dataset for comparable default runs (`100` for AULID, BLUSG, OKU, TNSC2020, UltraBones100k, and UNS; `2000` for CAMUS ED/ES). UltraBones100k wrappers use `--box-padding 10`; other datasets use `0`. Dataset-specific options include `--oku-anatomy Capsule`, `--aulid-label mass`, `--camus-labels 1,2,3`, and `--include-half-sequence`.
 
 ## Adding A New Dataset
 
@@ -205,4 +205,3 @@ python benchmarks/medsam_inference.py \
 
 - [MedSAM]()
 - [UltraSAM](https://arxiv.org/html/2411.16222v1)
-

@@ -15,6 +15,8 @@ DEFAULT_ARGS = [
     "tnsc2020",
     "--dataset-root",
     DATASET_ROOT,
+    "--max-samples",
+    "100",
     "--device",
     DEVICE,
     "--save-vis",
