@@ -102,9 +102,12 @@ us_multi_anatomy_seg/
 |-- benchmarks/
 |   |-- medsam_inference.py        # GT-box prompted MedSAM benchmark engine
 |   `-- samus_inference.py         # GT-box prompted SAMUS benchmark engine
+|-- analysis/
+|   |-- model_across_datasets.py   # Same-model cross-dataset summaries + figures
+|   `-- compare_models_same_dataset.py
 |-- results/                       # Ignored generated metrics/visualizations
 |-- notebooks/                     # Result exploration notebooks
-`-- work_dir/MedSAM/               # MedSAM checkpoint
+`-- work_dir/                     # Local model code/checkpoints, including MedSAM/SAMUS
 ```
 
 ## Benchmark Usage
@@ -174,6 +177,29 @@ The wrapper scripts under `benchmarks/test_*_gt_bbox_*.py` are the current repro
 | `test_samus_gt_bbox_uns.py` | SAMUS | `uns` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_uns` |
 
 Shared wrapper defaults: GT masks are converted to bounding-box prompts; MedSAM GT wrappers disable bbox jitter with `--bbox-jitter-prob 0.0`; MedSAM and SAMUS GT wrappers now use matched `--max-samples` caps per dataset for comparable default runs (`100` for AULID, BLUSG, OKU, TNSC2020, UltraBones100k, and UNS; `2000` for CAMUS ED/ES). UltraBones100k wrappers use `--box-padding 10`; other datasets use `0`. Dataset-specific options include `--oku-anatomy Capsule`, `--aulid-label mass`, `--camus-labels 1,2,3`, and `--include-half-sequence`.
+
+When rerunning into an existing output directory, old visualization PNGs are not automatically deleted. Remove or move the existing `visualizations/` folder first if you need the qualitative sample set to reflect only the latest run.
+
+## Quantitative Analysis
+
+The `analysis/` folder contains lightweight scripts for result aggregation and figure generation from `results/`.
+
+Same-model performance across datasets:
+
+```bash
+python analysis/model_across_datasets.py --model medsam
+python analysis/model_across_datasets.py --model samus
+```
+
+These commands print Dice/IoU mean and standard deviation tables and save paper-style plots with mean bars, standard-deviation error bars, and per-sample scatter points under `analysis/figures/`.
+
+Matched model comparison on the same datasets:
+
+```bash
+python analysis/compare_models_same_dataset.py
+```
+
+This compares MedSAM and SAMUS using shared `sample_id`s from each pair of `per_sample_metrics.csv` files, which is preferred when one result folder was generated with a larger sample cap than the other. Both analysis scripts support `--output-csv`, `--plot-path`, `--plot-title`, and `--no-plot`.
 
 ## Adding A New Dataset
 

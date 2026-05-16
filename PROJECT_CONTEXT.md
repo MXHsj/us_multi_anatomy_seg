@@ -43,13 +43,21 @@ Both engines write:
 - `visualizations/*.png`
 
 Visualization dumping now samples evenly across the evaluated run when `--save-vis N` is used, instead of saving only the first `N` consecutive cases.
+Existing visualization files are not cleaned automatically when rerunning into an existing result folder, so old PNGs should be removed before regenerating qualitative samples for a run.
 
 Current GT wrapper scripts cover:
 
 - MedSAM: TNSC2020, BLUSG, OKU, UltraBones100k, CAMUS, AULID, UNS.
 - SAMUS: TNSC2020, BLUSG, OKU, UltraBones100k, CAMUS, AULID, UNS.
 
+The GT wrapper defaults are aligned across MedSAM and SAMUS for comparable default runs: `--max-samples 100` for AULID, BLUSG, OKU, TNSC2020, UltraBones100k, and UNS; `--max-samples 2000` for CAMUS ED/ES; `--save-vis 20`; `--box-padding 10` only for UltraBones100k and `0` otherwise. MedSAM wrappers additionally pass `--bbox-jitter-prob 0.0` because the MedSAM engine exposes jitter controls.
+
 The CAMUS local materialization contains 500 patient folders. By default, the decoder excludes cine half-sequences and benchmarks 2000 ED/ES samples: 500 patients x 2 views x 2 phases. With `--include-half-sequence`, cine volumes are expanded into frame-level samples.
+
+The project also has an `analysis/` workspace for quantitative result aggregation and paper-style figure generation:
+
+- `analysis/model_across_datasets.py`: same-model cross-dataset Dice/IoU mean/std summaries, with mean bars, standard-deviation error bars, and per-sample scatter plots.
+- `analysis/compare_models_same_dataset.py`: matched-sample MedSAM-vs-SAMUS comparisons by dataset, using shared `sample_id`s to avoid misleading comparisons when older result folders used different sample caps.
 
 ## Completed Hygiene / Infrastructure
 
@@ -60,21 +68,24 @@ The CAMUS local materialization contains 500 patient folders. By default, the de
 - CAMUS dependencies are represented in `requirements.txt` through `nibabel`.
 - SAMUS benchmark CLI now accepts CAMUS.
 - MedSAM benchmark now has progress reporting similar to SAMUS.
+- SAMUS GT wrapper scripts now include explicit `--max-samples` defaults aligned with MedSAM wrappers.
+- Initial quantitative analysis scripts and generated figures exist under `analysis/`.
 
 ## Existing Results Snapshot
 
-Existing local result folders include early MedSAM GT and jittered runs for TNSC2020, BLUSG, and OKU, plus SAMUS GT runs for TNSC2020, BLUSG, OKU, UltraBones100k, and CAMUS-related work in progress.
+Existing local result folders include MedSAM GT runs for AULID, BLUSG, CAMUS, OKU, TNSC2020, UltraBones100k, and UNS; SAMUS GT runs for the same seven datasets; and MedSAM jittered bbox runs for BLUSG, OKU, and TNSC2020. Interpret results generated before the wrapper alignment carefully if the model/dataset pair used a different sample cap.
 
 Interpret older results carefully:
 
-- Some earlier MedSAM wrappers capped runs at 100 samples.
+- Earlier SAMUS wrappers ran full decoded datasets by default, while MedSAM wrappers often capped runs at 100 samples.
 - CAMUS MedSAM was initially run on 100 samples, which covered only the first 25 patients across 2CH/4CH ED/ES. The CAMUS GT wrapper now targets the full default ED/ES set of 2000 samples.
+- Existing visualization samples may differ across model folders if one folder was generated before the matched `--max-samples` defaults or if stale PNGs remain from an earlier run.
 - Prompt-jitter outputs are useful for future prompt-sensitivity analysis but are not the immediate benchmark priority.
 
 ## Near-Term TODOs
 
 1. Finish GT-box model benchmarking:
-   - Run full MedSAM and SAMUS GT benchmarks on the selected datasets using the wrapper defaults documented in `README.md`.
+   - Run MedSAM and SAMUS GT benchmarks on the selected datasets using the matched wrapper defaults documented in `README.md`.
    - Keep UltraBones100k filled bone-shadow masks as the main benchmark target; use original thin surface labels only for sensitivity checks.
    - Keep result folders model/dataset/prompt-specific, for example `results/medsam_gt_bbox_camus`.
 
@@ -102,7 +113,7 @@ Interpret older results carefully:
 
 7. Add failure analysis:
    - Generate ranked failure cases and stratified summaries by anatomy, dataset, object size, view/phase, and mask complexity.
-   - Use notebooks or scripts under `notebooks/` for qualitative review and figure preparation.
+   - Extend `analysis/` scripts and/or notebooks for qualitative review and figure preparation.
 
 ## Open Design Decisions
 
@@ -119,4 +130,3 @@ Interpret older results carefully:
 - GT-box benchmarking is the current priority; degraded-prompt experiments should be revisited later.
 - Mean performance is not enough; the project should emphasize stratified results, tail failures, and qualitative inspection.
 - All reported runs should be reproducible from dataset version, decoder options, sample subset, model checkpoint, prompt protocol, and environment metadata.
-
