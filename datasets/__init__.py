@@ -6,6 +6,7 @@ from datasets.kidney_OKU import KidneyOKUDecoder
 from datasets.bone_UltraBones100k import UltraBones100kDecoder
 from datasets.liver_AULID import AULIDDecoder
 from datasets.nerve_UNS import UNSDecoder
+from datasets.lung_RobLUS import RobLUSDecoder
 
 __all__ = [
     "DecodedSample",
@@ -16,4 +17,5 @@ __all__ = [
     "UltraBones100kDecoder",
     "AULIDDecoder",
     "UNSDecoder",
+    "RobLUSDecoder",
 ]

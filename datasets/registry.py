@@ -58,6 +58,14 @@ DATASET_REGISTRY: dict[str, DatasetSpec] = {
         decoder_class="datasets.heart_CAMUS:HeartCAMUSDecoder",
         hf_repo_path="zips/Heart/CAMUS.zip",
     ),
+    "roblus": DatasetSpec(
+        key="roblus",
+        display_name="RobLUS",
+        anatomy="Lung",
+        default_root="datasets/RobLUS",
+        decoder_class="datasets.lung_RobLUS:RobLUSDecoder",
+        hf_repo_path="zips/Lung/RobLUS.zip",
+    ),
     "aulid": DatasetSpec(
         key="aulid",
         display_name="AULID",

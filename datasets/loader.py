@@ -39,6 +39,13 @@ def _decoder_kwargs(dataset_name: str, args: argparse.Namespace) -> dict[str, An
         }
     if dataset_name == "aulid":
         return {"label": args.aulid_label}
+    if dataset_name == "roblus":
+        labels = [label.strip() for label in args.roblus_labels.split(",") if label.strip()]
+        subjects = [subject.strip() for subject in args.roblus_subjects.split(",") if subject.strip()]
+        return {
+            "labels": labels,
+            "subjects": subjects or None,
+        }
     return {}
 
 
@@ -120,4 +127,16 @@ def add_dataset_args(parser: argparse.ArgumentParser, include_camus: bool = True
         default="mass",
         choices=["mass", "liver", "outline"],
         help="AULID segmentation label used as the benchmark mask.",
+    )
+    parser.add_argument(
+        "--roblus-labels",
+        type=str,
+        default="pleural_line,rib_shadow",
+        help="Comma-separated RobLUS labels to merge into the benchmark mask.",
+    )
+    parser.add_argument(
+        "--roblus-subjects",
+        type=str,
+        default="",
+        help="Optional comma-separated RobLUS subject filter, e.g. AP,BM.",
     )

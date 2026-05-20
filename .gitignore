@@ -15,6 +15,7 @@ datasets/FTP/
 datasets/UltraBones100k/
 datasets/AULID/
 datasets/UNS/
+datasets/RobLUS/
 .cache/
 data_cache/
 
