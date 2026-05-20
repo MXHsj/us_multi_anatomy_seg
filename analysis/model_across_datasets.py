@@ -19,6 +19,7 @@ DATASET_LABELS = {
     "blusg": "BLUSG",
     "camus": "CAMUS",
     "oku": "OKU",
+    "roblus": "RobLUS",
     "tnsc2020": "TNSC2020",
     "ultrabones100k": "UltraBones",
     "uns": "UNS",
@@ -116,8 +117,9 @@ def read_per_sample_points(result_dir: Path) -> dict[str, list[float]]:
 
 
 def default_plot_path(protocol: str, model: str | None) -> Path:
-    model_label = model or "all_models"
-    return Path("analysis") / "figures" / f"model_across_datasets_{protocol}_{model_label}.png"
+    if model is None:
+        raise ValueError("A model filter is required for the default plot path.")
+    return Path("analysis") / "figures" / f"model_across_datasets_{protocol}_{model}.png"
 
 
 def _display_label(row: dict[str, Any], include_model: bool) -> str:
@@ -270,7 +272,10 @@ def main() -> None:
         "--plot-path",
         type=Path,
         default=None,
-        help="Figure output path. Defaults to analysis/figures/...",
+        help=(
+            "Figure output path. Defaults to analysis/figures/... for --model; "
+            "when --model is omitted, one default figure is saved per model."
+        ),
     )
     parser.add_argument(
         "--plot-title",
@@ -297,9 +302,19 @@ def main() -> None:
     if args.output_csv is not None:
         write_csv(rows, args.output_csv)
         print(f"\nSaved CSV to: {args.output_csv}")
-    if not args.no_plot:
-        plot_path = args.plot_path or default_plot_path(args.protocol, args.model or None)
+    if args.no_plot:
+        return
+
+    if args.model or args.plot_path is not None:
+        plot_path = args.plot_path or default_plot_path(args.protocol, args.model)
         plot_rows(rows, plot_path, title=args.plot_title)
+        print(f"Saved plot to: {plot_path}")
+        return
+
+    for model in sorted({row["model"] for row in rows}):
+        model_rows = [row for row in rows if row["model"] == model]
+        plot_path = default_plot_path(args.protocol, model)
+        plot_rows(model_rows, plot_path, title=args.plot_title)
         print(f"Saved plot to: {plot_path}")
 
 
