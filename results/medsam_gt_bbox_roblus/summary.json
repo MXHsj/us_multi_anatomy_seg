@@ -3,10 +3,10 @@
   "dataset_root": "datasets/RobLUS",
   "num_evaluated": 615,
   "num_skipped_empty_mask": 149,
-  "dice_mean": 0.6818132996559143,
-  "dice_std": 0.0815485268831253,
-  "iou_mean": 0.5234034657478333,
-  "iou_std": 0.09999769181013107,
-  "infer_ms_mean": 1223.6728515625,
-  "infer_ms_std": 72.71710205078125
+  "dice_mean": 0.60176020860672,
+  "dice_std": 0.10717270523309708,
+  "iou_mean": 0.43828949332237244,
+  "iou_std": 0.10406975448131561,
+  "infer_ms_mean": 1275.100341796875,
+  "infer_ms_std": 550.950927734375
 }

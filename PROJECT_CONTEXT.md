@@ -26,7 +26,7 @@ Implemented decoders:
 | `camus` | Heart | NIfTI ED/ES and optional cine half-sequence volumes, paired with `_gt.nii.gz` masks. |
 | `aulid` | Liver | JPG images with JSON polygon masks for `mass`, `liver`, or `outline`. |
 | `uns` | Nerve | TIFF images paired with `_mask.tif` masks. |
-| `roblus` | Lung | Cleaned RobLUS decoder for subjects `AP`, `BM`, `CP`, `SG`, and `XM`; reads `US_*.jpg` frames paired with `pleural_line` and `rib_shadow` masks. |
+| `roblus` | Lung | Cleaned RobLUS decoder for subjects `AP`, `BM`, `CP`, `SG`, and `XM`; reads `US_*.jpg` frames paired with `pleural_line` and `rib_shadow` masks. Default benchmark target is class-specific `pleural_line`. |
 
 BCU_PD has been removed and is no longer part of the registry or benchmark wrappers.
 
@@ -51,7 +51,7 @@ Current GT wrapper scripts cover:
 - MedSAM: TNSC2020, BLUSG, OKU, UltraBones100k, CAMUS, AULID, UNS, RobLUS.
 - SAMUS: TNSC2020, BLUSG, OKU, UltraBones100k, CAMUS, AULID, UNS, RobLUS.
 
-RobLUS GT wrappers iterate all 764 cleaned samples. The current GT-box engines evaluate the 615 annotated pleural-line/rib-shadow frames and skip the 149 empty-mask negative controls because no bounding-box prompt can be generated.
+RobLUS GT wrappers iterate all 764 cleaned samples and use `--roblus-labels pleural_line`. The current GT-box engines evaluate the 615 annotated pleural-line frames and skip the 149 empty-mask negative controls because no bounding-box prompt can be generated. Merged pleural-line/rib-shadow runs should not be used for benchmark reporting because a single combined bbox is not a valid prompt protocol for separate anatomies or instances.
 
 The GT wrapper defaults are aligned across MedSAM and SAMUS for comparable default runs: `--max-samples 100` for AULID, BLUSG, OKU, TNSC2020, UltraBones100k, and UNS; `--max-samples 2000` for CAMUS ED/ES; `--save-vis 20`; `--box-padding 10` only for UltraBones100k and `0` otherwise. MedSAM wrappers additionally pass `--bbox-jitter-prob 0.0` because the MedSAM engine exposes jitter controls.
 
@@ -66,7 +66,7 @@ The project also has an `analysis/` workspace for quantitative result aggregatio
 
 - Raw dataset folders, checkpoints, generated results, cache folders, and zips are ignored by `.gitignore`.
 - RobLUS local materializations are ignored under `datasets/RobLUS/`.
-- RobLUS has been cleaned locally: unlabeled frames were removed except selected negative controls, empty pleural-line/rib-shadow masks were created for those controls, and unused `rib`/`cartilage` mask folders were removed.
+- RobLUS has been cleaned locally: unlabeled frames were removed except selected negative controls, empty pleural-line/rib-shadow masks were created for those controls, and unused `rib`/`cartilage` mask folders were removed. The decoder still supports selecting `rib_shadow`, but the current benchmark focus is pleural-line segmentation.
 - Dataset decoders preserve original annotation semantics by default. UltraBones100k is the explicit exception: thin bone-surface labels are hole-filled into a bone-shadow region for the main benchmarks because line-based segmentation is not a natural target for region-prompted foundation models, and the filled acoustic shadow is clinically meaningful.
 - Dataset access is Hugging Face-backed and local-cache aware.
 - `python -m datasets.registry` works and lists the supported registered datasets.
@@ -92,7 +92,7 @@ Interpret older results carefully:
 1. Finish GT-box model benchmarking:
    - Run MedSAM and SAMUS GT benchmarks on the selected datasets using the matched wrapper defaults documented in `README.md`.
    - Keep UltraBones100k filled bone-shadow masks as the main benchmark target; use original thin surface labels only for sensitivity checks.
-   - Run RobLUS GT wrappers using the cleaned lung dataset with pleural-line and rib-shadow masks.
+   - Rerun RobLUS GT wrappers using the cleaned lung dataset with class-specific pleural-line masks, overwriting the prior merged-mask `results/*_gt_bbox_roblus` outputs.
    - Keep result folders model/dataset/prompt-specific, for example `results/medsam_gt_bbox_camus`.
 
 2. Improve result visualization sampling:

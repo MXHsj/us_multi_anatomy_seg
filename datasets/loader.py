@@ -131,7 +131,7 @@ def add_dataset_args(parser: argparse.ArgumentParser, include_camus: bool = True
     parser.add_argument(
         "--roblus-labels",
         type=str,
-        default="pleural_line,rib_shadow",
+        default="pleural_line",
         help="Comma-separated RobLUS labels to merge into the benchmark mask.",
     )
     parser.add_argument(

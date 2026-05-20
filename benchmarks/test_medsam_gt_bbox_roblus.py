@@ -15,6 +15,8 @@ DEFAULT_ARGS = [
     "roblus",
     "--dataset-root",
     DATASET_ROOT,
+    "--roblus-labels",
+    "pleural_line",
     "--max-samples",
     "764",
     "--bbox-jitter-prob",

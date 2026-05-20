@@ -16,6 +16,7 @@ except ModuleNotFoundError:
 
 _SUBJECTS = ("AP", "BM", "CP", "SG", "XM")
 _LABELS = ("pleural_line", "rib_shadow")
+_DEFAULT_LABELS = ("pleural_line",)
 
 
 @dataclass(frozen=True)
@@ -46,7 +47,7 @@ class RobLUSDecoder:
         subjects: Optional[list[str]] = None,
     ):
         self.root = Path(root)
-        self.labels = labels or list(_LABELS)
+        self.labels = labels or list(_DEFAULT_LABELS)
         self.subjects = subjects or list(_SUBJECTS)
 
         if not self.root.exists():
@@ -128,8 +129,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--labels",
         type=str,
-        default="pleural_line,rib_shadow",
-        help="Comma-separated labels to merge into the binary mask.",
+        default="pleural_line",
+        help="Comma-separated labels to merge into the binary mask. Defaults to pleural_line.",
     )
     parser.add_argument(
         "--subjects",
