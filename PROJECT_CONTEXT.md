@@ -1,41 +1,43 @@
-﻿# Project Context: Ultrasound Multi-Anatomy Segmentation Benchmark
+# Project Context: Ultrasound Multi-Anatomy Segmentation Benchmark
 
 ## Research Goal
 
-This project benchmarks segmentation foundation models on curated ultrasound datasets across multiple anatomies. The study should go beyond a leaderboard: the benchmark should help identify when models succeed or fail by anatomy, dataset source, object type, prompt quality, and image/mask characteristics.
+This project benchmarks promptable segmentation foundation models on curated ultrasound datasets across multiple anatomies. The intended study should go beyond a leaderboard: it should identify when SAM-style models succeed or fail as a function of anatomy, dataset source, target morphology, prompt quality, image quality, and mask semantics.
 
-The current practical focus is GT-box prompted benchmarking. Prompt jitter and other degraded-prompt protocols exist for MedSAM, but near-term runs should prioritize clean ground-truth-box comparisons across models and datasets.
+The current practical focus is GT-box prompted benchmarking for MedSAM and SAMUS. GT boxes should be interpreted as an oracle-prompt upper bound, not as a clinical workflow. Prompt jitter experiments exist for MedSAM and are useful as a first robustness probe, but the main benchmark story is still cross-dataset GT-box behavior.
+
+Working academic theme: SAM-based ultrasound segmentation works best for compact region-like targets inside accurate prompts, but degrades on thin structures, sparse targets, ambiguous boundaries, very small lesions, broad boxes with low foreground density, and semantically mixed masks.
 
 ## Current Repository Status
 
-The repository now has a registry-driven dataset layer:
+The repository has a registry-driven dataset layer:
 
-- `datasets/registry.py` records dataset keys, local cache roots, decoder classes, and Hugging Face zip paths.
+- `datasets/registry.py` records dataset keys, local cache roots, decoder classes, anatomy labels, and Hugging Face zip paths.
 - `datasets/hf_materialize.py` materializes registered dataset zips on demand.
 - `datasets/loader.py` builds dataset decoders from benchmark CLI args.
-- `datasets/common.py` defines the shared `DecodedSample` schema and common image/mask helpers.
+- `datasets/common.py` defines the shared `DecodedSample` schema plus common image, mask, bbox, Dice, and IoU helpers.
 
-Implemented decoders:
+Registered datasets:
 
 | Dataset key | Anatomy | Decoder status |
 | --- | --- | --- |
 | `tnsc2020` | Thyroid | PNG image/mask pairs with optional category metadata. |
 | `blusg` | Breast | Flat case PNGs with tumor and optional other-lesion masks. |
 | `oku` | Kidney | PNG images plus reviewed polygon CSV annotations; default anatomy is `Capsule`. |
-| `ultrabones100k` | Bone | Nested specimen/anatomy/record folders with timestamped image/label pairs. |
-| `camus` | Heart | NIfTI ED/ES and optional cine half-sequence volumes, paired with `_gt.nii.gz` masks. |
+| `ultrabones100k` | Bone | Nested specimen/anatomy/record folders with timestamped image/label pairs; default benchmark fills thin bone-surface labels into bone-shadow regions. |
+| `camus` | Heart | NIfTI ED/ES volumes and optional cine half-sequence volumes, paired with `_gt.nii.gz` masks. |
 | `aulid` | Liver | JPG images with JSON polygon masks for `mass`, `liver`, or `outline`. |
 | `uns` | Nerve | TIFF images paired with `_mask.tif` masks. |
-| `roblus` | Lung | Cleaned RobLUS decoder for subjects `AP`, `BM`, `CP`, `SG`, and `XM`; reads `US_*.jpg` frames paired with `pleural_line` and `rib_shadow` masks. Default benchmark target is class-specific `pleural_line`. |
+| `roblus` | Lung | Cleaned RobLUS decoder for subjects `AP`, `BM`, `CP`, `SG`, and `XM`; default benchmark target is class-specific `pleural_line`. |
 
-BCU_PD has been removed and is no longer part of the registry or benchmark wrappers.
+BCU_PD has been removed from the registry and wrapper scripts.
 
 ## Benchmark Harness
 
 Current model engines:
 
-- `benchmarks/medsam_inference.py`: GT-box prompted MedSAM benchmark with optional bbox jitter controls, checkpoint auto-download, Dice/IoU/latency reporting, and a progress bar.
-- `benchmarks/samus_inference.py`: GT-box prompted SAMUS benchmark with checkpoint auto-download, batching, optional threaded loading, Dice/IoU/latency reporting, and progress output.
+- `benchmarks/medsam_inference.py`: GT-box prompted MedSAM benchmark with optional bbox jitter controls, checkpoint auto-download, Dice/IoU/latency reporting, visualization output, and progress reporting.
+- `benchmarks/samus_inference.py`: GT-box prompted SAMUS benchmark with checkpoint auto-download, batching, optional threaded sample loading, Dice/IoU/latency reporting, visualization output, and progress reporting.
 
 Both engines write:
 
@@ -43,96 +45,145 @@ Both engines write:
 - `summary.json`
 - `visualizations/*.png`
 
-Visualization dumping now samples evenly across the evaluated run when `--save-vis N` is used, instead of saving only the first `N` consecutive cases.
-Existing visualization files are not cleaned automatically when rerunning into an existing result folder, so old PNGs should be removed before regenerating qualitative samples for a run.
+Visualization dumping samples evenly across the evaluated run when `--save-vis N` is used. Existing visualization files are not automatically cleaned when rerunning into an existing result folder, so stale PNGs can remain unless the folder is cleared first.
 
-Current GT wrapper scripts cover:
+Current GT wrapper scripts cover all eight registered datasets for both MedSAM and SAMUS:
 
 - MedSAM: TNSC2020, BLUSG, OKU, UltraBones100k, CAMUS, AULID, UNS, RobLUS.
 - SAMUS: TNSC2020, BLUSG, OKU, UltraBones100k, CAMUS, AULID, UNS, RobLUS.
 
-RobLUS GT wrappers iterate all 764 cleaned samples and use `--roblus-labels pleural_line`. The current GT-box engines evaluate the 615 annotated pleural-line frames and skip the 149 empty-mask negative controls because no bounding-box prompt can be generated. Merged pleural-line/rib-shadow runs should not be used for benchmark reporting because a single combined bbox is not a valid prompt protocol for separate anatomies or instances.
+Wrapper defaults are now aligned for comparable default reruns:
 
-The GT wrapper defaults are aligned across MedSAM and SAMUS for comparable default runs: `--max-samples 100` for AULID, BLUSG, OKU, TNSC2020, UltraBones100k, and UNS; `--max-samples 2000` for CAMUS ED/ES; `--save-vis 20`; `--box-padding 10` only for UltraBones100k and `0` otherwise. MedSAM wrappers additionally pass `--bbox-jitter-prob 0.0` because the MedSAM engine exposes jitter controls.
+- `--max-samples 100` for AULID, BLUSG, OKU, TNSC2020, UltraBones100k, and UNS.
+- `--max-samples 2000` for CAMUS ED/ES.
+- `--max-samples 764` for RobLUS, which yields 615 annotated pleural-line samples and skips 149 empty-mask frames because no GT box can be generated.
+- `--save-vis 20`.
+- `--box-padding 10` only for UltraBones100k and `0` otherwise.
+- MedSAM GT wrappers explicitly set `--bbox-jitter-prob 0.0`.
 
-The CAMUS local materialization contains 500 patient folders. By default, the decoder excludes cine half-sequences and benchmarks 2000 ED/ES samples: 500 patients x 2 views x 2 phases. With `--include-half-sequence`, cine volumes are expanded into frame-level samples.
+RobLUS benchmark reporting should stay class-specific. Merged pleural-line/rib-shadow runs are not a valid headline protocol because a single combined bbox is not a clean prompt for separate structures.
 
-The project also has an `analysis/` workspace for quantitative result aggregation and paper-style figure generation:
+CAMUS defaults exclude half-sequences and evaluate ED/ES only: 500 patients x 2 views x 2 phases = 2000 samples. With `--include-half-sequence`, cine volumes expand into frame-level samples.
 
-- `analysis/model_across_datasets.py`: same-model cross-dataset Dice/IoU mean/std summaries, with mean bars, standard-deviation error bars, and per-sample scatter plots.
-- `analysis/compare_models_same_dataset.py`: matched-sample MedSAM-vs-SAMUS comparisons by dataset, using shared `sample_id`s to avoid misleading comparisons when older result folders used different sample caps.
+## Analysis Workspace
 
-## Completed Hygiene / Infrastructure
+The `analysis/` folder currently provides lightweight result aggregation and figure generation:
 
-- Raw dataset folders, checkpoints, generated results, cache folders, and zips are ignored by `.gitignore`.
-- RobLUS local materializations are ignored under `datasets/RobLUS/`.
-- RobLUS has been cleaned locally: unlabeled frames were removed except selected negative controls, empty pleural-line/rib-shadow masks were created for those controls, and unused `rib`/`cartilage` mask folders were removed. The decoder still supports selecting `rib_shadow`, but the current benchmark focus is pleural-line segmentation.
-- Dataset decoders preserve original annotation semantics by default. UltraBones100k is the explicit exception: thin bone-surface labels are hole-filled into a bone-shadow region for the main benchmarks because line-based segmentation is not a natural target for region-prompted foundation models, and the filled acoustic shadow is clinically meaningful.
+- `analysis/model_across_datasets.py`: same-model cross-dataset Dice/IoU summaries and paper-style plots with mean bars, standard-deviation error bars, and per-sample scatter points.
+- `analysis/compare_models_same_dataset.py`: matched-sample MedSAM-vs-SAMUS comparison using shared `sample_id`s to avoid misleading comparisons when result folders use different sample caps.
+
+Generated figures currently exist under `analysis/figures/`:
+
+- `model_across_datasets_gt_bbox_medsam.png`
+- `model_across_datasets_gt_bbox_samus.png`
+- `compare_models_same_dataset_gt_bbox_medsam_vs_samus.png`
+
+## Current Local Results Snapshot
+
+Current local result folders include GT-box runs for MedSAM and SAMUS on all eight registered datasets, plus MedSAM jittered-box runs for BLUSG, OKU, and TNSC2020.
+
+Summary-level GT-box results currently present in `results/`:
+
+| Result folder | Evaluated | Skipped | Dice mean | IoU mean |
+| --- | ---: | ---: | ---: | ---: |
+| `medsam_gt_bbox_aulid` | 100 | 0 | 0.7840 | 0.6595 |
+| `medsam_gt_bbox_blusg` | 100 | 0 | 0.8660 | 0.7731 |
+| `medsam_gt_bbox_camus` | 2000 | 0 | 0.8361 | 0.7209 |
+| `medsam_gt_bbox_oku` | 100 | 0 | 0.9376 | 0.8842 |
+| `medsam_gt_bbox_roblus` | 615 | 149 | 0.6018 | 0.4383 |
+| `medsam_gt_bbox_tnsc2020` | 100 | 0 | 0.9444 | 0.8966 |
+| `medsam_gt_bbox_ultrabones100k` | 100 | 0 | 0.8765 | 0.7814 |
+| `medsam_gt_bbox_uns` | 39 | 61 | 0.9203 | 0.8555 |
+| `samus_gt_bbox_aulid` | 635 | 0 | 0.8325 | 0.7164 |
+| `samus_gt_bbox_blusg` | 252 | 0 | 0.8109 | 0.6879 |
+| `samus_gt_bbox_camus` | 2000 | 0 | 0.8500 | 0.7411 |
+| `samus_gt_bbox_oku` | 487 | 0 | 0.8540 | 0.7477 |
+| `samus_gt_bbox_roblus` | 615 | 149 | 0.4998 | 0.3441 |
+| `samus_gt_bbox_tnsc2020` | 3644 | 0 | 0.8396 | 0.7261 |
+| `samus_gt_bbox_ultrabones100k` | 100 | 0 | 0.8597 | 0.7544 |
+| `samus_gt_bbox_uns` | 2323 | 3312 | 0.8034 | 0.6752 |
+
+Important interpretation notes:
+
+- Some SAMUS result folders were generated before the wrapper defaults were aligned, so raw summary-level MedSAM-vs-SAMUS comparisons are not always fair.
+- Use `analysis/compare_models_same_dataset.py` for model comparison because it restricts each pair to shared `sample_id`s.
+- The current matched comparison suggests SAMUS is slightly higher on AULID and CAMUS, while MedSAM is higher on BLUSG, OKU, RobLUS, TNSC2020, UltraBones100k, and UNS.
+- RobLUS is the clearest shared failure regime: both models perform poorly on pleural-line segmentation, especially compared with compact region-like targets.
+- MedSAM jittered-box results show substantial prompt sensitivity: Dice drops by about 0.09 on BLUSG and OKU, and about 0.13 on TNSC2020 compared with matched GT-box runs.
+
+## Repository Hygiene / Infrastructure Status
+
+- Raw dataset materializations, checkpoints, cache folders, and zips are ignored by `.gitignore`.
+- `results/` is currently not ignored and many result summaries, CSVs, and visualization PNGs are tracked. This is useful for local analysis but should be revisited if repository size or artifact churn becomes painful.
 - Dataset access is Hugging Face-backed and local-cache aware.
-- `python -m datasets.registry` works and lists the supported registered datasets.
+- `python -m datasets.registry` works and lists the eight supported datasets.
 - CAMUS dependencies are represented in `requirements.txt` through `nibabel`.
-- SAMUS benchmark CLI now accepts CAMUS.
-- MedSAM benchmark now has progress reporting similar to SAMUS.
-- SAMUS GT wrapper scripts now include explicit `--max-samples` defaults aligned with MedSAM wrappers.
-- Initial quantitative analysis scripts and generated figures exist under `analysis/`.
+- UNS TIFF decoding support is represented through `imagecodecs`.
+- MedSAM and SAMUS both have progress reporting.
+- SAMUS supports CAMUS and has explicit `--max-samples` wrapper defaults aligned with MedSAM for future reruns.
+- UltraBones100k is the one decoder that intentionally changes source label geometry for the main benchmark by filling thin surface labels into bone-shadow regions; original thin labels should be used only for sensitivity checks.
 
-## Existing Results Snapshot
+## Known Limitations
 
-Existing local result folders include MedSAM GT runs for AULID, BLUSG, CAMUS, OKU, TNSC2020, UltraBones100k, and UNS; SAMUS GT runs for the same seven datasets; and MedSAM jittered bbox runs for BLUSG, OKU, and TNSC2020. Interpret results generated before the wrapper alignment carefully if the model/dataset pair used a different sample cap.
+- GT-box prompting is an oracle condition and should not be treated as a deployable clinical workflow.
+- The current metric set is still narrow: Dice, IoU, and latency only.
+- Empty masks are skipped by GT-box engines, so current summaries do not evaluate specificity or false positives on empty frames.
+- Result metadata is incomplete: summaries do not yet consistently store command line, git SHA, checkpoint hash, package versions, dataset revision, decoder options, prompt protocol, and sample manifest.
+- Sample selection is not manifest-driven yet. First-`N` ordering can bias small capped runs, especially for datasets grouped by patient, class, or acquisition order.
+- MedSAM and SAMUS engines duplicate benchmark logic instead of sharing a model-adapter and runner abstraction.
+- Current visualizations are evenly spaced samples, not a deliberate best/median/worst/failure atlas.
 
-Interpret older results carefully:
+## Next Phase TODOs
 
-- Earlier SAMUS wrappers ran full decoded datasets by default, while MedSAM wrappers often capped runs at 100 samples.
-- CAMUS MedSAM was initially run on 100 samples, which covered only the first 25 patients across 2CH/4CH ED/ES. The CAMUS GT wrapper now targets the full default ED/ES set of 2000 samples.
-- Existing visualization samples may differ across model folders if one folder was generated before the matched `--max-samples` defaults or if stale PNGs remain from an earlier run.
-- Prompt-jitter outputs are useful for future prompt-sensitivity analysis but are not the immediate benchmark priority.
+### Academic Direction
 
-## Near-Term TODOs
+1. Rerun a clean, fixed benchmark matrix:
+   - Use the same sample manifests, prompt protocols, result-directory hygiene, and model/dataset defaults across MedSAM and SAMUS.
+   - Treat GT-box results as an oracle-prompt upper bound, not as the final clinical-use setting.
 
-1. Finish GT-box model benchmarking:
-   - Run MedSAM and SAMUS GT benchmarks on the selected datasets using the matched wrapper defaults documented in `README.md`.
-   - Keep UltraBones100k filled bone-shadow masks as the main benchmark target; use original thin surface labels only for sensitivity checks.
-   - Rerun RobLUS GT wrappers using the cleaned lung dataset with class-specific pleural-line masks, overwriting the prior merged-mask `results/*_gt_bbox_roblus` outputs.
-   - Keep result folders model/dataset/prompt-specific, for example `results/medsam_gt_bbox_camus`.
+2. Define stratified evaluation manifests:
+   - Stratify by dataset, anatomy, patient/subject, class, view/phase, object size, bounding-box density, and target type.
+   - Avoid relying on first-`N` dataset order when reporting headline results.
 
-2. Improve result visualization sampling:
-   - Add a post-run visualization mode that saves best, median, worst, plus evenly spaced cases.
-   - Ranking should use Dice or IoU and ideally avoid duplicates when a best/median/worst case is already part of the evenly spaced set.
-   - This will make qualitative folders include representative successes, typical cases, and clear failures.
+3. Add prompt-sensitivity protocols:
+   - Compare oracle boxes, jittered boxes, loose boxes, point prompts, multi-click prompts, and realistic detector/user boxes.
+   - Use prompt perturbation to measure robustness, not just best-case segmentation capacity.
 
-3. Expand metric reporting:
-   - Add Hausdorff distance, average surface distance, precision, recall, false-positive area, and false-negative area.
-   - Add mask/image descriptors such as mask area fraction, connected components, bounding-box size, and image resolution.
+4. Evaluate structure-specific labels:
+   - Report CAMUS LV/MYO/LA separately instead of only merged cardiac masks.
+   - Keep RobLUS pleural line and rib shadow as separate tasks.
+   - Keep UltraBones100k filled bone-shadow masks as the main target, with original thin labels as a sensitivity check.
 
-4. Improve reproducibility metadata:
-   - Save model checkpoint path/version, dataset revision, decoder options, prompt protocol, device, package versions, and command line in every `summary.json`.
-   - Add deterministic sample selection or manifest-based subsets for comparable cross-model runs.
+5. Add supervised and newer foundation-model baselines:
+   - Include task-trained baselines such as U-Net or nnU-Net.
+   - Add future SAM-family models such as UltraSAM and SAM 2 variants when adapters are available.
 
-5. Add unified benchmark hyperparameter control:
-   - Introduce one shared configuration layer for all benchmark cases so values such as `max-samples`, `save-vis`, `box-padding`, device, prompt protocol, and output naming do not need to be edited separately in `medsam_inference.py`, `samus_inference.py`, or each wrapper script.
-   - Prefer a small YAML/JSON config or central Python defaults module that wrappers can import and model engines can record into `summary.json`.
+6. Build a failure-analysis atlas:
+   - Save and review best, median, worst, and model-disagreement cases.
+   - Summarize failures by anatomy, object size, bbox density, view/phase, and mask complexity.
 
-6. Move toward model-agnostic adapters:
-   - Keep MedSAM and SAMUS working as concrete baselines.
-   - Define a common model adapter contract for loading, preprocessing, prompt ingestion, inference, and prediction output.
-   - Add future model families such as UltraSAM, SAM 2 variants, and supervised baselines such as nnU-Net.
+### Engineering Direction
 
-7. Add failure analysis:
-   - Generate ranked failure cases and stratified summaries by anatomy, dataset, object size, view/phase, and mask complexity.
-   - Extend `analysis/` scripts and/or notebooks for qualitative review and figure preparation.
+1. Add a central benchmark configuration layer:
+   - Use a YAML/JSON config or central Python defaults module for dataset, model, prompt protocol, sample manifest, device, `max-samples`, `save-vis`, `box-padding`, and output naming.
+   - Record the resolved config in every `summary.json`.
+
+2. Refactor into shared benchmark abstractions:
+   - Introduce a common `DatasetAdapter` / `ModelAdapter` / `BenchmarkRunner` structure.
+   - Keep MedSAM and SAMUS as concrete adapters while sharing metric computation, visualization selection, result writing, and provenance capture.
 
 ## Open Design Decisions
 
 - Whether Hugging Face should store source-like raw files, normalized image/mask pairs, or both.
 - Whether benchmark runs should always materialize data locally or support streaming.
-- How to represent multiclass and multi-object masks beyond the current binary GT-box setup.
+- How to represent multiclass, multi-structure, and multi-instance masks beyond the current binary GT-box setup.
 - Which prompt perturbation protocols are clinically realistic versus stress tests.
 - Which model environment strategy should be standardized first: Conda, Docker/Singularity, or external CLI adapters.
-- Which datasets should be prioritized for supervised nnU-Net baselines.
+- Which supervised baselines should be prioritized first.
 
 ## Working Assumptions
 
 - Raw medical imaging data should not live in the Git repository.
-- GT-box benchmarking is the current priority; degraded-prompt experiments should be revisited later.
+- GT-box benchmarking is the current priority, with degraded-prompt experiments used as robustness probes rather than the main benchmark axis.
 - Mean performance is not enough; the project should emphasize stratified results, tail failures, and qualitative inspection.
-- All reported runs should be reproducible from dataset version, decoder options, sample subset, model checkpoint, prompt protocol, and environment metadata.
+- All reported runs should eventually be reproducible from dataset version, decoder options, sample subset, model checkpoint, prompt protocol, environment metadata, and exact command/config.
