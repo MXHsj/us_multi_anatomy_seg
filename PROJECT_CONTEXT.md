@@ -25,7 +25,7 @@ Registered datasets:
 | `blusg` | Breast | Flat case PNGs with tumor and optional other-lesion masks. |
 | `oku` | Kidney | PNG images plus reviewed polygon CSV annotations; default anatomy is `Capsule`. |
 | `ultrabones100k` | Bone | Nested specimen/anatomy/record folders with timestamped image/label pairs; default benchmark fills thin bone-surface labels into bone-shadow regions. |
-| `camus` | Heart | NIfTI ED/ES volumes and optional cine half-sequence volumes, paired with `_gt.nii.gz` masks. |
+| `camus` | Heart | NIfTI ED/ES volumes and optional cine half-sequence volumes, paired with `_gt.nii.gz` masks; labels are expanded into per-class binary targets for LV and LA by default. |
 | `aulid` | Liver | JPG images with JSON polygon masks for `mass`, `liver`, or `outline`. |
 | `uns` | Nerve | TIFF images paired with `_mask.tif` masks. |
 | `roblus` | Lung | Cleaned RobLUS decoder for subjects `AP`, `BM`, `CP`, `SG`, and `XM`; default benchmark target is class-specific `pleural_line`. |
@@ -55,7 +55,7 @@ Current GT wrapper scripts cover all eight registered datasets for both MedSAM a
 Wrapper defaults are now aligned for comparable default reruns:
 
 - `--max-samples 100` for AULID, BLUSG, OKU, TNSC2020, UltraBones100k, and UNS.
-- `--max-samples 2000` for CAMUS ED/ES.
+- `--max-samples 4000` for CAMUS ED/ES target rows, corresponding to 2000 source frames x 2 labels.
 - `--max-samples 764` for RobLUS, which yields 615 annotated pleural-line samples and skips 149 empty-mask frames because no GT box can be generated.
 - `--save-vis 20`.
 - `--box-padding 10` only for UltraBones100k and `0` otherwise.
@@ -63,7 +63,7 @@ Wrapper defaults are now aligned for comparable default reruns:
 
 RobLUS benchmark reporting should stay class-specific. Merged pleural-line/rib-shadow runs are not a valid headline protocol because a single combined bbox is not a clean prompt for separate structures.
 
-CAMUS defaults exclude half-sequences and evaluate ED/ES only: 500 patients x 2 views x 2 phases = 2000 samples. With `--include-half-sequence`, cine volumes expand into frame-level samples.
+CAMUS defaults exclude half-sequences and evaluate ED/ES only: 500 patients x 2 views x 2 phases = 2000 source frames. The CAMUS decoder now emits one binary target sample per selected label (`LV` and `LA` by default), so the default CAMUS benchmark has 4000 target evaluations. With `--include-half-sequence`, cine volumes expand into frame-level source samples before label expansion.
 
 ## Analysis Workspace
 
@@ -81,6 +81,8 @@ Generated figures currently exist under `analysis/figures/`:
 ## Current Local Results Snapshot
 
 Current local result folders include GT-box runs for MedSAM and SAMUS on all eight registered datasets, plus MedSAM jittered-box runs for BLUSG, OKU, and TNSC2020.
+
+The current CAMUS result folders were generated before the per-class target decoder change and should be treated as legacy merged-mask results until rerun.
 
 Summary-level GT-box results currently present in `results/`:
 
@@ -106,6 +108,7 @@ Summary-level GT-box results currently present in `results/`:
 Important interpretation notes:
 
 - Some SAMUS result folders were generated before the wrapper defaults were aligned, so raw summary-level MedSAM-vs-SAMUS comparisons are not always fair.
+- Current CAMUS summaries may reflect older label selections; rerun the CAMUS wrappers to produce LV/LA target-level results and class-level summaries.
 - Use `analysis/compare_models_same_dataset.py` for model comparison because it restricts each pair to shared `sample_id`s.
 - The current matched comparison suggests SAMUS is slightly higher on AULID and CAMUS, while MedSAM is higher on BLUSG, OKU, RobLUS, TNSC2020, UltraBones100k, and UNS.
 - RobLUS is the clearest shared failure regime: both models perform poorly on pleural-line segmentation, especially compared with compact region-like targets.
@@ -131,6 +134,7 @@ Important interpretation notes:
 - Result metadata is incomplete: summaries do not yet consistently store command line, git SHA, checkpoint hash, package versions, dataset revision, decoder options, prompt protocol, and sample manifest.
 - Sample selection is not manifest-driven yet. First-`N` ordering can bias small capped runs, especially for datasets grouped by patient, class, or acquisition order.
 - MedSAM and SAMUS engines duplicate benchmark logic instead of sharing a model-adapter and runner abstraction.
+- CAMUS target-mode visualizations now stream grouped multi-color GT/prediction overlays by class as each selected source frame finishes, but other datasets still use single-target visualizations unless their decoders provide target metadata.
 - Current visualizations are evenly spaced samples, not a deliberate best/median/worst/failure atlas.
 
 ## Next Phase TODOs
@@ -150,7 +154,7 @@ Important interpretation notes:
    - Use prompt perturbation to measure robustness, not just best-case segmentation capacity.
 
 4. Evaluate structure-specific labels:
-   - Report CAMUS LV/MYO/LA separately instead of only merged cardiac masks.
+   - Rerun CAMUS with the LV/LA target decoder and report per-class results.
    - Keep RobLUS pleural line and rib shadow as separate tasks.
    - Keep UltraBones100k filled bone-shadow masks as the main target, with original thin labels as a sensitivity check.
 

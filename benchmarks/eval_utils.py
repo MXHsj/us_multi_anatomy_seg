@@ -1,0 +1,269 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+
+TARGET_METADATA_COLUMNS = [
+    "source_sample_id",
+    "target_uid",
+    "target_class_id",
+    "target_class_name",
+    "target_instance_id",
+    "target_color",
+]
+
+METRIC_FIELDNAMES = [
+    "sample_id",
+    *TARGET_METADATA_COLUMNS,
+    "height",
+    "width",
+    "bbox",
+    "dice",
+    "iou",
+    "infer_ms",
+]
+
+
+def _metadata(sample: Any) -> dict[str, Any]:
+    metadata = getattr(sample, "metadata", None)
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def has_target_metadata(sample: Any) -> bool:
+    metadata = _metadata(sample)
+    return bool(metadata.get("source_sample_id")) and bool(metadata.get("target_class_name"))
+
+
+def build_metric_row(
+    sample: Any,
+    height: int,
+    width: int,
+    bbox: np.ndarray,
+    dice: float,
+    iou: float,
+    infer_ms: float,
+) -> dict[str, Any]:
+    metadata = _metadata(sample)
+    row = {
+        "sample_id": sample.sample_id,
+        "height": height,
+        "width": width,
+        "bbox": bbox.tolist(),
+        "dice": dice,
+        "iou": iou,
+        "infer_ms": infer_ms,
+    }
+    for column in TARGET_METADATA_COLUMNS:
+        row[column] = metadata.get(column, "")
+    return row
+
+
+def count_source_iterations(decoder: Any, max_samples: int | None) -> int | None:
+    count_fn = getattr(decoder, "count_source_samples", None)
+    if callable(count_fn):
+        return count_fn(max_samples=max_samples)
+    return None
+
+
+def evenly_spaced_zero_based_indices(total: int | None, count: int) -> set[int]:
+    if count <= 0 or total is None or total <= 0:
+        return set()
+    save_count = min(count, total)
+    return {int(round(idx)) for idx in np.linspace(0, total - 1, save_count)}
+
+
+def summarize_target_class_metrics(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        class_name = str(row.get("target_class_name") or "")
+        if not class_name:
+            continue
+        grouped.setdefault(class_name, []).append(row)
+
+    summaries: dict[str, dict[str, Any]] = {}
+    for class_name in sorted(grouped):
+        class_rows = grouped[class_name]
+        dice_vals = np.array([row["dice"] for row in class_rows], dtype=np.float32)
+        iou_vals = np.array([row["iou"] for row in class_rows], dtype=np.float32)
+        ms_vals = np.array([row["infer_ms"] for row in class_rows], dtype=np.float32)
+        class_ids = sorted(
+            {
+                str(row.get("target_class_id"))
+                for row in class_rows
+                if row.get("target_class_id") not in ("", None)
+            }
+        )
+        summaries[class_name] = {
+            "target_class_id": class_ids[0] if len(class_ids) == 1 else class_ids,
+            "num_evaluated": len(class_rows),
+            "dice_mean": float(dice_vals.mean()),
+            "dice_std": float(dice_vals.std()),
+            "iou_mean": float(iou_vals.mean()),
+            "iou_std": float(iou_vals.std()),
+            "infer_ms_mean": float(ms_vals.mean()),
+            "infer_ms_std": float(ms_vals.std()),
+        }
+    return summaries
+
+
+def count_unique_source_samples(rows: list[dict[str, Any]]) -> int:
+    source_ids = {
+        str(row.get("source_sample_id"))
+        for row in rows
+        if row.get("source_sample_id") not in ("", None)
+    }
+    return len(source_ids)
+
+
+class TargetVisualizationCollector:
+    def __init__(self, vis_dir: Path, source_indices: set[int], model_label: str):
+        self.vis_dir = vis_dir
+        self.source_indices = source_indices
+        self.model_label = model_label
+        self._current_source_id: str | None = None
+        self._current_group: dict[str, Any] | None = None
+
+    def add_if_selected(
+        self,
+        sample: Any,
+        image: np.ndarray,
+        gt_mask: np.ndarray,
+        pred_mask: np.ndarray,
+        bbox: np.ndarray,
+        dice: float,
+        iou: float,
+    ) -> bool:
+        if not has_target_metadata(sample):
+            return False
+
+        metadata = _metadata(sample)
+        source_sample_id = str(metadata["source_sample_id"])
+        if source_sample_id != self._current_source_id:
+            self.flush_pending()
+            self._current_source_id = source_sample_id
+            self._current_group = None
+
+        source_index_raw = metadata.get("source_sample_index")
+        try:
+            source_index = int(source_index_raw)
+        except (TypeError, ValueError):
+            return True
+
+        if source_index not in self.source_indices:
+            return True
+
+        if self._current_group is None:
+            self._current_group = {
+                "image": image,
+                "targets": [],
+            }
+        self._current_group["targets"].append(
+            {
+                "class_name": str(metadata.get("target_class_name", "target")),
+                "instance_id": str(metadata.get("target_instance_id", "0")),
+                "target_index": metadata.get("target_index", ""),
+                "color": str(metadata.get("target_color", "")),
+                "gt_mask": gt_mask.copy(),
+                "pred_mask": pred_mask.copy(),
+                "bbox": bbox.copy(),
+                "dice": dice,
+                "iou": iou,
+            }
+        )
+        return True
+
+    def flush_pending(self) -> None:
+        if self._current_source_id is None or self._current_group is None:
+            return
+        self._save_group(self._current_source_id, self._current_group)
+        self._current_group = None
+
+    def _save_group(self, source_sample_id: str, group: dict[str, Any]) -> None:
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import to_rgb
+        from matplotlib.patches import Patch, Rectangle
+
+        targets = sorted(group["targets"], key=_target_sort_key)
+        if not targets:
+            return
+
+        self.vis_dir.mkdir(parents=True, exist_ok=True)
+        fig, axes = plt.subplots(1, 3, figsize=(13, 4.5))
+        titles = [
+            "Image",
+            "GT Targets + Box Prompts",
+            f"{self.model_label} Predictions",
+        ]
+        for axis, title in zip(axes, titles):
+            axis.imshow(group["image"])
+            axis.set_title(title)
+            axis.axis("off")
+
+        legend_handles = []
+        for target in targets:
+            color = _safe_rgb(target["color"])
+            if color is None:
+                color = to_rgb("#d62728")
+            _overlay_mask(axes[1], target["gt_mask"], color=color, alpha=0.42)
+            _overlay_mask(axes[2], target["pred_mask"], color=color, alpha=0.42)
+            bbox = target["bbox"]
+            axes[1].add_patch(
+                Rectangle(
+                    (bbox[0], bbox[1]),
+                    max(float(bbox[2] - bbox[0]), 1.0),
+                    max(float(bbox[3] - bbox[1]), 1.0),
+                    edgecolor=color,
+                    facecolor=(0, 0, 0, 0),
+                    linewidth=1.8,
+                )
+            )
+            label = (
+                f"{target['class_name']} "
+                f"D={target['dice']:.2f} I={target['iou']:.2f}"
+            )
+            legend_handles.append(Patch(facecolor=color, edgecolor=color, label=label))
+
+        axes[2].legend(
+            handles=legend_handles,
+            loc="lower right",
+            frameon=True,
+            framealpha=0.82,
+            fontsize=7,
+        )
+        fig.suptitle(source_sample_id)
+        fig.tight_layout()
+        safe_name = source_sample_id.replace("/", "_")
+        fig.savefig(self.vis_dir / f"{safe_name}.png", dpi=140)
+        plt.close(fig)
+
+
+def _safe_rgb(color: str) -> tuple[float, float, float] | None:
+    if not color:
+        return None
+    try:
+        from matplotlib.colors import to_rgb
+
+        return to_rgb(color)
+    except ValueError:
+        return None
+
+
+def _target_sort_key(target: dict[str, Any]) -> tuple[int, str]:
+    try:
+        target_index = int(target.get("target_index"))
+    except (TypeError, ValueError):
+        target_index = 10_000
+    return target_index, str(target.get("class_name", ""))
+
+
+def _overlay_mask(axis: Any, mask: np.ndarray, color: tuple[float, float, float], alpha: float) -> None:
+    mask_bool = mask.astype(bool)
+    if not np.any(mask_bool):
+        return
+    overlay = np.zeros((*mask_bool.shape, 4), dtype=np.float32)
+    overlay[mask_bool, :3] = color
+    overlay[mask_bool, 3] = alpha
+    axis.imshow(overlay)

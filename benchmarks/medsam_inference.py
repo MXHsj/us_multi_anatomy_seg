@@ -24,6 +24,15 @@ from datasets.common import (
     prepare_medsam_image,
 )
 from datasets.loader import add_dataset_args, build_decoder_from_args
+from benchmarks.eval_utils import (
+    METRIC_FIELDNAMES,
+    TargetVisualizationCollector,
+    build_metric_row,
+    count_source_iterations,
+    count_unique_source_samples,
+    evenly_spaced_zero_based_indices,
+    summarize_target_class_metrics,
+)
 
 
 DEFAULT_MEDSAM_CHECKPOINT_REPO_ID = "GleghornLab/medsam-vit-b"
@@ -304,6 +313,13 @@ def main() -> None:
     decoder = build_decoder_from_args(args)
     total_iterations = get_total_iterations(decoder, args.max_samples)
     vis_indices = evenly_spaced_indices(total_iterations, args.save_vis)
+    total_source_iterations = count_source_iterations(decoder, args.max_samples)
+    source_vis_indices = evenly_spaced_zero_based_indices(total_source_iterations, args.save_vis)
+    target_vis_collector = TargetVisualizationCollector(
+        vis_dir=out_dir / "visualizations",
+        source_indices=source_vis_indices,
+        model_label="MedSAM",
+    )
 
     try:
         from segment_anything import sam_model_registry
@@ -370,18 +386,27 @@ def main() -> None:
         iou = float(iou_score(gt_mask, pred))
 
         rows.append(
-            {
-                "sample_id": sample.sample_id,
-                "height": H,
-                "width": W,
-                "bbox": bbox.tolist(),
-                "dice": dice,
-                "iou": iou,
-                "infer_ms": infer_ms,
-            }
+            build_metric_row(
+                sample=sample,
+                height=H,
+                width=W,
+                bbox=bbox,
+                dice=dice,
+                iou=iou,
+                infer_ms=infer_ms,
+            )
         )
 
-        if idx in vis_indices:
+        handled_target_vis = target_vis_collector.add_if_selected(
+            sample=sample,
+            image=image_3c,
+            gt_mask=gt_mask,
+            pred_mask=pred,
+            bbox=bbox,
+            dice=dice,
+            iou=iou,
+        )
+        if not handled_target_vis and idx in vis_indices:
             save_vis(
                 vis_dir=out_dir / "visualizations",
                 sample_id=sample.sample_id,
@@ -403,11 +428,13 @@ def main() -> None:
     if rows or skipped:
         print()
 
+    target_vis_collector.flush_pending()
+
     metrics_csv = out_dir / "per_sample_metrics.csv"
     with metrics_csv.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
             f,
-            fieldnames=["sample_id", "height", "width", "bbox", "dice", "iou", "infer_ms"],
+            fieldnames=METRIC_FIELDNAMES,
         )
         writer.writeheader()
         writer.writerows(rows)
@@ -428,6 +455,11 @@ def main() -> None:
             "infer_ms_mean": float(ms_vals.mean()),
             "infer_ms_std": float(ms_vals.std()),
         }
+        target_class_metrics = summarize_target_class_metrics(rows)
+        if target_class_metrics:
+            summary["target_mode"] = "class_instance"
+            summary["num_source_samples"] = count_unique_source_samples(rows)
+            summary["target_class_metrics"] = target_class_metrics
     else:
         summary = {
             "dataset": args.dataset,

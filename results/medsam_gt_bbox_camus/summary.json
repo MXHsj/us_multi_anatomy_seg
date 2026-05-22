@@ -1,12 +1,36 @@
 {
   "dataset": "camus",
   "dataset_root": "datasets/CAMUS",
-  "num_evaluated": 2000,
+  "num_evaluated": 4000,
   "num_skipped_empty_mask": 0,
-  "dice_mean": 0.8361148238182068,
-  "dice_std": 0.04574478417634964,
-  "iou_mean": 0.7209492325782776,
-  "iou_std": 0.06543251127004623,
-  "infer_ms_mean": 1189.8812255859375,
-  "infer_ms_std": 233.51144409179688
+  "dice_mean": 0.8345696926116943,
+  "dice_std": 0.07649582624435425,
+  "iou_mean": 0.7229111194610596,
+  "iou_std": 0.1042771115899086,
+  "infer_ms_mean": 1296.2606201171875,
+  "infer_ms_std": 234.15057373046875,
+  "target_mode": "class_instance",
+  "num_source_samples": 2000,
+  "target_class_metrics": {
+    "LA": {
+      "target_class_id": "3",
+      "num_evaluated": 2000,
+      "dice_mean": 0.8011277914047241,
+      "dice_std": 0.08516513556241989,
+      "iou_mean": 0.6760865449905396,
+      "iou_std": 0.11117254942655563,
+      "infer_ms_mean": 1296.278076171875,
+      "infer_ms_std": 233.02980041503906
+    },
+    "LV": {
+      "target_class_id": "1",
+      "num_evaluated": 2000,
+      "dice_mean": 0.8680115938186646,
+      "dice_std": 0.04704686626791954,
+      "iou_mean": 0.7697356939315796,
+      "iou_std": 0.07073201984167099,
+      "infer_ms_mean": 1296.2432861328125,
+      "infer_ms_std": 235.2660369873047
+    }
+  }
 }
