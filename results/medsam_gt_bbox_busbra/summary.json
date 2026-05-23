@@ -1,0 +1,12 @@
+{
+  "dataset": "busbra",
+  "dataset_root": "datasets/BUSBRA",
+  "num_evaluated": 100,
+  "num_skipped_empty_mask": 0,
+  "dice_mean": 0.9159606099128723,
+  "dice_std": 0.037934355437755585,
+  "iou_mean": 0.8471391797065735,
+  "iou_std": 0.06260409206151962,
+  "infer_ms_mean": 2671.286865234375,
+  "infer_ms_std": 989.1204833984375
+}
