@@ -2,6 +2,8 @@ from datasets.common import DecodedSample
 from datasets.heart_CAMUS import HeartCAMUSDecoder
 from datasets.thyroid_TNSC2020 import ThyroidTNSC2020Decoder
 from datasets.breast_BLUSG import BreastBLUSGDecoder
+from datasets.breast_BUSBRA import BreastBUSBRADecoder
+from datasets.breast_BUSI import BreastBUSIDecoder
 from datasets.kidney_OKU import KidneyOKUDecoder
 from datasets.bone_UltraBones100k import UltraBones100kDecoder
 from datasets.liver_AULID import AULIDDecoder
@@ -13,6 +15,8 @@ __all__ = [
     "HeartCAMUSDecoder",
     "ThyroidTNSC2020Decoder",
     "BreastBLUSGDecoder",
+    "BreastBUSBRADecoder",
+    "BreastBUSIDecoder",
     "KidneyOKUDecoder",
     "UltraBones100kDecoder",
     "AULIDDecoder",

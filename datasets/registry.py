@@ -34,6 +34,22 @@ DATASET_REGISTRY: dict[str, DatasetSpec] = {
         decoder_class="datasets.breast_BLUSG:BreastBLUSGDecoder",
         hf_repo_path="zips/Breast/BrEaST-Lesions_USG.zip",
     ),
+    "busbra": DatasetSpec(
+        key="busbra",
+        display_name="BUS-BRA",
+        anatomy="Breast",
+        default_root="datasets/BUSBRA",
+        decoder_class="datasets.breast_BUSBRA:BreastBUSBRADecoder",
+        hf_repo_path="zips/Breast/BUSBRA.zip",
+    ),
+    "busi": DatasetSpec(
+        key="busi",
+        display_name="BUSI",
+        anatomy="Breast",
+        default_root="datasets/BUSI",
+        decoder_class="datasets.breast_BUSI:BreastBUSIDecoder",
+        hf_repo_path="zips/Breast/BUSI.zip",
+    ),
     "oku": DatasetSpec(
         key="oku",
         display_name="Open Kidney Ultrasound",
