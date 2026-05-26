@@ -65,6 +65,8 @@ Available Hugging Face zips scanned from the dataset repo:
 | --- | --- | --- | --- |
 | Bone | UltraBones100k | `zips/Bone/UltraBones100k.zip` | `ultrabones100k` |
 | Breast | BrEaST Lesions USG | `zips/Breast/BrEaST-Lesions_USG.zip` | `blusg` |
+| Breast | BUS-BRA | `zips/Breast/BUSBRA.zip` | `busbra` |
+| Breast | BUSI | `zips/Breast/BUSI.zip` | `busi` |
 | Heart | CAMUS | `zips/Heart/CAMUS.zip` | `camus` |
 | Kidney | OKU | `zips/kidney/OKU.zip` | `oku` |
 | Liver | AULID | `zips/Liver/AULID.zip` | `aulid` |
@@ -80,6 +82,8 @@ Each decoder normalizes its source dataset into the shared `DecodedSample` schem
 | --- | --- | --- | --- |
 | `tnsc2020` | `datasets/TNSC2020` | `image/*.PNG` paired with same-named `mask/*.PNG`; optional `train.csv` category metadata keyed by image ID. | One thyroid image/mask pair per PNG. |
 | `blusg` | `datasets/BLUSG` | Flat `case*.png` images; masks are sibling `case*_tumor.png` plus optional `case*_other*.png`. | One breast image with tumor mask, optionally merged with other lesion masks unless `--blusg-only-tumor` is used. |
+| `busbra` | `datasets/BUSBRA` | `Images/bus_*.png` paired with `Masks/mask_*.png` by shared suffix; `bus_data.csv` provides per-sample BI-RADS, pathology, side, device, histology, and CSV-recorded bounding box. | One breast image/tumor-mask pair per `bus_<id>` stem (1,875 total). Optional `--busbra-pathology` and `--busbra-birads` filters narrow the iteration; CSV metadata is surfaced through `DecodedSample.metadata`. |
+| `busi` | `datasets/BUSI` | Category subfolders `benign/`, `malignant/`, `normal/`, each containing `<cat> (N).png` images paired with `<cat> (N)_mask.png`. A handful of cases (mostly benign) also have `<cat> (N)_mask_<k>.png` extra masks that are OR-merged into a single binary mask. | One image per case with merged tumor mask. Default `--busi-categories benign,malignant` excludes `normal` (empty masks unusable for GT-box). `normal` can be added for sensitivity/empty-mask checks. |
 | `oku` | `datasets/OKU` | Flat kidney PNG images plus `reviewed_labels_1.csv` / `reviewed_labels_2.csv` polygon annotations. | One image with polygons rasterized for selected anatomy; default benchmark anatomy is `Capsule`. |
 | `ultrabones100k` | `datasets/UltraBones100k` | Nested `specimen*/<anatomy>/record*/UltrasoundImages/*.png` paired with `<label-folder>/<timestamp>_label.png`, plus optional `tracking.csv`. | One ultrasound frame and filled bone-shadow mask per paired timestamp. Source labels often trace only the visible bone surface; filling is kept explicitly because line-based segmentation is difficult for region-prompted foundation models, and the filled region has clinical meaning as the acoustic bone shadow. Use decoder option `--no-fill-mask` only for thin-label sensitivity checks. |
 | `camus` | `datasets/CAMUS` | `patient*/patient*_2CH|4CH_ED|ES|half_sequence.nii.gz` paired with `_gt.nii.gz`; per-view `Info_*.cfg` files may also be present. | By default, ED/ES only: 500 patients x 2 views x 2 phases = 2000 samples. `--include-half-sequence` also expands cine volumes into frame-level samples. |
@@ -144,11 +148,14 @@ If `work_dir/SAMUS/ckp/SAMUS.pth` is missing, the SAMUS benchmark downloads the 
 
 ### Dataset-Specific Options
 
-- `--dataset`: any key from `python -m datasets.registry`, such as `tnsc2020`, `blusg`, `oku`, `aulid`, `roblus`, `uns`, or `ultrabones100k`.
+- `--dataset`: any key from `python -m datasets.registry`, such as `tnsc2020`, `blusg`, `busbra`, `busi`, `oku`, `aulid`, `roblus`, `uns`, or `ultrabones100k`.
 - `--no-auto-download`: require an existing local dataset cache.
 - `--hf-revision`: pin a Hugging Face dataset revision for reproducibility.
 - `--oku-anatomy Capsule`: choose OKU annotation anatomy.
 - `--aulid-label mass`: choose AULID mask label from `mass`, `liver`, or `outline`.
+- `--busbra-pathology benign,malignant`: optionally restrict BUS-BRA samples by pathology.
+- `--busbra-birads 4,5`: optionally restrict BUS-BRA samples by BI-RADS category.
+- `--busi-categories benign,malignant`: select BUSI categories to decode; default excludes `normal` (empty masks).
 - `--roblus-labels pleural_line`: choose RobLUS labels to merge into the binary lung mask. The default is `pleural_line`; avoid merged class runs for benchmark reporting.
 - `--roblus-subjects AP,BM`: optionally restrict RobLUS decoding to selected subjects.
 - `--box-padding 10`: used by the UltraBones100k wrappers to give the GT box prompt context around the filled bone-shadow mask.
@@ -167,6 +174,8 @@ The wrapper scripts under `benchmarks/test_*_gt_bbox_*.py` are the current repro
 | --- | --- | --- | ---: | ---: | --- | ---: | --- |
 | `test_medsam_gt_bbox_tnsc2020.py` | MedSAM | `tnsc2020` | 100 | 0 | auto CUDA/MPS/CPU | 20 | `results/medsam_gt_bbox_tnsc2020` |
 | `test_medsam_gt_bbox_blusg.py` | MedSAM | `blusg` | 100 | 0 | `mps` | 20 | `results/medsam_gt_bbox_blusg` |
+| `test_medsam_gt_bbox_busbra.py` | MedSAM | `busbra` | 100 | 0 | `mps` | 20 | `results/medsam_gt_bbox_busbra` |
+| `test_medsam_gt_bbox_busi.py` | MedSAM | `busi` (`benign,malignant`) | 100 | 0 | `mps` | 20 | `results/medsam_gt_bbox_busi` |
 | `test_medsam_gt_bbox_oku.py` | MedSAM | `oku` | 100 | 0 | `mps` | 20 | `results/medsam_gt_bbox_oku` |
 | `test_medsam_gt_bbox_ultrabones100k.py` | MedSAM | `ultrabones100k` | 100 | 10 | `cuda:0` | 20 | `results/medsam_gt_bbox_ultrabones100k` |
 | `test_medsam_gt_bbox_camus.py` | MedSAM | `camus` | 4000 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_camus` |
@@ -175,6 +184,8 @@ The wrapper scripts under `benchmarks/test_*_gt_bbox_*.py` are the current repro
 | `test_medsam_gt_bbox_roblus.py` | MedSAM | `roblus` (`pleural_line`) | 764 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_roblus` |
 | `test_samus_gt_bbox_tnsc2020.py` | SAMUS | `tnsc2020` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_tnsc2020` |
 | `test_samus_gt_bbox_blusg.py` | SAMUS | `blusg` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_blusg` |
+| `test_samus_gt_bbox_busbra.py` | SAMUS | `busbra` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_busbra` |
+| `test_samus_gt_bbox_busi.py` | SAMUS | `busi` (`benign,malignant`) | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_busi` |
 | `test_samus_gt_bbox_oku.py` | SAMUS | `oku` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_oku` |
 | `test_samus_gt_bbox_ultrabones100k.py` | SAMUS | `ultrabones100k` | 100 | 10 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_ultrabones100k` |
 | `test_samus_gt_bbox_camus.py` | SAMUS | `camus` | 4000 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_camus` |
@@ -182,7 +193,7 @@ The wrapper scripts under `benchmarks/test_*_gt_bbox_*.py` are the current repro
 | `test_samus_gt_bbox_uns.py` | SAMUS | `uns` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_uns` |
 | `test_samus_gt_bbox_roblus.py` | SAMUS | `roblus` (`pleural_line`) | 764 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_roblus` |
 
-Shared wrapper defaults: GT masks are converted to bounding-box prompts; MedSAM GT wrappers disable bbox jitter with `--bbox-jitter-prob 0.0`; MedSAM and SAMUS GT wrappers now use matched `--max-samples` caps per dataset for comparable default runs (`100` for AULID, BLUSG, OKU, TNSC2020, UltraBones100k, and UNS; `764` for RobLUS; `4000` for CAMUS ED/ES LV/LA targets). UltraBones100k wrappers use `--box-padding 10`; other datasets use `0`. Dataset-specific options include `--oku-anatomy Capsule`, `--aulid-label mass`, `--roblus-labels pleural_line`, `--camus-labels 1,3`, and `--include-half-sequence`. RobLUS is benchmarked class-specifically; merged pleural-line/rib-shadow runs are avoided because a single combined bbox is not a valid prompt protocol for separate anatomies/instances. RobLUS negative-control samples have empty masks and are skipped by the current GT-box engines because no bounding box can be generated.
+Shared wrapper defaults: GT masks are converted to bounding-box prompts; MedSAM GT wrappers disable bbox jitter with `--bbox-jitter-prob 0.0`; MedSAM and SAMUS GT wrappers now use matched `--max-samples` caps per dataset for comparable default runs (`100` for AULID, BLUSG, BUS-BRA, BUSI, OKU, TNSC2020, UltraBones100k, and UNS; `764` for RobLUS; `2000` for CAMUS ED/ES). UltraBones100k wrappers use `--box-padding 10`; other datasets use `0`. Dataset-specific options include `--oku-anatomy Capsule`, `--aulid-label mass`, `--roblus-labels pleural_line`, `--camus-labels 1,2,3`, `--include-half-sequence`, `--busbra-pathology`, `--busbra-birads`, and `--busi-categories`. RobLUS is benchmarked class-specifically; merged pleural-line/rib-shadow runs are avoided because a single combined bbox is not a valid prompt protocol for separate anatomies/instances. RobLUS negative-control samples have empty masks and are skipped by the current GT-box engines because no bounding box can be generated.
 
 When rerunning into an existing output directory, old visualization PNGs are not automatically deleted. Remove or move the existing `visualizations/` folder first if you need the qualitative sample set to reflect only the latest run.
 

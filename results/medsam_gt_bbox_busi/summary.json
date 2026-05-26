@@ -1,0 +1,12 @@
+{
+  "dataset": "busi",
+  "dataset_root": "datasets/BUSI",
+  "num_evaluated": 100,
+  "num_skipped_empty_mask": 0,
+  "dice_mean": 0.926842212677002,
+  "dice_std": 0.06160818040370941,
+  "iou_mean": 0.8690269589424133,
+  "iou_std": 0.0938858911395073,
+  "infer_ms_mean": 2400.451171875,
+  "infer_ms_std": 352.21722412109375
+}

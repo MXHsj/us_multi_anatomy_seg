@@ -31,6 +31,16 @@ def _decoder_kwargs(dataset_name: str, args: argparse.Namespace) -> dict[str, An
         }
     if dataset_name == "blusg":
         return {"include_other": not args.blusg_only_tumor}
+    if dataset_name == "busbra":
+        pathology = [p.strip() for p in args.busbra_pathology.split(",") if p.strip()]
+        birads = [int(b) for b in args.busbra_birads.split(",") if b.strip()]
+        return {
+            "pathology_filter": pathology or None,
+            "birads_filter": birads or None,
+        }
+    if dataset_name == "busi":
+        categories = [c.strip() for c in args.busi_categories.split(",") if c.strip()]
+        return {"categories": categories or None}
     if dataset_name == "oku":
         anatomy_filter = [a.strip() for a in args.oku_anatomy.split(",") if a.strip()]
         return {
@@ -114,6 +124,24 @@ def add_dataset_args(parser: argparse.ArgumentParser, include_camus: bool = True
         "--blusg-only-tumor",
         action="store_true",
         help="Use only tumor masks for BLUSG (ignore other lesion masks).",
+    )
+    parser.add_argument(
+        "--busbra-pathology",
+        type=str,
+        default="",
+        help="Comma-separated BUS-BRA pathology filter (benign, malignant).",
+    )
+    parser.add_argument(
+        "--busbra-birads",
+        type=str,
+        default="",
+        help="Comma-separated BUS-BRA BI-RADS filter (e.g. 4,5).",
+    )
+    parser.add_argument(
+        "--busi-categories",
+        type=str,
+        default="benign,malignant",
+        help="Comma-separated BUSI categories to decode (benign, malignant, normal).",
     )
     parser.add_argument(
         "--oku-anatomy",
