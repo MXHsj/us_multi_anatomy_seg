@@ -178,7 +178,7 @@ The wrapper scripts under `benchmarks/test_*_gt_bbox_*.py` are the current repro
 | `test_medsam_gt_bbox_busi.py` | MedSAM | `busi` (`benign,malignant`) | 100 | 0 | `mps` | 20 | `results/medsam_gt_bbox_busi` |
 | `test_medsam_gt_bbox_oku.py` | MedSAM | `oku` | 100 | 0 | `mps` | 20 | `results/medsam_gt_bbox_oku` |
 | `test_medsam_gt_bbox_ultrabones100k.py` | MedSAM | `ultrabones100k` | 100 | 10 | `cuda:0` | 20 | `results/medsam_gt_bbox_ultrabones100k` |
-| `test_medsam_gt_bbox_camus.py` | MedSAM | `camus` | 2000 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_camus` |
+| `test_medsam_gt_bbox_camus.py` | MedSAM | `camus` | 4000 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_camus` |
 | `test_medsam_gt_bbox_aulid.py` | MedSAM | `aulid` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_aulid` |
 | `test_medsam_gt_bbox_uns.py` | MedSAM | `uns` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_uns` |
 | `test_medsam_gt_bbox_roblus.py` | MedSAM | `roblus` (`pleural_line`) | 764 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_roblus` |
@@ -188,7 +188,7 @@ The wrapper scripts under `benchmarks/test_*_gt_bbox_*.py` are the current repro
 | `test_samus_gt_bbox_busi.py` | SAMUS | `busi` (`benign,malignant`) | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_busi` |
 | `test_samus_gt_bbox_oku.py` | SAMUS | `oku` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_oku` |
 | `test_samus_gt_bbox_ultrabones100k.py` | SAMUS | `ultrabones100k` | 100 | 10 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_ultrabones100k` |
-| `test_samus_gt_bbox_camus.py` | SAMUS | `camus` | 2000 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_camus` |
+| `test_samus_gt_bbox_camus.py` | SAMUS | `camus` | 4000 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_camus` |
 | `test_samus_gt_bbox_aulid.py` | SAMUS | `aulid` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_aulid` |
 | `test_samus_gt_bbox_uns.py` | SAMUS | `uns` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_uns` |
 | `test_samus_gt_bbox_roblus.py` | SAMUS | `roblus` (`pleural_line`) | 764 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_roblus` |

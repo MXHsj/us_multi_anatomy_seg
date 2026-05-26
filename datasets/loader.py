@@ -114,7 +114,12 @@ def add_dataset_args(parser: argparse.ArgumentParser, include_camus: bool = True
     )
     if include_camus:
         parser.add_argument("--include-half-sequence", action="store_true")
-        parser.add_argument("--camus-labels", type=str, default="1,2,3")
+        parser.add_argument(
+            "--camus-labels",
+            type=str,
+            default="1,3",
+            help="Comma-separated CAMUS label ids to evaluate as separate binary targets.",
+        )
     parser.add_argument(
         "--blusg-only-tumor",
         action="store_true",

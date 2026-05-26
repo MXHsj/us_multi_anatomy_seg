@@ -31,6 +31,15 @@ from datasets.common import (
     normalize_to_uint8,
 )
 from datasets.loader import add_dataset_args, build_decoder_from_args
+from benchmarks.eval_utils import (
+    METRIC_FIELDNAMES,
+    TargetVisualizationCollector,
+    build_metric_row,
+    count_source_iterations,
+    count_unique_source_samples,
+    evenly_spaced_zero_based_indices,
+    summarize_target_class_metrics,
+)
 from models.segment_anything_samus.build_sam_us import samus_model_registry
 
 
@@ -388,6 +397,13 @@ def main() -> None:
     model = build_model(args)
     total_iterations = get_total_iterations(decoder, args.max_samples)
     vis_indices = evenly_spaced_indices(total_iterations, args.save_vis)
+    total_source_iterations = count_source_iterations(decoder, args.max_samples)
+    source_vis_indices = evenly_spaced_zero_based_indices(total_source_iterations, args.save_vis)
+    target_vis_collector = TargetVisualizationCollector(
+        vis_dir=out_dir / "visualizations",
+        source_indices=source_vis_indices,
+        model_label="SAMUS",
+    )
 
     rows = []
     skipped = 0
@@ -466,18 +482,27 @@ def main() -> None:
             iou = float(iou_score(entry["gt_mask"], pred))
 
             rows.append(
-                {
-                    "sample_id": entry["sample"].sample_id,
-                    "height": entry["height"],
-                    "width": entry["width"],
-                    "bbox": entry["bbox"].tolist(),
-                    "dice": dice,
-                    "iou": iou,
-                    "infer_ms": batch_infer_ms,
-                }
+                build_metric_row(
+                    sample=entry["sample"],
+                    height=entry["height"],
+                    width=entry["width"],
+                    bbox=entry["bbox"],
+                    dice=dice,
+                    iou=iou,
+                    infer_ms=batch_infer_ms,
+                )
             )
 
-            if entry["idx"] in vis_indices:
+            handled_target_vis = target_vis_collector.add_if_selected(
+                sample=entry["sample"],
+                image=entry["image_uint8"],
+                gt_mask=entry["gt_mask"],
+                pred_mask=pred,
+                bbox=entry["bbox"],
+                dice=dice,
+                iou=iou,
+            )
+            if not handled_target_vis and entry["idx"] in vis_indices:
                 save_vis(
                     vis_dir=out_dir / "visualizations",
                     sample_id=entry["sample"].sample_id,
@@ -520,18 +545,27 @@ def main() -> None:
             iou = float(iou_score(entry["gt_mask"], pred))
 
             rows.append(
-                {
-                    "sample_id": entry["sample"].sample_id,
-                    "height": entry["height"],
-                    "width": entry["width"],
-                    "bbox": entry["bbox"].tolist(),
-                    "dice": dice,
-                    "iou": iou,
-                    "infer_ms": batch_infer_ms,
-                }
+                build_metric_row(
+                    sample=entry["sample"],
+                    height=entry["height"],
+                    width=entry["width"],
+                    bbox=entry["bbox"],
+                    dice=dice,
+                    iou=iou,
+                    infer_ms=batch_infer_ms,
+                )
             )
 
-            if entry["idx"] in vis_indices:
+            handled_target_vis = target_vis_collector.add_if_selected(
+                sample=entry["sample"],
+                image=entry["image_uint8"],
+                gt_mask=entry["gt_mask"],
+                pred_mask=pred,
+                bbox=entry["bbox"],
+                dice=dice,
+                iou=iou,
+            )
+            if not handled_target_vis and entry["idx"] in vis_indices:
                 save_vis(
                     vis_dir=out_dir / "visualizations",
                     sample_id=entry["sample"].sample_id,
@@ -555,11 +589,13 @@ def main() -> None:
     if rows or skipped:
         print()
 
+    target_vis_collector.flush_pending()
+
     metrics_csv = out_dir / "per_sample_metrics.csv"
     with metrics_csv.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
-            fieldnames=["sample_id", "height", "width", "bbox", "dice", "iou", "infer_ms"],
+            fieldnames=METRIC_FIELDNAMES,
         )
         writer.writeheader()
         writer.writerows(rows)
@@ -584,6 +620,11 @@ def main() -> None:
             "infer_ms_mean": float(ms_vals.mean()),
             "infer_ms_std": float(ms_vals.std()),
         }
+        target_class_metrics = summarize_target_class_metrics(rows)
+        if target_class_metrics:
+            summary["target_mode"] = "class_instance"
+            summary["num_source_samples"] = count_unique_source_samples(rows)
+            summary["target_class_metrics"] = target_class_metrics
     else:
         summary = {
             "dataset": args.dataset,

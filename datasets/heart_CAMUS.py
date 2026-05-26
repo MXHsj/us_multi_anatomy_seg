@@ -8,13 +8,41 @@ from typing import Iterator, Optional
 import numpy as np
 
 try:
-    from datasets.common import DecodedSample, export_samples, normalize_to_uint8, to_binary_mask
+    from datasets.common import (
+        DecodedSample,
+        export_samples,
+        make_target_metadata,
+        make_target_sample_id,
+        normalize_to_uint8,
+    )
 except ModuleNotFoundError:
-    from common import DecodedSample, export_samples, normalize_to_uint8, to_binary_mask
+    from common import (
+        DecodedSample,
+        export_samples,
+        make_target_metadata,
+        make_target_sample_id,
+        normalize_to_uint8,
+    )
 
 
 _FILE_RE = re.compile(
     r"(?P<patient>patient\d+)_(?P<view>2CH|4CH)_(?P<phase>ED|ES|half_sequence)_gt\.nii\.gz$"
+)
+
+_CAMUS_LABELS = {
+    1: {"name": "LV", "color": "#1f77b4", "description": "left_ventricle"},
+    2: {"name": "MYO", "color": "#ff7f0e", "description": "myocardium"},
+    3: {"name": "LA", "color": "#2ca02c", "description": "left_atrium"},
+}
+
+_FALLBACK_COLORS = (
+    "#d62728",
+    "#9467bd",
+    "#8c564b",
+    "#e377c2",
+    "#7f7f7f",
+    "#bcbd22",
+    "#17becf",
 )
 
 
@@ -23,7 +51,7 @@ class HeartCAMUSDecoder:
         self,
         root: str | Path = "datasets/CAMUS",
         include_half_sequence: bool = False,
-        positive_labels: tuple[int, ...] = (1, 2, 3),
+        positive_labels: tuple[int, ...] = (1, 3),
     ):
         self.root = Path(root)
         self.include_half_sequence = include_half_sequence
@@ -57,16 +85,47 @@ class HeartCAMUSDecoder:
             raise ValueError(f"Unsupported CAMUS shape {shape}")
         return int(min(squeezed))
 
+    def _label_info(self, label: int, target_index: int) -> dict[str, str]:
+        if label in _CAMUS_LABELS:
+            return _CAMUS_LABELS[label]
+        return {
+            "name": f"label_{label}",
+            "color": _FALLBACK_COLORS[target_index % len(_FALLBACK_COLORS)],
+            "description": f"label_{label}",
+        }
+
     def count_samples(self, max_samples: Optional[int] = None) -> int:
+        if max_samples is not None and max_samples <= 0:
+            return 0
         total = 0
+        targets_per_source = len(self.positive_labels)
         for gt_path in self._gt_files():
             match = _FILE_RE.search(gt_path.name)
             if not match:
                 continue
-            total += self._frame_count_from_shape(self.nib.load(str(gt_path)).shape)
+            frame_count = self._frame_count_from_shape(self.nib.load(str(gt_path)).shape)
+            total += frame_count * targets_per_source
             if max_samples is not None and total >= max_samples:
                 return max_samples
         return total
+
+    def count_source_samples(self, max_samples: Optional[int] = None) -> int:
+        if max_samples is not None and max_samples <= 0:
+            return 0
+        total_sources = 0
+        for gt_path in self._gt_files():
+            match = _FILE_RE.search(gt_path.name)
+            if not match:
+                continue
+            total_sources += self._frame_count_from_shape(
+                self.nib.load(str(gt_path)).shape
+            )
+
+        if max_samples is None:
+            return total_sources
+
+        targets_per_source = max(len(self.positive_labels), 1)
+        return min(total_sources, int(np.ceil(max_samples / targets_per_source)))
 
     def _iter_frames(self, img: np.ndarray, msk: np.ndarray) -> Iterator[tuple[np.ndarray, np.ndarray, int]]:
         if img.shape != msk.shape:
@@ -89,7 +148,12 @@ class HeartCAMUSDecoder:
             yield arr_img[..., frame_idx], arr_msk[..., frame_idx], frame_idx
 
     def iter_samples(self, max_samples: Optional[int] = None) -> Iterator[DecodedSample]:
-        count = 0
+        if max_samples is not None and max_samples <= 0:
+            return
+        target_count = 0
+        source_count = 0
+        labels = tuple(int(label) for label in self.positive_labels)
+        targets_per_source = len(labels)
         for gt_path in self._gt_files():
             match = _FILE_RE.search(gt_path.name)
             if not match:
@@ -106,24 +170,52 @@ class HeartCAMUSDecoder:
             msk = msk_nii.get_fdata()
 
             for img_frame, msk_frame, frame_idx in self._iter_frames(img, msk):
-                sample_id = f"{patient}_{view}_{phase}_f{frame_idx:03d}"
-                yield DecodedSample(
-                    dataset="CAMUS",
-                    sample_id=sample_id,
-                    image=normalize_to_uint8(img_frame),
-                    mask=to_binary_mask(msk_frame, self.positive_labels),
-                    metadata={
-                        "patient": patient,
-                        "view": view,
-                        "phase": phase,
-                        "frame_index": frame_idx,
-                        "raw_image_path": str(img_path),
-                        "raw_mask_path": str(gt_path),
-                    },
-                )
-                count += 1
-                if max_samples is not None and count >= max_samples:
-                    return
+                source_sample_id = f"{patient}_{view}_{phase}_f{frame_idx:03d}"
+                image_uint8 = normalize_to_uint8(img_frame)
+                rounded_mask = np.rint(msk_frame).astype(np.int32)
+
+                for target_index, label in enumerate(labels):
+                    label_info = self._label_info(label=label, target_index=target_index)
+                    target_class_name = label_info["name"]
+                    target_metadata = make_target_metadata(
+                        source_sample_id=source_sample_id,
+                        target_class_id=label,
+                        target_class_name=target_class_name,
+                        target_instance_id=0,
+                        target_color=label_info["color"],
+                        source_sample_index=source_count,
+                        target_index=target_index,
+                        targets_per_source=targets_per_source,
+                    )
+                    target_metadata.update(
+                        {
+                            "patient": patient,
+                            "view": view,
+                            "phase": phase,
+                            "frame_index": frame_idx,
+                            "target_description": label_info["description"],
+                            "raw_image_path": str(img_path),
+                            "raw_mask_path": str(gt_path),
+                        }
+                    )
+                    target_sample_id = make_target_sample_id(
+                        source_sample_id=source_sample_id,
+                        target_class_name=target_class_name,
+                        target_instance_id=0,
+                    )
+
+                    yield DecodedSample(
+                        dataset="CAMUS",
+                        sample_id=target_sample_id,
+                        image=image_uint8,
+                        mask=(rounded_mask == label).astype(np.uint8),
+                        metadata=target_metadata,
+                    )
+                    target_count += 1
+                    if max_samples is not None and target_count >= max_samples:
+                        return
+
+                source_count += 1
 
 
 if __name__ == "__main__":
@@ -142,8 +234,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--labels",
         type=str,
-        default="1,2,3",
-        help="Comma-separated positive label ids to include",
+        default="1,3",
+        help="Comma-separated CAMUS label ids to evaluate as separate binary targets",
     )
     parser.add_argument(
         "--max-samples",
@@ -172,6 +264,9 @@ if __name__ == "__main__":
     else:
         count = 0
         for sample in decoder.iter_samples(max_samples=args.max_samples):
-            print(f"{sample.sample_id}: image={sample.image.shape}, mask={sample.mask.shape}")
+            print(
+                f"{sample.sample_id}: image={sample.image.shape}, mask={sample.mask.shape}, "
+                f"class={sample.metadata.get('target_class_name')}"
+            )
             count += 1
         print(f"Decoded {count} samples")

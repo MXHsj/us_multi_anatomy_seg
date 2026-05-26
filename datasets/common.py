@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 from typing import Dict, Iterable, Iterator, Optional
 
 import numpy as np
@@ -15,6 +16,55 @@ class DecodedSample:
     image: np.ndarray
     mask: np.ndarray
     metadata: Dict[str, object] = field(default_factory=dict)
+
+
+def slugify_target_name(value: object) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", str(value).strip().lower()).strip("_")
+    return slug or "target"
+
+
+def make_target_sample_id(
+    source_sample_id: str,
+    target_class_name: str,
+    target_instance_id: int | str = 0,
+) -> str:
+    target_slug = slugify_target_name(target_class_name)
+    instance_slug = slugify_target_name(target_instance_id)
+    if str(target_instance_id) in {"", "0"}:
+        return f"{source_sample_id}__{target_slug}"
+    return f"{source_sample_id}__{target_slug}_{instance_slug}"
+
+
+def make_target_metadata(
+    source_sample_id: str,
+    target_class_id: int | str,
+    target_class_name: str,
+    target_instance_id: int | str = 0,
+    target_color: str = "",
+    source_sample_index: int | None = None,
+    target_index: int | None = None,
+    targets_per_source: int | None = None,
+) -> Dict[str, object]:
+    target_uid = make_target_sample_id(
+        source_sample_id=source_sample_id,
+        target_class_name=target_class_name,
+        target_instance_id=target_instance_id,
+    )
+    metadata: Dict[str, object] = {
+        "source_sample_id": source_sample_id,
+        "target_uid": target_uid,
+        "target_class_id": target_class_id,
+        "target_class_name": target_class_name,
+        "target_instance_id": target_instance_id,
+        "target_color": target_color,
+    }
+    if source_sample_index is not None:
+        metadata["source_sample_index"] = source_sample_index
+    if target_index is not None:
+        metadata["target_index"] = target_index
+    if targets_per_source is not None:
+        metadata["targets_per_source"] = targets_per_source
+    return metadata
 
 
 def normalize_to_uint8(image: np.ndarray) -> np.ndarray:

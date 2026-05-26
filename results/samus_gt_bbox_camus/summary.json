@@ -5,12 +5,36 @@
   "sam_ckpt": "work_dir/SAMUS/checkpoints/sam_vit_b_01ec64.pth",
   "batch_size": 1,
   "num_workers": 0,
-  "num_evaluated": 2000,
+  "num_evaluated": 4000,
   "num_skipped_empty_mask": 0,
-  "dice_mean": 0.849998414516449,
-  "dice_std": 0.03945399448275566,
-  "iou_mean": 0.7410621047019958,
-  "iou_std": 0.05655108019709587,
-  "infer_ms_mean": 72.04387664794922,
-  "infer_ms_std": 16.40774154663086
+  "dice_mean": 0.8375187516212463,
+  "dice_std": 0.05131099745631218,
+  "iou_mean": 0.7235695719718933,
+  "iou_std": 0.07116934657096863,
+  "infer_ms_mean": 306.5223388671875,
+  "infer_ms_std": 44.13627243041992,
+  "target_mode": "class_instance",
+  "num_source_samples": 2000,
+  "target_class_metrics": {
+    "LA": {
+      "target_class_id": "3",
+      "num_evaluated": 2000,
+      "dice_mean": 0.8413987159729004,
+      "dice_std": 0.05580589920282364,
+      "iou_mean": 0.7297773957252502,
+      "iou_std": 0.07490099966526031,
+      "infer_ms_mean": 306.75213623046875,
+      "infer_ms_std": 46.20987319946289
+    },
+    "LV": {
+      "target_class_id": "1",
+      "num_evaluated": 2000,
+      "dice_mean": 0.8336387872695923,
+      "dice_std": 0.046056825667619705,
+      "iou_mean": 0.7173616290092468,
+      "iou_std": 0.06665519624948502,
+      "infer_ms_mean": 306.2925720214844,
+      "infer_ms_std": 41.95906066894531
+    }
+  }
 }
