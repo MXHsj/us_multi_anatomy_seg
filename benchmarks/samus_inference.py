@@ -25,9 +25,7 @@ for path in (ROOT_DIR, SAMUS_DIR):
 
 from datasets.common import (
     bbox_from_mask,
-    dice_score,
     ensure_three_channels,
-    iou_score,
     normalize_to_uint8,
 )
 from datasets.loader import add_dataset_args, build_decoder_from_args
@@ -38,8 +36,10 @@ from benchmarks.eval_utils import (
     count_source_iterations,
     count_unique_source_samples,
     evenly_spaced_zero_based_indices,
+    summarize_metric_rows,
     summarize_target_class_metrics,
 )
+from benchmarks.metrics import SegmentationMetrics
 from models.segment_anything_samus.build_sam_us import samus_model_registry
 
 
@@ -407,6 +407,7 @@ def main() -> None:
 
     rows = []
     skipped = 0
+    metrics_calculator = SegmentationMetrics()
     benchmark_tic = time.perf_counter()
     total_label = str(total_iterations) if total_iterations is not None else "all available"
     print(
@@ -478,8 +479,7 @@ def main() -> None:
         batch_infer_ms = batch_elapsed_s * 1000.0 / len(pending)
 
         for entry, pred in zip(pending, batch_preds):
-            dice = float(dice_score(entry["gt_mask"], pred))
-            iou = float(iou_score(entry["gt_mask"], pred))
+            metrics = metrics_calculator.compute(entry["gt_mask"], pred)
 
             rows.append(
                 build_metric_row(
@@ -487,8 +487,7 @@ def main() -> None:
                     height=entry["height"],
                     width=entry["width"],
                     bbox=entry["bbox"],
-                    dice=dice,
-                    iou=iou,
+                    metrics=metrics,
                     infer_ms=batch_infer_ms,
                 )
             )
@@ -499,8 +498,8 @@ def main() -> None:
                 gt_mask=entry["gt_mask"],
                 pred_mask=pred,
                 bbox=entry["bbox"],
-                dice=dice,
-                iou=iou,
+                dice=metrics["dice"],
+                iou=metrics["iou"],
             )
             if not handled_target_vis and entry["idx"] in vis_indices:
                 save_vis(
@@ -541,8 +540,7 @@ def main() -> None:
         batch_infer_ms = batch_elapsed_s * 1000.0 / len(pending)
 
         for entry, pred in zip(pending, batch_preds):
-            dice = float(dice_score(entry["gt_mask"], pred))
-            iou = float(iou_score(entry["gt_mask"], pred))
+            metrics = metrics_calculator.compute(entry["gt_mask"], pred)
 
             rows.append(
                 build_metric_row(
@@ -550,8 +548,7 @@ def main() -> None:
                     height=entry["height"],
                     width=entry["width"],
                     bbox=entry["bbox"],
-                    dice=dice,
-                    iou=iou,
+                    metrics=metrics,
                     infer_ms=batch_infer_ms,
                 )
             )
@@ -562,8 +559,8 @@ def main() -> None:
                 gt_mask=entry["gt_mask"],
                 pred_mask=pred,
                 bbox=entry["bbox"],
-                dice=dice,
-                iou=iou,
+                dice=metrics["dice"],
+                iou=metrics["iou"],
             )
             if not handled_target_vis and entry["idx"] in vis_indices:
                 save_vis(
@@ -601,9 +598,6 @@ def main() -> None:
         writer.writerows(rows)
 
     if rows:
-        dice_vals = np.array([row["dice"] for row in rows], dtype=np.float32)
-        iou_vals = np.array([row["iou"] for row in rows], dtype=np.float32)
-        ms_vals = np.array([row["infer_ms"] for row in rows], dtype=np.float32)
         summary = {
             "dataset": args.dataset,
             "dataset_root": args.dataset_root,
@@ -613,12 +607,7 @@ def main() -> None:
             "num_workers": args.num_workers,
             "num_evaluated": len(rows),
             "num_skipped_empty_mask": skipped,
-            "dice_mean": float(dice_vals.mean()),
-            "dice_std": float(dice_vals.std()),
-            "iou_mean": float(iou_vals.mean()),
-            "iou_std": float(iou_vals.std()),
-            "infer_ms_mean": float(ms_vals.mean()),
-            "infer_ms_std": float(ms_vals.std()),
+            **summarize_metric_rows(rows),
         }
         target_class_metrics = summarize_target_class_metrics(rows)
         if target_class_metrics:

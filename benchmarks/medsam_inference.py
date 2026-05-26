@@ -18,9 +18,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from datasets.common import (
     bbox_from_mask,
-    dice_score,
     ensure_three_channels,
-    iou_score,
     prepare_medsam_image,
 )
 from datasets.loader import add_dataset_args, build_decoder_from_args
@@ -31,8 +29,10 @@ from benchmarks.eval_utils import (
     count_source_iterations,
     count_unique_source_samples,
     evenly_spaced_zero_based_indices,
+    summarize_metric_rows,
     summarize_target_class_metrics,
 )
+from benchmarks.metrics import SegmentationMetrics
 
 
 DEFAULT_MEDSAM_CHECKPOINT_REPO_ID = "GleghornLab/medsam-vit-b"
@@ -342,6 +342,7 @@ def main() -> None:
 
     rows = []
     skipped = 0
+    metrics_calculator = SegmentationMetrics()
     benchmark_tic = time.perf_counter()
     total_label = str(total_iterations) if total_iterations is not None else "all available"
     print(f"Running MedSAM benchmark for dataset '{args.dataset}' on {total_label} samples...")
@@ -382,8 +383,7 @@ def main() -> None:
         pred = medsam_inference(model, image_embedding, box_1024, H, W)
         infer_ms = (time.perf_counter() - tic) * 1000.0
 
-        dice = float(dice_score(gt_mask, pred))
-        iou = float(iou_score(gt_mask, pred))
+        metrics = metrics_calculator.compute(gt_mask, pred)
 
         rows.append(
             build_metric_row(
@@ -391,8 +391,7 @@ def main() -> None:
                 height=H,
                 width=W,
                 bbox=bbox,
-                dice=dice,
-                iou=iou,
+                metrics=metrics,
                 infer_ms=infer_ms,
             )
         )
@@ -403,8 +402,8 @@ def main() -> None:
             gt_mask=gt_mask,
             pred_mask=pred,
             bbox=bbox,
-            dice=dice,
-            iou=iou,
+            dice=metrics["dice"],
+            iou=metrics["iou"],
         )
         if not handled_target_vis and idx in vis_indices:
             save_vis(
@@ -440,20 +439,12 @@ def main() -> None:
         writer.writerows(rows)
 
     if rows:
-        dice_vals = np.array([r["dice"] for r in rows], dtype=np.float32)
-        iou_vals = np.array([r["iou"] for r in rows], dtype=np.float32)
-        ms_vals = np.array([r["infer_ms"] for r in rows], dtype=np.float32)
         summary = {
             "dataset": args.dataset,
             "dataset_root": args.dataset_root,
             "num_evaluated": len(rows),
             "num_skipped_empty_mask": skipped,
-            "dice_mean": float(dice_vals.mean()),
-            "dice_std": float(dice_vals.std()),
-            "iou_mean": float(iou_vals.mean()),
-            "iou_std": float(iou_vals.std()),
-            "infer_ms_mean": float(ms_vals.mean()),
-            "infer_ms_std": float(ms_vals.std()),
+            **summarize_metric_rows(rows),
         }
         target_class_metrics = summarize_target_class_metrics(rows)
         if target_class_metrics:

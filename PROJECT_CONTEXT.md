@@ -129,7 +129,7 @@ Important interpretation notes:
 ## Known Limitations
 
 - GT-box prompting is an oracle condition and should not be treated as a deployable clinical workflow.
-- The current metric set is still narrow: Dice, IoU, and latency only.
+- The benchmark metric set now includes overlap, classification-style pixel metrics, boundary metrics, size error, and latency; clDice remains a structure-specific future addition.
 - Empty masks are skipped by GT-box engines, so current summaries do not evaluate specificity or false positives on empty frames.
 - Result metadata is incomplete: summaries do not yet consistently store command line, git SHA, checkpoint hash, package versions, dataset revision, decoder options, prompt protocol, and sample manifest.
 - Sample selection is not manifest-driven yet. First-`N` ordering can bias small capped runs, especially for datasets grouped by patient, class, or acquisition order.
@@ -156,6 +156,7 @@ Important interpretation notes:
 4. Evaluate structure-specific labels:
    - Rerun CAMUS with the LV/LA target decoder and report per-class results.
    - Keep RobLUS pleural line and rib shadow as separate tasks.
+   - TODO: Add clDice for RobLUS pleural-line segmentation only, because the pleural line is a thin structure where centerline/topology preservation is meaningful.
    - Keep UltraBones100k filled bone-shadow masks as the main target, with original thin labels as a sensitivity check.
 
 5. Add supervised and newer foundation-model baselines:

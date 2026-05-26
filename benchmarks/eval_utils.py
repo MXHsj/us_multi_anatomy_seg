@@ -5,6 +5,8 @@ from typing import Any
 
 import numpy as np
 
+from benchmarks.metrics import METRIC_NAMES
+
 
 TARGET_METADATA_COLUMNS = [
     "source_sample_id",
@@ -21,8 +23,7 @@ METRIC_FIELDNAMES = [
     "height",
     "width",
     "bbox",
-    "dice",
-    "iou",
+    *METRIC_NAMES,
     "infer_ms",
 ]
 
@@ -42,8 +43,7 @@ def build_metric_row(
     height: int,
     width: int,
     bbox: np.ndarray,
-    dice: float,
-    iou: float,
+    metrics: dict[str, float],
     infer_ms: float,
 ) -> dict[str, Any]:
     metadata = _metadata(sample)
@@ -52,10 +52,10 @@ def build_metric_row(
         "height": height,
         "width": width,
         "bbox": bbox.tolist(),
-        "dice": dice,
-        "iou": iou,
         "infer_ms": infer_ms,
     }
+    for metric_name in METRIC_NAMES:
+        row[metric_name] = metrics[metric_name]
     for column in TARGET_METADATA_COLUMNS:
         row[column] = metadata.get(column, "")
     return row
@@ -86,9 +86,6 @@ def summarize_target_class_metrics(rows: list[dict[str, Any]]) -> dict[str, dict
     summaries: dict[str, dict[str, Any]] = {}
     for class_name in sorted(grouped):
         class_rows = grouped[class_name]
-        dice_vals = np.array([row["dice"] for row in class_rows], dtype=np.float32)
-        iou_vals = np.array([row["iou"] for row in class_rows], dtype=np.float32)
-        ms_vals = np.array([row["infer_ms"] for row in class_rows], dtype=np.float32)
         class_ids = sorted(
             {
                 str(row.get("target_class_id"))
@@ -99,14 +96,32 @@ def summarize_target_class_metrics(rows: list[dict[str, Any]]) -> dict[str, dict
         summaries[class_name] = {
             "target_class_id": class_ids[0] if len(class_ids) == 1 else class_ids,
             "num_evaluated": len(class_rows),
-            "dice_mean": float(dice_vals.mean()),
-            "dice_std": float(dice_vals.std()),
-            "iou_mean": float(iou_vals.mean()),
-            "iou_std": float(iou_vals.std()),
-            "infer_ms_mean": float(ms_vals.mean()),
-            "infer_ms_std": float(ms_vals.std()),
+            **summarize_metric_rows(class_rows),
         }
     return summaries
+
+
+def summarize_metric_rows(rows: list[dict[str, Any]]) -> dict[str, float | None]:
+    summary: dict[str, float | None] = {}
+    for column in [*METRIC_NAMES, "infer_ms"]:
+        mean, std = _nanmean_std([row.get(column) for row in rows])
+        summary[f"{column}_mean"] = mean
+        summary[f"{column}_std"] = std
+    return summary
+
+
+def _nanmean_std(values: list[Any]) -> tuple[float | None, float | None]:
+    numeric_values = []
+    for value in values:
+        try:
+            numeric_values.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    arr = np.array(numeric_values, dtype=np.float64)
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        return None, None
+    return float(arr.mean()), float(arr.std())
 
 
 def count_unique_source_samples(rows: list[dict[str, Any]]) -> int:

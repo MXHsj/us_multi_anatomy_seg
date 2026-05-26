@@ -118,7 +118,7 @@ us_multi_anatomy_seg/
 
 ## Benchmark Usage
 
-Use ground-truth masks to build bounding-box prompts, then run MedSAM and report Dice/IoU/latency.
+Use ground-truth masks to build bounding-box prompts, then run MedSAM and report overlap, pixel-classification, boundary, size-error, and latency metrics.
 
 ### MedSAM
 
@@ -165,6 +165,17 @@ Outputs:
 - `per_sample_metrics.csv`
 - `summary.json`
 - `visualizations/*.png`; `--save-vis N` saves `N` evenly spaced cases across the evaluated run, not just the first `N`.
+
+### Evaluation Metrics
+
+The benchmark writes per-sample values and summary mean/std values for the metrics below. Boundary distances are currently measured in image pixels because most 2D ultrasound decoders do not expose calibrated physical spacing.
+
+| Evaluation aspect | Metric columns | Why included |
+| --- | --- | --- |
+| Region overlap | `dice`, `iou` | Main segmentation quality scores; capture how much the predicted mask overlaps the ground-truth target. |
+| Pixel-level detection balance | `precision`, `recall`, `specificity`, `balanced_accuracy` | Separate over-segmentation, under-segmentation, and background rejection behavior that can be hidden by Dice/IoU alone. |
+| Boundary accuracy | `hd95`, `assd` | Quantify contour error: `hd95` captures near-worst boundary misses while reducing single-pixel outlier sensitivity; `assd` captures typical surface-to-surface error. |
+| Size and shape bias | `relative_area_error` | Shows whether predictions systematically overestimate or underestimate target area, even when overlap scores look similar. |
 
 ### Wrapper Benchmark Parameters
 
