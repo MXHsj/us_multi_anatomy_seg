@@ -1,0 +1,43 @@
+{
+  "name": "us-multi-anatomy-seg",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "remoteUser": "vscode",
+  "workspaceFolder": "/workspaces/us_multi_anatomy_seg",
+  "runArgs": [
+    "--gpus=all",
+    "--shm-size=16g"
+  ],
+  "containerEnv": {
+    "CODEX_HOME": "/home/vscode/.codex",
+    "HF_HOME": "${containerWorkspaceFolder}/.cache/huggingface",
+    "PYTHONPATH": "${containerWorkspaceFolder}:${containerWorkspaceFolder}/work_dir/SAMUS"
+  },
+  "mounts": [
+    "source=us-multi-anatomy-seg-pip-cache,target=/home/vscode/.cache/pip,type=volume",
+    "source=${localEnv:USERPROFILE}/.codex,target=/home/vscode/.codex,type=bind,consistency=cached"
+  ],
+  "postCreateCommand": "python -m ipykernel install --user --name us-multi-anatomy-seg --display-name \"Python (us-multi-anatomy-seg)\"",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "openai.chatgpt",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-toolsai.jupyter"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/opt/venv/bin/python",
+        "python.terminal.activateEnvironment": true,
+        "jupyter.kernels.filter": [
+          {
+            "path": "/opt/venv/bin/python",
+            "type": "pythonEnvironment"
+          }
+        ]
+      }
+    }
+  }
+}

@@ -18,6 +18,20 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
+## Development Container
+
+This repo includes a VS Code devcontainer under `.devcontainer/`. Open the
+repository in VS Code and choose **Dev Containers: Reopen in Container** to build
+the CUDA-enabled Python 3.10 image and install the top-level `requirements.txt`.
+
+The container requests all available NVIDIA GPUs. On a CPU-only Docker host,
+remove `--gpus=all` from `.devcontainer/devcontainer.json` before rebuilding.
+
+The devcontainer also installs the OpenAI Codex VS Code extension
+(`openai.chatgpt`). Your local Codex login/config directory is bind-mounted from
+`%USERPROFILE%/.codex` to `/home/vscode/.codex`, so the extension can reuse local
+Codex state without storing secrets in the Docker image.
+
 ## Hugging Face Dataset
 
 Curated ultrasound datasets are hosted on Hugging Face:
