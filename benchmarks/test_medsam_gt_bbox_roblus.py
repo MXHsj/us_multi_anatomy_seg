@@ -18,7 +18,7 @@ DEFAULT_ARGS = [
     "--roblus-labels",
     "pleural_line",
     "--max-samples",
-    "764",
+    "all",
     "--bbox-jitter-prob",
     "0.0",
     "--device",

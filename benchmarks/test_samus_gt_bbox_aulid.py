@@ -16,7 +16,7 @@ DEFAULT_ARGS = [
     "--dataset-root",
     DATASET_ROOT,
     "--max-samples",
-    "100",
+    "all",
     "--device",
     DEVICE,
     "--save-vis",

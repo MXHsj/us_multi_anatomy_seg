@@ -16,7 +16,7 @@ DEFAULT_ARGS = [
     "--dataset-root",
     DATASET_ROOT,
     "--max-samples",
-    "100",
+    "all",
     "--bbox-jitter-prob",
     "0.0",
     "--device",

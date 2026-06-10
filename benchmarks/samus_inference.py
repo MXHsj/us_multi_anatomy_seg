@@ -36,6 +36,8 @@ from benchmarks.eval_utils import (
     count_source_iterations,
     count_unique_source_samples,
     evenly_spaced_zero_based_indices,
+    format_max_samples,
+    parse_max_samples,
     summarize_metric_rows,
     summarize_target_class_metrics,
 )
@@ -366,9 +368,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--max-samples",
-        type=int,
+        type=parse_max_samples,
         default=None,
-        help="Optional cap on the number of samples to evaluate. Defaults to the full dataset.",
+        metavar="N|all",
+        help="Evaluate a positive integer cap or use 'all' for the full dataset. Defaults to 'all'.",
     )
     parser.add_argument("--box-padding", type=int, default=0)
     parser.add_argument("--save-vis", type=int, default=8)
@@ -603,6 +606,7 @@ def main() -> None:
             "dataset_root": args.dataset_root,
             "checkpoint": args.checkpoint,
             "sam_ckpt": args.sam_ckpt,
+            "max_samples": format_max_samples(args.max_samples),
             "batch_size": args.batch_size,
             "num_workers": args.num_workers,
             "num_evaluated": len(rows),
@@ -620,6 +624,7 @@ def main() -> None:
             "dataset_root": args.dataset_root,
             "checkpoint": args.checkpoint,
             "sam_ckpt": args.sam_ckpt,
+            "max_samples": format_max_samples(args.max_samples),
             "batch_size": args.batch_size,
             "num_workers": args.num_workers,
             "num_evaluated": 0,

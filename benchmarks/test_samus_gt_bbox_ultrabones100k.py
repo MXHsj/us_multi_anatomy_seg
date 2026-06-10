@@ -14,7 +14,7 @@ DEFAULT_ARGS = [
     "--dataset",
     "ultrabones100k",
     "--max-samples",
-    "100",
+    "all",
     "--dataset-root",
     DATASET_ROOT,
     "--box-padding",

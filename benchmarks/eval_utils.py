@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,32 @@ METRIC_FIELDNAMES = [
     *METRIC_NAMES,
     "infer_ms",
 ]
+
+
+def parse_max_samples(value: str | int | None) -> int | None:
+    if value is None:
+        return None
+
+    text = str(value).strip().lower()
+    if text == "all":
+        return None
+
+    try:
+        max_samples = int(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "--max-samples must be a positive integer or 'all'."
+        ) from exc
+
+    if max_samples <= 0:
+        raise argparse.ArgumentTypeError(
+            "--max-samples must be a positive integer or 'all'."
+        )
+    return max_samples
+
+
+def format_max_samples(value: int | None) -> int | str:
+    return "all" if value is None else value
 
 
 def _metadata(sample: Any) -> dict[str, Any]:

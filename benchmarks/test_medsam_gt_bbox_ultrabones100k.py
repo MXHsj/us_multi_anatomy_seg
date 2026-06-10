@@ -12,7 +12,7 @@ DEFAULT_ARGS = [
     "--dataset-root",
     "datasets/UltraBones100k",
     "--max-samples",
-    "100",
+    "all",
     "--box-padding",
     "10",
     "--bbox-jitter-prob",

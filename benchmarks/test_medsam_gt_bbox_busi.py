@@ -12,7 +12,7 @@ DEFAULT_ARGS = [
     "--dataset-root",
     "datasets/BUSI",
     "--max-samples",
-    "100",
+    "all",
     "--bbox-jitter-prob",
     "0.0",
     "--device",

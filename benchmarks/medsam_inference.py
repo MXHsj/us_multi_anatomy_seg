@@ -29,6 +29,8 @@ from benchmarks.eval_utils import (
     count_source_iterations,
     count_unique_source_samples,
     evenly_spaced_zero_based_indices,
+    format_max_samples,
+    parse_max_samples,
     summarize_metric_rows,
     summarize_target_class_metrics,
 )
@@ -289,7 +291,13 @@ def main() -> None:
         help="Hugging Face checkpoint repo revision.",
     )
     parser.add_argument("--device", type=str, default="cuda:0")
-    parser.add_argument("--max-samples", type=int, default=20)
+    parser.add_argument(
+        "--max-samples",
+        type=parse_max_samples,
+        default=None,
+        metavar="N|all",
+        help="Evaluate a positive integer cap or use 'all' for the full dataset. Defaults to 'all'.",
+    )
     parser.add_argument("--box-padding", type=int, default=0)
     parser.add_argument(
         "--bbox-jitter-prob",
@@ -442,6 +450,7 @@ def main() -> None:
         summary = {
             "dataset": args.dataset,
             "dataset_root": args.dataset_root,
+            "max_samples": format_max_samples(args.max_samples),
             "num_evaluated": len(rows),
             "num_skipped_empty_mask": skipped,
             **summarize_metric_rows(rows),
@@ -455,6 +464,7 @@ def main() -> None:
         summary = {
             "dataset": args.dataset,
             "dataset_root": args.dataset_root,
+            "max_samples": format_max_samples(args.max_samples),
             "num_evaluated": 0,
             "num_skipped_empty_mask": skipped,
             "error": "No valid samples were evaluated.",

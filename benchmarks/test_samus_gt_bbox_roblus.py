@@ -18,7 +18,7 @@ DEFAULT_ARGS = [
     "--roblus-labels",
     "pleural_line",
     "--max-samples",
-    "764",
+    "all",
     "--device",
     DEVICE,
     "--save-vis",
