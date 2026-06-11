@@ -176,23 +176,34 @@ def prepare_samus_tensor(image: np.ndarray, size: int, device: str) -> torch.Ten
     return resized[0]
 
 
-def scale_bbox_to_model_space(
-    bbox: np.ndarray,
+def foreground_click_xy(mask: np.ndarray) -> tuple[int, int] | None:
+    """A single deterministic foreground click ``(x, y)`` in the mask's own pixel
+    space, mirroring the upstream SAMUS ``fixed_click`` prompt (the middle
+    foreground pixel in row-major order).
+
+    SAMUS is a point-prompted model: its ``forward`` ignores box prompts and is
+    trained/evaluated with click prompts, so this is its native interface.
+    """
+    ys, xs = np.where(mask > 0)
+    if len(xs) == 0:
+        return None
+    mid = len(xs) // 2
+    return int(xs[mid]), int(ys[mid])
+
+
+def scale_click_to_model_space(
+    click_xy: tuple[int, int],
     src_height: int,
     src_width: int,
     dst_size: int,
 ) -> np.ndarray:
-    scale = np.array(
-        [
-            dst_size / max(src_width, 1),
-            dst_size / max(src_height, 1),
-            dst_size / max(src_width, 1),
-            dst_size / max(src_height, 1),
-        ],
-        dtype=np.float32,
-    )
-    scaled = bbox.astype(np.float32) * scale
-    return np.clip(scaled, 0, dst_size - 1)
+    """Scale a pixel-space click to the ``dst_size`` model frame, shaped ``[1, 2]``
+    (one point) for the SAMUS prompt encoder."""
+    x = float(click_xy[0]) * dst_size / max(src_width, 1)
+    y = float(click_xy[1]) * dst_size / max(src_height, 1)
+    x = min(max(x, 0.0), dst_size - 1)
+    y = min(max(y, 0.0), dst_size - 1)
+    return np.array([[x, y]], dtype=np.float32)
 
 
 def load_checkpoint_state_dict(path: Path) -> dict[str, torch.Tensor]:
@@ -297,21 +308,23 @@ def build_model(args: argparse.Namespace) -> torch.nn.Module:
 
 
 @torch.no_grad()
-def samus_box_inference(
+def samus_point_inference(
     model: torch.nn.Module,
     image_tensor: torch.Tensor,
-    boxes_256: np.ndarray,
+    points_256: np.ndarray,
     original_sizes: list[tuple[int, int]],
 ) -> list[np.ndarray]:
     input_size = image_tensor.shape[-2:]
     image_tensor = image_tensor.to(model.device)
-    processed = torch.stack([model.preprocess(img) for img in image_tensor], dim=0)
-    image_embeddings = model.image_encoder(processed)
+    # Upstream SAMUS.forward feeds the [0, 1] image straight into the encoder with
+    # no ImageNet mean/std normalization, so we skip model.preprocess to match it.
+    image_embeddings = model.image_encoder(image_tensor)
 
-    box_torch = torch.as_tensor(boxes_256, dtype=torch.float32, device=model.device)
+    point_coords = torch.as_tensor(points_256, dtype=torch.float32, device=model.device)
+    point_labels = torch.ones(point_coords.shape[:2], dtype=torch.int, device=model.device)
     sparse_embeddings, dense_embeddings = model.prompt_encoder(
-        points=None,
-        boxes=box_torch,
+        points=(point_coords, point_labels),
+        boxes=None,
         masks=None,
     )
     low_res_masks, _ = model.mask_decoder(
@@ -390,14 +403,14 @@ def process_batch(
     benchmark_tic: float,
 ) -> None:
     batch_image_tensor = torch.stack([entry["image_tensor"] for entry in pending], dim=0)
-    batch_boxes = np.stack([entry["scaled_bbox"] for entry in pending], axis=0)
+    batch_points = np.stack([entry["click_256"] for entry in pending], axis=0)
     batch_original_sizes = [(entry["height"], entry["width"]) for entry in pending]
 
     tic = time.perf_counter()
-    batch_preds = samus_box_inference(
+    batch_preds = samus_point_inference(
         model=model,
         image_tensor=batch_image_tensor,
-        boxes_256=batch_boxes,
+        points_256=batch_points,
         original_sizes=batch_original_sizes,
     )
     batch_elapsed_s = time.perf_counter() - tic
@@ -528,7 +541,11 @@ def main() -> None:
     total_iterations = get_total_iterations(decoder, args.max_samples)
     vis_indices = evenly_spaced_indices(total_iterations, args.save_vis)
     total_source_iterations = count_source_iterations(decoder, args.max_samples)
-    source_vis_indices = evenly_spaced_zero_based_indices(total_source_iterations, args.save_vis)
+    # Decoders without a distinct source/target split (e.g. AULID) return no source
+    # count; fall back to the evaluated-sample total so visualizations are still
+    # selected per sample, matching the UltraSAM benchmark's behaviour.
+    vis_total = total_source_iterations if total_source_iterations is not None else total_iterations
+    source_vis_indices = evenly_spaced_zero_based_indices(vis_total, args.save_vis)
     target_vis_collector = TargetVisualizationCollector(
         vis_dir=out_dir / "visualizations",
         source_indices=source_vis_indices,
@@ -576,8 +593,8 @@ def main() -> None:
         image_tensor = prepare_samus_tensor(
             image_3c, size=args.encoder_input_size, device=args.device
         )
-        scaled_bbox = scale_bbox_to_model_space(
-            bbox=bbox,
+        click_256 = scale_click_to_model_space(
+            click_xy=foreground_click_xy(gt_mask),
             src_height=height,
             src_width=width,
             dst_size=args.encoder_input_size,
@@ -592,7 +609,7 @@ def main() -> None:
                 "width": width,
                 "gt_mask": gt_mask,
                 "bbox": bbox,
-                "scaled_bbox": scaled_bbox,
+                "click_256": click_256,
             }
         )
 
