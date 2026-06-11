@@ -16,11 +16,11 @@ DEFAULT_ARGS = [
     "--dataset-root",
     DATASET_ROOT,
     "--max-samples",
-    "4000",
+    "99999999",
     "--device",
     DEVICE,
     "--save-vis",
-    "20",
+    "99999999",
     "--output-dir",
     OUTPUT_DIR,
 ]

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import threading
+import concurrent.futures
+import multiprocessing
+import os
 from pathlib import Path
-from queue import Queue
 from typing import Any
 
 import numpy as np
@@ -136,33 +137,42 @@ def count_unique_source_samples(rows: list[dict[str, Any]]) -> int:
 
 
 class TargetVisualizationCollector:
-    def __init__(self, vis_dir: Path, source_indices: set[int], model_label: str):
+    def __init__(
+        self,
+        vis_dir: Path,
+        source_indices: set[int],
+        model_label: str,
+        num_workers: int | None = None,
+    ):
         self.vis_dir = vis_dir
         self.source_indices = source_indices
         self.model_label = model_label
         self._current_source_id: str | None = None
         self._current_group: dict[str, Any] | None = None
         self._fallback_source_index = 0
-        self._save_queue: Queue = Queue()
-        self._worker = threading.Thread(target=self._save_worker, daemon=True)
-        self._worker.start()
-
-    def _save_worker(self) -> None:
-        while True:
-            task = self._save_queue.get()
-            if task is None:
-                self._save_queue.task_done()
-                return
-            source_id, group = task
-            try:
-                self._save_group(source_id, group)
-            except Exception as exc:
-                print(f"[vis] save failed for {source_id}: {exc}", flush=True)
-            self._save_queue.task_done()
+        # matplotlib rendering is CPU-bound (~0.5s/figure) and the GIL serializes
+        # threads, so figures are rendered across a pool of worker processes to
+        # overlap with inference and saturate spare cores. "spawn" avoids forking
+        # the CUDA-initialized parent (which torch warns against / can deadlock).
+        if num_workers is None:
+            num_workers = min(8, max(1, (os.cpu_count() or 2) - 1))
+        self._executor = concurrent.futures.ProcessPoolExecutor(
+            max_workers=num_workers,
+            mp_context=multiprocessing.get_context("spawn"),
+        )
+        self._futures: list[concurrent.futures.Future] = []
 
     def _enqueue_current_group(self) -> None:
         if self._current_source_id is not None and self._current_group is not None:
-            self._save_queue.put((self._current_source_id, self._current_group))
+            self._futures.append(
+                self._executor.submit(
+                    _render_and_save_group,
+                    self.vis_dir,
+                    self.model_label,
+                    self._current_source_id,
+                    self._current_group,
+                )
+            )
         self._current_group = None
 
     def add_if_selected(
@@ -219,65 +229,80 @@ class TargetVisualizationCollector:
     def flush_pending(self) -> None:
         """Enqueue the current group and wait for all pending saves to complete."""
         self._enqueue_current_group()
-        self._save_queue.join()
+        for future in concurrent.futures.as_completed(self._futures):
+            try:
+                future.result()
+            except Exception as exc:
+                print(f"[vis] save failed: {exc}", flush=True)
+        self._futures.clear()
+        self._executor.shutdown(wait=True)
 
-    def _save_group(self, source_sample_id: str, group: dict[str, Any]) -> None:
-        import matplotlib.pyplot as plt
-        from matplotlib.colors import to_rgb
-        from matplotlib.patches import Patch, Rectangle
 
-        targets = sorted(group["targets"], key=_target_sort_key)
-        if not targets:
-            return
+def _render_and_save_group(
+    vis_dir: Path,
+    model_label: str,
+    source_sample_id: str,
+    group: dict[str, Any],
+) -> None:
+    import matplotlib
 
-        self.vis_dir.mkdir(parents=True, exist_ok=True)
-        fig, axes = plt.subplots(1, 3, figsize=(13, 4.5))
-        titles = [
-            "Image",
-            "GT Targets + Box Prompts",
-            f"{self.model_label} Predictions",
-        ]
-        for axis, title in zip(axes, titles):
-            axis.imshow(group["image"])
-            axis.set_title(title)
-            axis.axis("off")
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import to_rgb
+    from matplotlib.patches import Patch, Rectangle
 
-        legend_handles = []
-        for target in targets:
-            color = _safe_rgb(target["color"])
-            if color is None:
-                color = to_rgb("#d62728")
-            _overlay_mask(axes[1], target["gt_mask"], color=color, alpha=0.42)
-            _overlay_mask(axes[2], target["pred_mask"], color=color, alpha=0.42)
-            bbox = target["bbox"]
-            axes[1].add_patch(
-                Rectangle(
-                    (bbox[0], bbox[1]),
-                    max(float(bbox[2] - bbox[0]), 1.0),
-                    max(float(bbox[3] - bbox[1]), 1.0),
-                    edgecolor=color,
-                    facecolor=(0, 0, 0, 0),
-                    linewidth=1.8,
-                )
+    targets = sorted(group["targets"], key=_target_sort_key)
+    if not targets:
+        return
+
+    vis_dir.mkdir(parents=True, exist_ok=True)
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4.5))
+    titles = [
+        "Image",
+        "GT Targets + Box Prompts",
+        f"{model_label} Predictions",
+    ]
+    for axis, title in zip(axes, titles):
+        axis.imshow(group["image"])
+        axis.set_title(title)
+        axis.axis("off")
+
+    legend_handles = []
+    for target in targets:
+        color = _safe_rgb(target["color"])
+        if color is None:
+            color = to_rgb("#d62728")
+        _overlay_mask(axes[1], target["gt_mask"], color=color, alpha=0.42)
+        _overlay_mask(axes[2], target["pred_mask"], color=color, alpha=0.42)
+        bbox = target["bbox"]
+        axes[1].add_patch(
+            Rectangle(
+                (bbox[0], bbox[1]),
+                max(float(bbox[2] - bbox[0]), 1.0),
+                max(float(bbox[3] - bbox[1]), 1.0),
+                edgecolor=color,
+                facecolor=(0, 0, 0, 0),
+                linewidth=1.8,
             )
-            label = (
-                f"{target['class_name']} "
-                f"D={target['dice']:.2f} I={target['iou']:.2f}"
-            )
-            legend_handles.append(Patch(facecolor=color, edgecolor=color, label=label))
-
-        axes[2].legend(
-            handles=legend_handles,
-            loc="lower right",
-            frameon=True,
-            framealpha=0.82,
-            fontsize=7,
         )
-        fig.suptitle(source_sample_id)
-        fig.tight_layout()
-        safe_name = source_sample_id.replace("/", "_")
-        fig.savefig(self.vis_dir / f"{safe_name}.png", dpi=140)
-        plt.close(fig)
+        label = (
+            f"{target['class_name']} "
+            f"D={target['dice']:.2f} I={target['iou']:.2f}"
+        )
+        legend_handles.append(Patch(facecolor=color, edgecolor=color, label=label))
+
+    axes[2].legend(
+        handles=legend_handles,
+        loc="lower right",
+        frameon=True,
+        framealpha=0.82,
+        fontsize=7,
+    )
+    fig.suptitle(source_sample_id)
+    fig.tight_layout()
+    safe_name = source_sample_id.replace("/", "_")
+    fig.savefig(vis_dir / f"{safe_name}.png", dpi=140)
+    plt.close(fig)
 
 
 def _safe_rgb(color: str) -> tuple[float, float, float] | None:

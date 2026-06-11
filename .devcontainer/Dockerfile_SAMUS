@@ -1,0 +1,90 @@
+# syntax=docker/dockerfile:1.7
+# CUDA 12.8 + PyTorch 2.7 (cu128) so the image runs on both Ada (RTX 4090, sm_89)
+# and Blackwell (RTX 5080/5090, sm_120) GPUs, matching Dockerfile_UltraSAM. The
+# torch 1.8/cu111 stack pinned in work_dir/SAMUS/source_code/requirements.txt only ships
+# kernels up to ~sm_86, so it would raise "no kernel image is available" on the 5080.
+#
+# Unlike Dockerfile_UltraSAM, SAMUS needs NO custom CUDA ops (no mmcv/mmdet/mmengine),
+# so nothing is compiled from source and we use the smaller -runtime base instead of
+# -devel (no nvcc / CUDA headers required). The SAMUS source itself is vendored in the
+# repo at work_dir/SAMUS/source_code and mounted at runtime, so there is nothing to clone.
+FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG USERNAME=vscode
+ARG USER_UID=1000
+ARG USER_GID=${USER_UID}
+
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+ENV SAMUS_DIR=/workspaces/us_multi_anatomy_seg/work_dir/SAMUS/source_code
+ENV PYTHONPATH="/workspaces/us_multi_anatomy_seg:/workspaces/us_multi_anatomy_seg/work_dir/SAMUS/source_code"
+ENV CUDA_HOME=/usr/local/cuda
+ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
+ENV MPLCONFIGDIR=/tmp/matplotlib
+# Force the headless matplotlib backend; tkinter is installed below (see python3-tk),
+# which would otherwise tempt matplotlib toward an interactive backend in this no-DISPLAY container.
+ENV MPLBACKEND=Agg
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PIP_DEFAULT_TIMEOUT=100
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# python3-tk provides the _tkinter C extension for python3.10. Three SAMUS modules in
+# the inference import chain (source_code/models/segment_anything_samus/modeling/
+# {image_encoder,prompt_encoder,samus}.py) carry stray IDE auto-imports — those being
+# `from tkinter import X`, `from tokenize import Double`,
+# `from turtle import shape`. The names all resolve, but tkinter/turtle need _tkinter,
+# which is absent from the base python3.10 package. (Deleting those three import lines
+# from the vendored source would remove the need for python3-tk.)
+# libgl1/libglib2.0-0 are the usual OpenCV/scientific-Python runtime libs.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        git \
+        libgl1 \
+        libglib2.0-0 \
+        python3.10 \
+        python3-venv \
+        python3-tk \
+        sudo \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --gid ${USER_GID} ${USERNAME} \
+    && useradd --uid ${USER_UID} --gid ${USER_GID} -m ${USERNAME} \
+    && echo "${USERNAME} ALL=(root) NOPASSWD:ALL" > /etc/sudoers.d/${USERNAME} \
+    && chmod 0440 /etc/sudoers.d/${USERNAME}
+
+RUN mkdir -p /home/${USERNAME}/.cache /tmp/matplotlib \
+    && chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}/.cache /tmp/matplotlib
+
+# setuptools is pinned <82 because 82.0.0 (Feb 2026) removed pkg_resources, which some
+# older transitive dependencies still import at runtime. The pin is cheap insurance.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python3.10 -m venv ${VIRTUAL_ENV} \
+    && python -m pip install --upgrade pip "setuptools<82" wheel
+
+# PyTorch built for CUDA 12.8 (ships sm_89 + sm_120 kernels). SAMUS uses torchvision
+# (transforms.functional.resize, ops.boxes) but not torchaudio.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
+
+# Runtime deps for the SAMUS model (einops) plus the shared dataset/benchmark code
+# (datasets/, benchmarks/eval_utils.py, benchmarks/metrics.py, benchmarks/samus_inference.py).
+# numpy<2 matches the Dockerfile_UltraSAM stack so the shared code behaves identically.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install \
+        "einops" \
+        "huggingface_hub" \
+        "imagecodecs" \
+        "matplotlib" \
+        "nibabel" \
+        "numpy<2" \
+        "scikit-image" \
+        "scipy"
+
+WORKDIR /workspaces/us_multi_anatomy_seg
+
+USER ${USERNAME}

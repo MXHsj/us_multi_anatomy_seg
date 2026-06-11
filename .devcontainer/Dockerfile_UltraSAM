@@ -100,3 +100,10 @@ RUN git clone --depth 1 https://github.com/CAMMA-public/UltraSam ${ULTRASAM_DIR}
 WORKDIR /workspaces/us_multi_anatomy_seg
 
 USER ${USERNAME}
+
+# Authoritative runtime PYTHONPATH. Intentionally placed at the very end (even after USER)
+# so editing it can never invalidate the cached layers above — most importantly the slow
+# mmcv source compile. A later ENV overrides the earlier PYTHONPATH near the top of this
+# file; this value just adds the workspace root (so `datasets`/`benchmarks` import from any
+# cwd) to the /opt/UltraSam paths that carry the endosam package.
+ENV PYTHONPATH="/workspaces/us_multi_anatomy_seg:/opt/UltraSam:/opt/UltraSam/datasets"

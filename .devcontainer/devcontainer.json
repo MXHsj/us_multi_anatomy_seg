@@ -1,7 +1,10 @@
 {
   "name": "us-multi-anatomy-seg",
+  // Switch models by changing ONLY "dockerfile" here: Dockerfile_UltraSAM or Dockerfile_SAMUS.
+  // Each Dockerfile sets its own model-specific env (PYTHONPATH and ULTRASAM_DIR / SAMUS_DIR),
+  // so nothing else in this file needs to change.
   "build": {
-    "dockerfile": "Dockerfile_UltraSAM",
+    "dockerfile": "Dockerfile_SAMUS",
     "context": ".."
   },
   "remoteUser": "vscode",
@@ -13,9 +16,7 @@
   "containerEnv": {
     "CODEX_HOME": "/home/vscode/.codex",
     "HF_HOME": "${containerWorkspaceFolder}/.cache/huggingface",
-    "MPLCONFIGDIR": "${containerWorkspaceFolder}/.cache/matplotlib",
-    "ULTRASAM_DIR": "/opt/UltraSam",
-    "PYTHONPATH": "${containerWorkspaceFolder}:${containerWorkspaceFolder}/work_dir/SAMUS:/opt/UltraSam:/opt/UltraSam/datasets"
+    "MPLCONFIGDIR": "${containerWorkspaceFolder}/.cache/matplotlib"
   },
   "mounts": [
     "source=us-multi-anatomy-seg-pip-cache,target=/home/vscode/.cache/pip,type=volume",

@@ -18,11 +18,11 @@ DEFAULT_ARGS = [
     "--roblus-labels",
     "pleural_line",
     "--max-samples",
-    "764",
+    "99999999",
     "--device",
     DEVICE,
     "--save-vis",
-    "20",
+    "99999999",
     "--output-dir",
     OUTPUT_DIR,
 ]
