@@ -12,10 +12,12 @@ METRICS = ("dice", "iou")
 MODEL_COLORS = {
     "medsam": "#4C72B0",
     "samus": "#55A868",
+    "ultrasam": "#C44E52",
 }
 MODEL_LABELS = {
     "medsam": "MedSAM",
     "samus": "SAMUS",
+    "ultrasam": "UltraSAM",
 }
 DATASET_LABELS = {
     "aulid": "AULID",

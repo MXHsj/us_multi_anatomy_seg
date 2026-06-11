@@ -1,6 +1,6 @@
 ﻿## Ultrasound Multi-Anatomy Segmentator
 
-This repo is organized for cross-dataset benchmarking of pretrained and future foundation segmentation models, starting with MedSAM.
+This repo is organized for cross-dataset benchmarking of pretrained and future foundation segmentation models, including MedSAM, SAMUS, and UltraSAM.
 
 ## Installation
 
@@ -22,7 +22,9 @@ python -m pip install -r requirements.txt
 
 This repo includes a VS Code devcontainer under `.devcontainer/`. Open the
 repository in VS Code and choose **Dev Containers: Reopen in Container** to build
-the CUDA-enabled Python 3.10 image and install the top-level `requirements.txt`.
+the CUDA-enabled Python 3.10 image, install the top-level `requirements.txt`,
+install the OpenMMLab stack used by UltraSAM, and clone
+`CAMMA-public/UltraSam` into `/opt/UltraSam`.
 
 The container requests all available NVIDIA GPUs. On a CPU-only Docker host,
 remove `--gpus=all` from `.devcontainer/devcontainer.json` before rebuilding.
@@ -121,18 +123,19 @@ us_multi_anatomy_seg/
 |   `-- <dataset cache dirs>/      # ignored local materializations
 |-- benchmarks/
 |   |-- medsam_inference.py        # GT-box prompted MedSAM benchmark engine
-|   `-- samus_inference.py         # GT-box prompted SAMUS benchmark engine
+|   |-- samus_inference.py         # GT-box prompted SAMUS benchmark engine
+|   `-- ultrasam_inference.py      # GT-box prompted UltraSAM/OpenMMLab engine
 |-- analysis/
 |   |-- model_across_datasets.py   # Same-model cross-dataset summaries + figures
 |   `-- compare_models_same_dataset.py
 |-- results/                       # Ignored generated metrics/visualizations
 |-- notebooks/                     # Result exploration notebooks
-`-- work_dir/                     # Local model code/checkpoints, including MedSAM/SAMUS
+`-- work_dir/                     # Local checkpoints, including MedSAM/SAMUS/UltraSAM
 ```
 
 ## Benchmark Usage
 
-Use ground-truth masks to build bounding-box prompts, then run MedSAM and report overlap, pixel-classification, boundary, size-error, and latency metrics.
+Use ground-truth masks to build bounding-box prompts, then run each model and report overlap, pixel-classification, boundary, size-error, and latency metrics.
 
 ### MedSAM
 
@@ -159,6 +162,22 @@ python benchmarks/samus_inference.py \
 ```
 
 If `work_dir/SAMUS/ckp/SAMUS.pth` is missing, the SAMUS benchmark downloads the checkpoint from the upstream Google Drive release. Use `--no-auto-download-checkpoint` to require a local checkpoint.
+
+### UltraSAM
+
+UltraSAM uses the upstream OpenMMLab project from `CAMMA-public/UltraSam`. In
+the devcontainer, that source tree is available at `/opt/UltraSam` through the
+`ULTRASAM_DIR` environment variable.
+
+```bash
+python benchmarks/ultrasam_inference.py \
+  --dataset tnsc2020 \
+  --device cuda:0 \
+  --max-samples 50 \
+  --output-dir results/ultrasam_test_tnsc
+```
+
+If `work_dir/UltraSam/UltraSam.pth` is missing, the benchmark downloads the checkpoint from `https://s3.unistra.fr/camma_public/github/ultrasam/UltraSam.pth`. Use `--no-auto-download-checkpoint` to require a local checkpoint. Outside the devcontainer, pass `--ultrasam-dir path/to/UltraSam`, set `ULTRASAM_DIR`, or add `--auto-clone-source`.
 
 ### Dataset-Specific Options
 
@@ -217,8 +236,9 @@ The wrapper scripts under `benchmarks/test_*_gt_bbox_*.py` are the current repro
 | `test_samus_gt_bbox_aulid.py` | SAMUS | `aulid` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_aulid` |
 | `test_samus_gt_bbox_uns.py` | SAMUS | `uns` | 100 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_uns` |
 | `test_samus_gt_bbox_roblus.py` | SAMUS | `roblus` (`pleural_line`) | 764 | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_roblus` |
+| `test_ultrasam_gt_bbox_tnsc2020.py` | UltraSAM | `tnsc2020` | 100 | 0 | CUDA if available, otherwise CPU | 20 | `results/ultrasam_gt_bbox_tnsc2020` |
 
-Shared wrapper defaults: GT masks are converted to bounding-box prompts; MedSAM GT wrappers disable bbox jitter with `--bbox-jitter-prob 0.0`; MedSAM and SAMUS GT wrappers now use matched `--max-samples` caps per dataset for comparable default runs (`100` for AULID, BLUSG, BUS-BRA, BUSI, OKU, TNSC2020, UltraBones100k, and UNS; `764` for RobLUS; `2000` for CAMUS ED/ES). UltraBones100k wrappers use `--box-padding 10`; other datasets use `0`. Dataset-specific options include `--oku-anatomy Capsule`, `--aulid-label mass`, `--roblus-labels pleural_line`, `--camus-labels 1,2,3`, `--include-half-sequence`, `--busbra-pathology`, `--busbra-birads`, and `--busi-categories`. RobLUS is benchmarked class-specifically; merged pleural-line/rib-shadow runs are avoided because a single combined bbox is not a valid prompt protocol for separate anatomies/instances. RobLUS negative-control samples have empty masks and are skipped by the current GT-box engines because no bounding box can be generated.
+Shared wrapper defaults: GT masks are converted to bounding-box prompts; MedSAM GT wrappers disable bbox jitter with `--bbox-jitter-prob 0.0`; MedSAM, SAMUS, and UltraSAM GT wrappers use matched `--max-samples` caps where wrappers exist (`100` for AULID, BLUSG, BUS-BRA, BUSI, OKU, TNSC2020, UltraBones100k, and UNS; `764` for RobLUS; `2000` for CAMUS ED/ES). UltraBones100k wrappers use `--box-padding 10`; other datasets use `0`. Dataset-specific options include `--oku-anatomy Capsule`, `--aulid-label mass`, `--roblus-labels pleural_line`, `--camus-labels 1,2,3`, `--include-half-sequence`, `--busbra-pathology`, `--busbra-birads`, and `--busi-categories`. RobLUS is benchmarked class-specifically; merged pleural-line/rib-shadow runs are avoided because a single combined bbox is not a valid prompt protocol for separate anatomies/instances. RobLUS negative-control samples have empty masks and are skipped by the current GT-box engines because no bounding box can be generated.
 
 When rerunning into an existing output directory, old visualization PNGs are not automatically deleted. Remove or move the existing `visualizations/` folder first if you need the qualitative sample set to reflect only the latest run.
 
@@ -231,6 +251,7 @@ Same-model performance across datasets:
 ```bash
 python analysis/model_across_datasets.py --model medsam
 python analysis/model_across_datasets.py --model samus
+python analysis/model_across_datasets.py --model ultrasam
 ```
 
 These commands print Dice/IoU mean and standard deviation tables and save paper-style plots with mean bars, standard-deviation error bars, and per-sample scatter points under `analysis/figures/`.

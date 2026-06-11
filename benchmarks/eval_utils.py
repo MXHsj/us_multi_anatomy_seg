@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
+from queue import Queue
 from typing import Any
 
 import numpy as np
@@ -140,6 +142,28 @@ class TargetVisualizationCollector:
         self.model_label = model_label
         self._current_source_id: str | None = None
         self._current_group: dict[str, Any] | None = None
+        self._fallback_source_index = 0
+        self._save_queue: Queue = Queue()
+        self._worker = threading.Thread(target=self._save_worker, daemon=True)
+        self._worker.start()
+
+    def _save_worker(self) -> None:
+        while True:
+            task = self._save_queue.get()
+            if task is None:
+                self._save_queue.task_done()
+                return
+            source_id, group = task
+            try:
+                self._save_group(source_id, group)
+            except Exception as exc:
+                print(f"[vis] save failed for {source_id}: {exc}", flush=True)
+            self._save_queue.task_done()
+
+    def _enqueue_current_group(self) -> None:
+        if self._current_source_id is not None and self._current_group is not None:
+            self._save_queue.put((self._current_source_id, self._current_group))
+        self._current_group = None
 
     def add_if_selected(
         self,
@@ -151,21 +175,23 @@ class TargetVisualizationCollector:
         dice: float,
         iou: float,
     ) -> bool:
-        if not has_target_metadata(sample):
-            return False
-
         metadata = _metadata(sample)
-        source_sample_id = str(metadata["source_sample_id"])
+        if has_target_metadata(sample):
+            source_sample_id = str(metadata["source_sample_id"])
+            source_index_raw = metadata.get("source_sample_index")
+            try:
+                source_index = int(source_index_raw)
+            except (TypeError, ValueError):
+                return True
+        else:
+            source_sample_id = str(getattr(sample, "sample_id", "sample"))
+            source_index = self._fallback_source_index
+            self._fallback_source_index += 1
+
         if source_sample_id != self._current_source_id:
-            self.flush_pending()
+            self._enqueue_current_group()
             self._current_source_id = source_sample_id
             self._current_group = None
-
-        source_index_raw = metadata.get("source_sample_index")
-        try:
-            source_index = int(source_index_raw)
-        except (TypeError, ValueError):
-            return True
 
         if source_index not in self.source_indices:
             return True
@@ -191,10 +217,9 @@ class TargetVisualizationCollector:
         return True
 
     def flush_pending(self) -> None:
-        if self._current_source_id is None or self._current_group is None:
-            return
-        self._save_group(self._current_source_id, self._current_group)
-        self._current_group = None
+        """Enqueue the current group and wait for all pending saves to complete."""
+        self._enqueue_current_group()
+        self._save_queue.join()
 
     def _save_group(self, source_sample_id: str, group: dict[str, Any]) -> None:
         import matplotlib.pyplot as plt

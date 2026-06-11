@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UltraSAM on TNSC2020</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #142025;
+      --muted: #5b6870;
+      --line: #d8e0e2;
+      --paper: #f6f8f5;
+      --panel: #ffffff;
+      --teal: #0d7b72;
+      --blue: #2f5d9c;
+      --coral: #bb4b35;
+      --gold: #b98318;
+      --shadow: 0 18px 48px rgba(17, 31, 37, 0.12);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+      line-height: 1.45;
+    }
+
+    .deck {
+      height: 100vh;
+      overflow-y: auto;
+      scroll-snap-type: y mandatory;
+    }
+
+    .slide {
+      min-height: 100vh;
+      scroll-snap-align: start;
+      padding: 54px clamp(22px, 5vw, 72px);
+      display: grid;
+      align-content: center;
+      gap: 28px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .hero {
+      color: white;
+      background:
+        linear-gradient(110deg, rgba(10, 24, 31, 0.94), rgba(13, 123, 114, 0.62), rgba(187, 75, 53, 0.42)),
+        url("visualizations/100.png") center / cover;
+    }
+
+    .eyebrow {
+      margin: 0 0 10px;
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      color: inherit;
+      opacity: 0.72;
+    }
+
+    h1, h2, h3 { margin: 0; line-height: 1.06; letter-spacing: 0; }
+    h1 { max-width: 980px; font-size: clamp(3rem, 8vw, 7.2rem); }
+    h2 { font-size: clamp(2rem, 5.3vw, 4.6rem); }
+    h3 { font-size: 1.05rem; }
+    p { margin: 0; color: var(--muted); max-width: 840px; }
+    .hero p { color: rgba(255,255,255,0.86); font-size: clamp(1rem, 1.8vw, 1.28rem); }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .metric {
+      min-height: 132px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .hero .metric {
+      border-color: rgba(255,255,255,0.22);
+      background: rgba(255,255,255,0.12);
+      box-shadow: none;
+      backdrop-filter: blur(10px);
+    }
+
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 760;
+      text-transform: uppercase;
+    }
+    .hero .metric span { color: rgba(255,255,255,0.72); }
+    .metric strong {
+      display: block;
+      margin-top: 10px;
+      font-size: clamp(1.9rem, 4vw, 3rem);
+      line-height: 1;
+    }
+    .metric small {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+    }
+    .hero .metric small { color: rgba(255,255,255,0.72); }
+
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+      gap: 28px;
+      align-items: center;
+    }
+
+    .bar-chart {
+      display: grid;
+      gap: 14px;
+    }
+
+    .bar-row {
+      display: grid;
+      grid-template-columns: 150px 1fr 82px;
+      gap: 14px;
+      align-items: center;
+      font-size: 0.92rem;
+    }
+
+    .track {
+      height: 14px;
+      border-radius: 999px;
+      background: #e6ecec;
+      overflow: hidden;
+    }
+
+    .fill {
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--teal), var(--blue));
+    }
+
+    .dist-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+
+    th, td {
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: right;
+      white-space: nowrap;
+    }
+    th:first-child, td:first-child { text-align: left; }
+    tr:last-child td { border-bottom: 0; }
+    th {
+      color: var(--muted);
+      font-size: 0.76rem;
+      text-transform: uppercase;
+    }
+
+    .gallery {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .figure {
+      margin: 0;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+    .figure img {
+      display: block;
+      width: 100%;
+      aspect-ratio: 16 / 7;
+      object-fit: contain;
+      background: #10181c;
+    }
+    .figure figcaption {
+      padding: 10px 12px;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    .large-figure {
+      width: min(1120px, 100%);
+      justify-self: center;
+    }
+    .large-figure img { aspect-ratio: 16 / 7; }
+
+    .callouts {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .callout {
+      padding: 20px;
+      border-left: 6px solid var(--teal);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      border-radius: 8px;
+    }
+    .callout:nth-child(2) { border-left-color: var(--blue); }
+    .callout:nth-child(3) { border-left-color: var(--coral); }
+    .callout strong { display: block; margin-bottom: 8px; }
+
+    .nav {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 5;
+      display: flex;
+      gap: 8px;
+    }
+    .nav button {
+      width: 42px;
+      height: 42px;
+      border: 1px solid rgba(20, 32, 37, 0.18);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.88);
+      color: var(--ink);
+      font-size: 1.25rem;
+      cursor: pointer;
+      box-shadow: var(--shadow);
+    }
+
+    @media (max-width: 900px) {
+      .slide { min-height: auto; }
+      .metric-grid, .gallery, .callouts, .split { grid-template-columns: 1fr; }
+      .bar-row { grid-template-columns: 112px 1fr 70px; }
+      h1 { font-size: 3rem; }
+      .nav { display: none; }
+    }
+
+    @media print {
+      .deck { height: auto; overflow: visible; }
+      .slide { min-height: 100vh; break-after: page; }
+      .nav { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="deck" id="deck">
+    <section class="slide hero">
+      <div>
+        <p class="eyebrow">UltraSAM GT-box evaluation</p>
+        <h1>TNSC2020 thyroid nodule segmentation</h1>
+        <p>Full-dataset benchmark on 3,644 ultrasound samples using ground-truth bounding boxes as prompts and CUDA inference.</p>
+      </div>
+      <div class="metric-grid">
+        <div class="metric"><span>Samples</span><strong>3,644</strong><small>0 skipped empty masks</small></div>
+        <div class="metric"><span>Dice mean</span><strong>0.936</strong><small>std 0.031</small></div>
+        <div class="metric"><span>IoU mean</span><strong>0.881</strong><small>std 0.052</small></div>
+        <div class="metric"><span>Latency</span><strong>116.8 ms</strong><small>per image, cuda:0</small></div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div>
+        <p class="eyebrow">Quantitative Results</p>
+        <h2>High overlap with modest positive area bias</h2>
+        <p>UltraSAM reached strong region overlap on TNSC2020. Recall exceeded precision on average, and relative area error was slightly positive.</p>
+      </div>
+      <div class="split">
+        <div class="metric-grid" style="grid-template-columns: repeat(2, minmax(0, 1fr));">
+          <div class="metric"><span>Precision</span><strong>0.925</strong><small>std 0.063</small></div>
+          <div class="metric"><span>Recall</span><strong>0.952</strong><small>std 0.040</small></div>
+          <div class="metric"><span>Specificity</span><strong>0.996</strong><small>background rejection</small></div>
+          <div class="metric"><span>Area error</span><strong>+3.6%</strong><small>mean relative error</small></div>
+        </div>
+        <div class="bar-chart">
+          <div class="bar-row"><span>Dice</span><div class="track"><div class="fill" style="width:93.6%"></div></div><strong>0.936</strong></div>
+          <div class="bar-row"><span>IoU</span><div class="track"><div class="fill" style="width:88.1%"></div></div><strong>0.881</strong></div>
+          <div class="bar-row"><span>Precision</span><div class="track"><div class="fill" style="width:92.5%"></div></div><strong>0.925</strong></div>
+          <div class="bar-row"><span>Recall</span><div class="track"><div class="fill" style="width:95.2%"></div></div><strong>0.952</strong></div>
+          <div class="bar-row"><span>Specificity</span><div class="track"><div class="fill" style="width:99.6%"></div></div><strong>0.996</strong></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div>
+        <p class="eyebrow">Per-Sample Distribution</p>
+        <h2>Median Dice was 0.943</h2>
+        <p>Most cases clustered near high overlap; the lower tail contains difficult samples with partial misses or prompt-sensitive boundaries.</p>
+      </div>
+      <table class="dist-table">
+        <thead>
+          <tr><th>Metric</th><th>Min</th><th>P25</th><th>Median</th><th>P75</th><th>Max</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Dice</td><td>0.4515</td><td>0.9230</td><td>0.9430</td><td>0.9567</td><td>0.9889</td></tr>
+          <tr><td>IoU</td><td>0.2916</td><td>0.8569</td><td>0.8921</td><td>0.9170</td><td>0.9780</td></tr>
+          <tr><td>Precision</td><td>0.5548</td><td>0.8928</td><td>0.9412</td><td>0.9730</td><td>1.0000</td></tr>
+          <tr><td>Recall</td><td>0.3143</td><td>0.9347</td><td>0.9600</td><td>0.9792</td><td>1.0000</td></tr>
+          <tr><td>HD95 px</td><td>1.4142</td><td>6.0000</td><td>9.0000</td><td>13.6015</td><td>112.7608</td></tr>
+          <tr><td>ASSD px</td><td>0.6851</td><td>2.4332</td><td>3.4424</td><td>5.0641</td><td>32.5654</td></tr>
+          <tr><td>Latency ms</td><td>109.7201</td><td>114.5698</td><td>116.3615</td><td>118.3216</td><td>381.2244</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="slide">
+      <div>
+        <p class="eyebrow">Qualitative Results</p>
+        <h2>Representative saved cases</h2>
+        <p>Each figure shows image, ground truth with box prompt, and UltraSAM prediction.</p>
+      </div>
+      <div class="gallery">
+        <figure class="figure"><img src="visualizations/100.png" alt="TNSC sample 100 qualitative result"><figcaption>Sample 100</figcaption></figure>
+        <figure class="figure"><img src="visualizations/559.png" alt="TNSC sample 559 qualitative result"><figcaption>Sample 559</figcaption></figure>
+        <figure class="figure"><img src="visualizations/1445.png" alt="TNSC sample 1445 qualitative result"><figcaption>Sample 1445</figcaption></figure>
+        <figure class="figure"><img src="visualizations/2351.png" alt="TNSC sample 2351 qualitative result"><figcaption>Sample 2351</figcaption></figure>
+        <figure class="figure"><img src="visualizations/4091.png" alt="TNSC sample 4091 qualitative result"><figcaption>Sample 4091</figcaption></figure>
+        <figure class="figure"><img src="visualizations/6495.png" alt="TNSC sample 6495 qualitative result"><figcaption>Sample 6495</figcaption></figure>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div>
+        <p class="eyebrow">Qualitative Detail</p>
+        <h2>Boundary tracking examples</h2>
+      </div>
+      <figure class="figure large-figure">
+        <img src="visualizations/5158.png" alt="Large qualitative example for sample 5158">
+        <figcaption>Sample 5158: image, GT box prompt, and UltraSAM prediction.</figcaption>
+      </figure>
+    </section>
+
+    <section class="slide">
+      <div>
+        <p class="eyebrow">Interpretation</p>
+        <h2>What the run says</h2>
+      </div>
+      <div class="callouts">
+        <div class="callout">
+          <strong>Strong full-dataset accuracy</strong>
+          <p>Mean Dice of 0.936 and median Dice of 0.943 indicate stable overlap across thousands of TNSC images.</p>
+        </div>
+        <div class="callout">
+          <strong>Recall-favoring behavior</strong>
+          <p>Recall averaged 0.952 versus precision at 0.925, consistent with slight over-segmentation in some cases.</p>
+        </div>
+        <div class="callout">
+          <strong>Fast prompted inference</strong>
+          <p>Mean model inference latency was 116.8 ms per image on cuda:0 with batch size 1.</p>
+        </div>
+      </div>
+      <table class="dist-table">
+        <tbody>
+          <tr><td>Model</td><td>UltraSAM</td></tr>
+          <tr><td>Dataset</td><td>TNSC2020</td></tr>
+          <tr><td>Prompt protocol</td><td>Ground-truth bounding box, padding 0 px</td></tr>
+          <tr><td>Output folder</td><td>results/ultrasam_gt_bbox_tnsc2020</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <div class="nav" aria-hidden="false">
+    <button type="button" id="prev" aria-label="Previous slide">‹</button>
+    <button type="button" id="next" aria-label="Next slide">›</button>
+  </div>
+
+  <script>
+    const deck = document.getElementById("deck");
+    const slides = Array.from(document.querySelectorAll(".slide"));
+    function currentIndex() {
+      const top = deck.scrollTop;
+      let nearest = 0;
+      let best = Infinity;
+      slides.forEach((slide, index) => {
+        const distance = Math.abs(slide.offsetTop - top);
+        if (distance < best) {
+          best = distance;
+          nearest = index;
+        }
+      });
+      return nearest;
+    }
+    function go(delta) {
+      const index = Math.max(0, Math.min(slides.length - 1, currentIndex() + delta));
+      slides[index].scrollIntoView({ behavior: "smooth" });
+    }
+    document.getElementById("prev").addEventListener("click", () => go(-1));
+    document.getElementById("next").addEventListener("click", () => go(1));
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown" || event.key === "PageDown" || event.key === " ") go(1);
+      if (event.key === "ArrowUp" || event.key === "PageUp") go(-1);
+    });
+  </script>
+</body>
+</html>

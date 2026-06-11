@@ -5,6 +5,7 @@ __pycache__/
 # pretrained weights
 *.pth
 work_dir/SAMUS/ckp/SAMUS.pth
+work_dir/UltraSam/
 
 # raw/local dataset materializations
 datasets/TNSC2020/
@@ -24,3 +25,6 @@ data_cache/
 # generated benchmark artifacts
 # results/
 *.zip
+presentation
+results/**/visualizations/
+results/**/coco_export/

@@ -1,0 +1,73 @@
+# syntax=docker/dockerfile:1.7
+FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG USERNAME=vscode
+ARG USER_UID=1000
+ARG USER_GID=${USER_UID}
+
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+ENV ULTRASAM_DIR=/opt/UltraSam
+ENV PYTHONPATH="/opt/UltraSam:/opt/UltraSam/datasets"
+ENV LD_LIBRARY_PATH="/usr/local/cuda-11.8/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}"
+ENV MPLCONFIGDIR=/tmp/matplotlib
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PIP_DEFAULT_TIMEOUT=100
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cuda-nvrtc-11-8 \
+        git \
+        libgl1 \
+        libglib2.0-0 \
+        python3.10 \
+        python3.10-dev \
+        python3-venv \
+        sudo \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --gid ${USER_GID} ${USERNAME} \
+    && useradd --uid ${USER_UID} --gid ${USER_GID} -m ${USERNAME} \
+    && echo "${USERNAME} ALL=(root) NOPASSWD:ALL" > /etc/sudoers.d/${USERNAME} \
+    && chmod 0440 /etc/sudoers.d/${USERNAME}
+
+RUN mkdir -p /home/${USERNAME}/.cache /tmp/matplotlib \
+    && chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}/.cache /tmp/matplotlib
+
+RUN ln -sf /usr/local/cuda-11.8/targets/x86_64-linux/lib/libnvrtc.so.11.2 \
+        /usr/local/cuda-11.8/targets/x86_64-linux/lib/libnvrtc.so
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python3.10 -m venv ${VIRTUAL_ENV} \
+    && python -m pip install --upgrade pip setuptools wheel
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install torch==2.0.0 torchvision==0.15.1 torchaudio==2.0.1 --index-url https://download.pytorch.org/whl/cu118
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install "mmengine==0.10.7" \
+    && python -m pip install --only-binary=mmcv "mmcv==2.1.0" -f https://download.openmmlab.com/mmcv/dist/cu118/torch2.0.0/index.html \
+    && python -m pip install "mmdet==3.3.0" "mmpretrain==1.2.0" \
+    && python -m pip install \
+        "huggingface_hub" \
+        "imagecodecs" \
+        "matplotlib" \
+        "nibabel" \
+        "numpy<2" \
+        "opencv-python<4.12" \
+        "pycocotools" \
+        "scikit-image" \
+        "scipy"
+
+RUN git clone --depth 1 https://github.com/CAMMA-public/UltraSam ${ULTRASAM_DIR}
+
+WORKDIR /workspaces/us_multi_anatomy_seg
+
+USER ${USERNAME}

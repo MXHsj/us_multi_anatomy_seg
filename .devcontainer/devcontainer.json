@@ -1,7 +1,7 @@
 {
   "name": "us-multi-anatomy-seg",
   "build": {
-    "dockerfile": "Dockerfile",
+    "dockerfile": "Dockerfile_UltraSAM",
     "context": ".."
   },
   "remoteUser": "vscode",
@@ -13,30 +13,24 @@
   "containerEnv": {
     "CODEX_HOME": "/home/vscode/.codex",
     "HF_HOME": "${containerWorkspaceFolder}/.cache/huggingface",
-    "PYTHONPATH": "${containerWorkspaceFolder}:${containerWorkspaceFolder}/work_dir/SAMUS"
+    "MPLCONFIGDIR": "${containerWorkspaceFolder}/.cache/matplotlib",
+    "ULTRASAM_DIR": "/opt/UltraSam",
+    "PYTHONPATH": "${containerWorkspaceFolder}:${containerWorkspaceFolder}/work_dir/SAMUS:/opt/UltraSam:/opt/UltraSam/datasets"
   },
   "mounts": [
     "source=us-multi-anatomy-seg-pip-cache,target=/home/vscode/.cache/pip,type=volume",
     "source=${localEnv:USERPROFILE}/.codex,target=/home/vscode/.codex,type=bind,consistency=cached"
   ],
-  "postCreateCommand": "python -m ipykernel install --user --name us-multi-anatomy-seg --display-name \"Python (us-multi-anatomy-seg)\"",
   "customizations": {
     "vscode": {
       "extensions": [
         "openai.chatgpt",
         "ms-python.python",
-        "ms-python.vscode-pylance",
-        "ms-toolsai.jupyter"
+        "ms-python.vscode-pylance"
       ],
       "settings": {
         "python.defaultInterpreterPath": "/opt/venv/bin/python",
-        "python.terminal.activateEnvironment": true,
-        "jupyter.kernels.filter": [
-          {
-            "path": "/opt/venv/bin/python",
-            "type": "pythonEnvironment"
-          }
-        ]
+        "python.terminal.activateEnvironment": true
       }
     }
   }

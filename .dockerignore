@@ -22,6 +22,8 @@ datasets/AULID/
 datasets/UNS/
 datasets/RobLUS/
 results/
+work_dir/MedSAM/
+work_dir/UltraSam/
 *.pth
 *.zip
 
