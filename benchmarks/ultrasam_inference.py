@@ -333,7 +333,21 @@ def load_ultrasam_model(
     apply_ultrasam_runtime_patches()
 
     model = MODELS.build(cfg.model)
-    load_checkpoint(model, str(checkpoint_path), map_location="cpu")
+    # PyTorch >=2.6 defaults torch.load to weights_only=True, which rejects the
+    # mmengine objects (e.g. HistoryBuffer) pickled into the UltraSAM checkpoint.
+    # mmengine's load_checkpoint doesn't expose the kwarg, so force weights_only=False
+    # for this trusted checkpoint by temporarily patching torch.load.
+    original_torch_load = torch.load
+
+    def _torch_load_weights_only_false(*args, **kwargs):
+        kwargs.setdefault("weights_only", False)
+        return original_torch_load(*args, **kwargs)
+
+    torch.load = _torch_load_weights_only_false
+    try:
+        load_checkpoint(model, str(checkpoint_path), map_location="cpu")
+    finally:
+        torch.load = original_torch_load
     model.to(device)
     model.eval()
     return model, cfg
@@ -445,7 +459,11 @@ def main() -> None:
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--max-samples", type=int, default=20)
     parser.add_argument("--box-padding", type=int, default=0)
-    parser.add_argument("--batch-size", type=int, default=8)
+    # batch_size=4 fits 1024x1024 SAM-encoder activations in ~10GB and is the
+    # throughput optimum on 16GB cards (e.g. RTX 5080). Larger batches (8) saturate
+    # 16GB VRAM, spill into system RAM over PCIe, and run ~5x slower; throughput
+    # does not improve past 4 even on 24GB cards. Override with --batch-size.
+    parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--save-vis", type=int, default=0)
     parser.add_argument("--output-dir", type=str, default="results/ultrasam_test")

@@ -1,16 +1,27 @@
 # syntax=docker/dockerfile:1.7
-FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+# CUDA 12.8 + PyTorch 2.7 (cu128) so the image runs on both Ada (RTX 4090, sm_89)
+# and Blackwell (RTX 5080/5090, sm_120) GPUs. The cu118/torch2.0 stack only shipped
+# kernels up to sm_90, which is why the 5080 raised
+# "CUDA error: no kernel image is available for execution on the device".
+# We use the -devel base (nvcc + CUDA headers) because mmcv has no cu128 wheel and
+# must be compiled from source for both architectures.
+FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG USERNAME=vscode
 ARG USER_UID=1000
 ARG USER_GID=${USER_UID}
 
+# GPU architectures baked into the mmcv build: 8.9 = Ada (RTX 4090),
+# 12.0 = Blackwell (RTX 5080/5090). +PTX keeps a JIT-able fallback for newer cards.
+ARG TORCH_CUDA_ARCH_LIST="8.9 12.0+PTX"
+
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 ENV ULTRASAM_DIR=/opt/UltraSam
 ENV PYTHONPATH="/opt/UltraSam:/opt/UltraSam/datasets"
-ENV LD_LIBRARY_PATH="/usr/local/cuda-11.8/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}"
+ENV CUDA_HOME=/usr/local/cuda
+ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
 ENV MPLCONFIGDIR=/tmp/matplotlib
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 ENV PIP_DEFAULT_TIMEOUT=100
@@ -23,10 +34,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && apt-get install -y --no-install-recommends \
         build-essential \
         ca-certificates \
-        cuda-nvrtc-11-8 \
         git \
         libgl1 \
         libglib2.0-0 \
+        ninja-build \
         python3.10 \
         python3.10-dev \
         python3-venv \
@@ -41,19 +52,37 @@ RUN groupadd --gid ${USER_GID} ${USERNAME} \
 RUN mkdir -p /home/${USERNAME}/.cache /tmp/matplotlib \
     && chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}/.cache /tmp/matplotlib
 
-RUN ln -sf /usr/local/cuda-11.8/targets/x86_64-linux/lib/libnvrtc.so.11.2 \
-        /usr/local/cuda-11.8/targets/x86_64-linux/lib/libnvrtc.so
-
+# setuptools is pinned <82 because 82.0.0 (Feb 2026) removed pkg_resources, which
+# mmcv 2.1.0's setup.py still imports. Since mmcv is built with --no-build-isolation
+# below, it reuses this venv's setuptools, so the pin must live here. See
+# https://github.com/open-mmlab/mmcv/issues/3325
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3.10 -m venv ${VIRTUAL_ENV} \
-    && python -m pip install --upgrade pip setuptools wheel
+    && python -m pip install --upgrade pip "setuptools<82" wheel
 
+# PyTorch built for CUDA 12.8 (ships sm_89 + sm_120 kernels).
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python -m pip install torch==2.0.0 torchvision==0.15.1 torchaudio==2.0.1 --index-url https://download.pytorch.org/whl/cu118
+    python -m pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
+
+# Build prerequisites for the mmcv source compile.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install "numpy<2" ninja
+
+# mmcv 2.1.0 has no cu128 wheel — compile its CUDA ops from source for both
+# architectures. MAX_JOBS is capped to keep nvcc memory in check; lower to 1 if the
+# build OOMs. Building from the v2.1.0 tag keeps it within mmdet 3.3.0's
+# (>=2.0.0rc4, <2.2.0) compatibility window, so no version-check patching is needed.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    git clone --depth 1 --branch v2.1.0 https://github.com/open-mmlab/mmcv.git /tmp/mmcv \
+    && cd /tmp/mmcv \
+    && MMCV_WITH_OPS=1 FORCE_CUDA=1 MAX_JOBS=4 \
+       TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST}" \
+       python -m pip install --no-build-isolation . \
+    && cd / \
+    && rm -rf /tmp/mmcv
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip install "mmengine==0.10.7" \
-    && python -m pip install --only-binary=mmcv "mmcv==2.1.0" -f https://download.openmmlab.com/mmcv/dist/cu118/torch2.0.0/index.html \
     && python -m pip install "mmdet==3.3.0" "mmpretrain==1.2.0" \
     && python -m pip install \
         "huggingface_hub" \

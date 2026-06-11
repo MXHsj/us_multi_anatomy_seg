@@ -19,11 +19,13 @@
   },
   "mounts": [
     "source=us-multi-anatomy-seg-pip-cache,target=/home/vscode/.cache/pip,type=volume",
-    "source=${localEnv:USERPROFILE}/.codex,target=/home/vscode/.codex,type=bind,consistency=cached"
+    "source=${localEnv:USERPROFILE}/.codex,target=/home/vscode/.codex,type=bind,consistency=cached",
+    "source=${localEnv:USERPROFILE}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached"
   ],
   "customizations": {
     "vscode": {
       "extensions": [
+        "anthropic.claude-code",
         "openai.chatgpt",
         "ms-python.python",
         "ms-python.vscode-pylance"

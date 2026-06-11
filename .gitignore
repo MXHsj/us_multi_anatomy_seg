@@ -4,8 +4,8 @@ __pycache__/
 
 # pretrained weights
 *.pth
-work_dir/SAMUS/ckp/SAMUS.pth
-work_dir/UltraSam/
+# Note: work_dir/UltraSam/ is tracked (README.md), but its UltraSam.pth weight
+# stays ignored via the global *.pth rule above and is auto-downloaded at runtime.
 
 # raw/local dataset materializations
 datasets/TNSC2020/
