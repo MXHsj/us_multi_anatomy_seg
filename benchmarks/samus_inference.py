@@ -4,7 +4,10 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 import csv
 import json
+import os
+import queue
 import re
+import threading
 import time
 from pathlib import Path
 import sys
@@ -14,10 +17,9 @@ import urllib.request
 import numpy as np
 import torch
 import torch.nn.functional as F
-from skimage import transform
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-SAMUS_DIR = ROOT_DIR / "work_dir" / "SAMUS"
+SAMUS_DIR = ROOT_DIR / "work_dir" / "SAMUS" / "source_code"
 
 for path in (ROOT_DIR, SAMUS_DIR):
     if str(path) not in sys.path:
@@ -104,6 +106,34 @@ def evenly_spaced_indices(total: int | None, count: int) -> set[int]:
     return {int(round(idx)) + 1 for idx in np.linspace(0, total - 1, save_count)}
 
 
+def _prefetch(iterable, buffer_size: int):
+    """Run a (blocking, single-threaded) sample iterator in a background thread so
+    CPU loading/decoding overlaps GPU inference instead of serializing with it."""
+    sentinel = object()
+    sample_queue: queue.Queue = queue.Queue(maxsize=buffer_size)
+    error: list[BaseException] = []
+
+    def producer() -> None:
+        try:
+            for item in iterable:
+                sample_queue.put(item)
+        except BaseException as exc:  # surface loader failures on the main thread
+            error.append(exc)
+        finally:
+            sample_queue.put(sentinel)
+
+    thread = threading.Thread(target=producer, daemon=True)
+    thread.start()
+    while True:
+        item = sample_queue.get()
+        if item is sentinel:
+            break
+        yield item
+    thread.join()
+    if error:
+        raise error[0]
+
+
 def iter_samples_with_workers(decoder, max_samples: int | None, num_workers: int):
     if num_workers <= 0:
         yield from decoder.iter_samples(max_samples=max_samples)
@@ -111,45 +141,71 @@ def iter_samples_with_workers(decoder, max_samples: int | None, num_workers: int
 
     info_iter_fn = getattr(decoder, "iter_sample_infos", None)
     load_fn = getattr(decoder, "load_sample_from_info", None)
-    if not callable(info_iter_fn) or not callable(load_fn):
-        yield from decoder.iter_samples(max_samples=max_samples)
+    if callable(info_iter_fn) and callable(load_fn):
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            yield from executor.map(load_fn, info_iter_fn(max_samples=max_samples))
         return
 
-    with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        yield from executor.map(load_fn, info_iter_fn(max_samples=max_samples))
+    # Decoders without the info/load split expose only a blocking iter_samples();
+    # a single background producer thread still overlaps that loading with GPU work.
+    yield from _prefetch(
+        decoder.iter_samples(max_samples=max_samples),
+        buffer_size=max(2 * num_workers, 4),
+    )
 
 
-def prepare_samus_tensor(image: np.ndarray, size: int) -> torch.Tensor:
+def prepare_samus_tensor(image: np.ndarray, size: int, device: str) -> torch.Tensor:
     image_uint8 = normalize_to_uint8(image)
     image_3c = ensure_three_channels(image_uint8)
-    image_rs = transform.resize(
-        image_3c,
-        (size, size),
-        order=3,
-        preserve_range=True,
-        anti_aliasing=True,
-    ).astype(np.float32)
-    image_rs /= 255.0
-    return torch.from_numpy(image_rs).permute(2, 0, 1).contiguous()
+    # Resize on the GPU: skimage's bicubic+anti-aliased resize costs ~190 ms/sample
+    # on the CPU and was starving the GPU. torch's bicubic+antialias path matches it
+    # to within ~1e-3 mean abs error while running in ~1 ms.
+    tensor = (
+        torch.from_numpy(np.ascontiguousarray(image_3c))
+        .to(device)
+        .permute(2, 0, 1)
+        .float()
+        .unsqueeze(0)
+    )
+    resized = F.interpolate(
+        tensor,
+        size=(size, size),
+        mode="bicubic",
+        antialias=True,
+        align_corners=False,
+    )
+    resized = (resized / 255.0).clamp_(0.0, 1.0)
+    return resized[0]
 
 
-def scale_bbox_to_model_space(
-    bbox: np.ndarray,
+def foreground_click_xy(mask: np.ndarray) -> tuple[int, int] | None:
+    """A single deterministic foreground click ``(x, y)`` in the mask's own pixel
+    space, mirroring the upstream SAMUS ``fixed_click`` prompt (the middle
+    foreground pixel in row-major order).
+
+    SAMUS is a point-prompted model: its ``forward`` ignores box prompts and is
+    trained/evaluated with click prompts, so this is its native interface.
+    """
+    ys, xs = np.where(mask > 0)
+    if len(xs) == 0:
+        return None
+    mid = len(xs) // 2
+    return int(xs[mid]), int(ys[mid])
+
+
+def scale_click_to_model_space(
+    click_xy: tuple[int, int],
     src_height: int,
     src_width: int,
     dst_size: int,
 ) -> np.ndarray:
-    scale = np.array(
-        [
-            dst_size / max(src_width, 1),
-            dst_size / max(src_height, 1),
-            dst_size / max(src_width, 1),
-            dst_size / max(src_height, 1),
-        ],
-        dtype=np.float32,
-    )
-    scaled = bbox.astype(np.float32) * scale
-    return np.clip(scaled, 0, dst_size - 1)
+    """Scale a pixel-space click to the ``dst_size`` model frame, shaped ``[1, 2]``
+    (one point) for the SAMUS prompt encoder."""
+    x = float(click_xy[0]) * dst_size / max(src_width, 1)
+    y = float(click_xy[1]) * dst_size / max(src_height, 1)
+    x = min(max(x, 0.0), dst_size - 1)
+    y = min(max(y, 0.0), dst_size - 1)
+    return np.array([[x, y]], dtype=np.float32)
 
 
 def load_checkpoint_state_dict(path: Path) -> dict[str, torch.Tensor]:
@@ -254,21 +310,23 @@ def build_model(args: argparse.Namespace) -> torch.nn.Module:
 
 
 @torch.no_grad()
-def samus_box_inference(
+def samus_point_inference(
     model: torch.nn.Module,
     image_tensor: torch.Tensor,
-    boxes_256: np.ndarray,
+    points_256: np.ndarray,
     original_sizes: list[tuple[int, int]],
 ) -> list[np.ndarray]:
     input_size = image_tensor.shape[-2:]
     image_tensor = image_tensor.to(model.device)
-    processed = torch.stack([model.preprocess(img) for img in image_tensor], dim=0)
-    image_embeddings = model.image_encoder(processed)
+    # Upstream SAMUS.forward feeds the [0, 1] image straight into the encoder with
+    # no ImageNet mean/std normalization, so we skip model.preprocess to match it.
+    image_embeddings = model.image_encoder(image_tensor)
 
-    box_torch = torch.as_tensor(boxes_256, dtype=torch.float32, device=model.device)
+    point_coords = torch.as_tensor(points_256, dtype=torch.float32, device=model.device)
+    point_labels = torch.ones(point_coords.shape[:2], dtype=torch.int, device=model.device)
     sparse_embeddings, dense_embeddings = model.prompt_encoder(
-        points=None,
-        boxes=box_torch,
+        points=(point_coords, point_labels),
+        boxes=None,
         masks=None,
     )
     low_res_masks, _ = model.mask_decoder(
@@ -332,6 +390,88 @@ def save_vis(
     plt.close(fig)
 
 
+def process_batch(
+    pending: list[dict],
+    *,
+    model: torch.nn.Module,
+    metrics_calculator: SegmentationMetrics,
+    metrics_executor: ThreadPoolExecutor,
+    rows: list,
+    skipped: int,
+    total_iterations: int | None,
+    vis_indices: set[int],
+    target_vis_collector: TargetVisualizationCollector,
+    vis_dir: Path,
+    benchmark_tic: float,
+) -> None:
+    batch_image_tensor = torch.stack([entry["image_tensor"] for entry in pending], dim=0)
+    batch_points = np.stack([entry["click_256"] for entry in pending], axis=0)
+    batch_original_sizes = [(entry["height"], entry["width"]) for entry in pending]
+
+    tic = time.perf_counter()
+    batch_preds = samus_point_inference(
+        model=model,
+        image_tensor=batch_image_tensor,
+        points_256=batch_points,
+        original_sizes=batch_original_sizes,
+    )
+    batch_elapsed_s = time.perf_counter() - tic
+    batch_infer_ms = batch_elapsed_s * 1000.0 / len(pending)
+
+    # Surface-distance metrics (HD95/ASSD) run two full-resolution distance
+    # transforms each (~55 ms/sample) and release the GIL, so the batch's metrics
+    # are computed across worker threads to overlap them instead of serializing.
+    batch_metrics = list(
+        metrics_executor.map(
+            lambda gt_pred: metrics_calculator.compute(gt_pred[0], gt_pred[1]),
+            [(entry["gt_mask"], pred) for entry, pred in zip(pending, batch_preds)],
+        )
+    )
+
+    for entry, pred, metrics in zip(pending, batch_preds, batch_metrics):
+        rows.append(
+            build_metric_row(
+                sample=entry["sample"],
+                height=entry["height"],
+                width=entry["width"],
+                bbox=entry["bbox"],
+                metrics=metrics,
+                infer_ms=batch_infer_ms,
+            )
+        )
+
+        handled_target_vis = target_vis_collector.add_if_selected(
+            sample=entry["sample"],
+            image=entry["image_uint8"],
+            gt_mask=entry["gt_mask"],
+            pred_mask=pred,
+            bbox=entry["bbox"],
+            dice=metrics["dice"],
+            iou=metrics["iou"],
+        )
+        if not handled_target_vis and entry["idx"] in vis_indices:
+            save_vis(
+                vis_dir=vis_dir,
+                sample_id=entry["sample"].sample_id,
+                image=entry["image_uint8"],
+                gt_mask=entry["gt_mask"],
+                pred_mask=pred,
+                bbox=entry["bbox"],
+            )
+
+    last_entry = pending[-1]
+    print_progress(
+        last_entry["idx"],
+        total_iterations or 0,
+        len(rows),
+        skipped,
+        last_entry["sample"].sample_id,
+        elapsed_s=time.perf_counter() - benchmark_tic,
+        recent_batch_size=len(pending),
+        recent_batch_s=batch_elapsed_s,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Test SAMUS inference with GT box prompts")
     add_dataset_args(parser, include_camus=True)
@@ -359,12 +499,15 @@ def main() -> None:
         help="Optional base SAM ViT-B checkpoint loaded before the trained SAMUS weights if present.",
     )
     parser.add_argument("--device", type=str, default="cuda:0")
-    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument(
         "--num-workers",
         type=int,
-        default=0,
-        help="Number of background worker threads for sample loading/preprocessing.",
+        default=4,
+        help=(
+            "Background sample-loading threads. >0 enables prefetching so CPU "
+            "loading overlaps GPU inference; 0 disables it (fully serial)."
+        ),
     )
     parser.add_argument(
         "--max-samples",
@@ -401,7 +544,11 @@ def main() -> None:
     total_iterations = get_total_iterations(decoder, args.max_samples)
     vis_indices = evenly_spaced_indices(total_iterations, args.save_vis)
     total_source_iterations = count_source_iterations(decoder, args.max_samples)
-    source_vis_indices = evenly_spaced_zero_based_indices(total_source_iterations, args.save_vis)
+    # Decoders without a distinct source/target split (e.g. AULID) return no source
+    # count; fall back to the evaluated-sample total so visualizations are still
+    # selected per sample, matching the UltraSAM benchmark's behaviour.
+    vis_total = total_source_iterations if total_source_iterations is not None else total_iterations
+    source_vis_indices = evenly_spaced_zero_based_indices(vis_total, args.save_vis)
     target_vis_collector = TargetVisualizationCollector(
         vis_dir=out_dir / "visualizations",
         source_indices=source_vis_indices,
@@ -411,6 +558,9 @@ def main() -> None:
     rows = []
     skipped = 0
     metrics_calculator = SegmentationMetrics()
+    metrics_executor = ThreadPoolExecutor(
+        max_workers=min(8, max(2, (os.cpu_count() or 4)))
+    )
     benchmark_tic = time.perf_counter()
     total_label = str(total_iterations) if total_iterations is not None else "all available"
     print(
@@ -443,9 +593,11 @@ def main() -> None:
             )
             continue
 
-        image_tensor = prepare_samus_tensor(image_3c, size=args.encoder_input_size)
-        scaled_bbox = scale_bbox_to_model_space(
-            bbox=bbox,
+        image_tensor = prepare_samus_tensor(
+            image_3c, size=args.encoder_input_size, device=args.device
+        )
+        click_256 = scale_click_to_model_space(
+            click_xy=foreground_click_xy(gt_mask),
             src_height=height,
             src_width=width,
             dst_size=args.encoder_input_size,
@@ -460,131 +612,44 @@ def main() -> None:
                 "width": width,
                 "gt_mask": gt_mask,
                 "bbox": bbox,
-                "scaled_bbox": scaled_bbox,
+                "click_256": click_256,
             }
         )
 
         if len(pending) < args.batch_size:
             continue
 
-        batch_image_tensor = torch.stack([entry["image_tensor"] for entry in pending], dim=0)
-        batch_boxes = np.stack([entry["scaled_bbox"] for entry in pending], axis=0)
-        batch_original_sizes = [(entry["height"], entry["width"]) for entry in pending]
-
-        tic = time.perf_counter()
-        batch_preds = samus_box_inference(
+        process_batch(
+            pending,
             model=model,
-            image_tensor=batch_image_tensor,
-            boxes_256=batch_boxes,
-            original_sizes=batch_original_sizes,
+            metrics_calculator=metrics_calculator,
+            metrics_executor=metrics_executor,
+            rows=rows,
+            skipped=skipped,
+            total_iterations=total_iterations,
+            vis_indices=vis_indices,
+            target_vis_collector=target_vis_collector,
+            vis_dir=out_dir / "visualizations",
+            benchmark_tic=benchmark_tic,
         )
-        batch_elapsed_s = time.perf_counter() - tic
-        batch_infer_ms = batch_elapsed_s * 1000.0 / len(pending)
-
-        for entry, pred in zip(pending, batch_preds):
-            metrics = metrics_calculator.compute(entry["gt_mask"], pred)
-
-            rows.append(
-                build_metric_row(
-                    sample=entry["sample"],
-                    height=entry["height"],
-                    width=entry["width"],
-                    bbox=entry["bbox"],
-                    metrics=metrics,
-                    infer_ms=batch_infer_ms,
-                )
-            )
-
-            handled_target_vis = target_vis_collector.add_if_selected(
-                sample=entry["sample"],
-                image=entry["image_uint8"],
-                gt_mask=entry["gt_mask"],
-                pred_mask=pred,
-                bbox=entry["bbox"],
-                dice=metrics["dice"],
-                iou=metrics["iou"],
-            )
-            if not handled_target_vis and entry["idx"] in vis_indices:
-                save_vis(
-                    vis_dir=out_dir / "visualizations",
-                    sample_id=entry["sample"].sample_id,
-                    image=entry["image_uint8"],
-                    gt_mask=entry["gt_mask"],
-                    pred_mask=pred,
-                    bbox=entry["bbox"],
-                )
-        last_entry = pending[-1]
-        print_progress(
-            last_entry["idx"],
-            total_iterations or 0,
-            len(rows),
-            skipped,
-            last_entry["sample"].sample_id,
-            elapsed_s=time.perf_counter() - benchmark_tic,
-            recent_batch_size=len(pending),
-            recent_batch_s=batch_elapsed_s,
-        )
-
         pending = []
 
     if pending:
-        batch_image_tensor = torch.stack([entry["image_tensor"] for entry in pending], dim=0)
-        batch_boxes = np.stack([entry["scaled_bbox"] for entry in pending], axis=0)
-        batch_original_sizes = [(entry["height"], entry["width"]) for entry in pending]
-
-        tic = time.perf_counter()
-        batch_preds = samus_box_inference(
+        process_batch(
+            pending,
             model=model,
-            image_tensor=batch_image_tensor,
-            boxes_256=batch_boxes,
-            original_sizes=batch_original_sizes,
+            metrics_calculator=metrics_calculator,
+            metrics_executor=metrics_executor,
+            rows=rows,
+            skipped=skipped,
+            total_iterations=total_iterations,
+            vis_indices=vis_indices,
+            target_vis_collector=target_vis_collector,
+            vis_dir=out_dir / "visualizations",
+            benchmark_tic=benchmark_tic,
         )
-        batch_elapsed_s = time.perf_counter() - tic
-        batch_infer_ms = batch_elapsed_s * 1000.0 / len(pending)
 
-        for entry, pred in zip(pending, batch_preds):
-            metrics = metrics_calculator.compute(entry["gt_mask"], pred)
-
-            rows.append(
-                build_metric_row(
-                    sample=entry["sample"],
-                    height=entry["height"],
-                    width=entry["width"],
-                    bbox=entry["bbox"],
-                    metrics=metrics,
-                    infer_ms=batch_infer_ms,
-                )
-            )
-
-            handled_target_vis = target_vis_collector.add_if_selected(
-                sample=entry["sample"],
-                image=entry["image_uint8"],
-                gt_mask=entry["gt_mask"],
-                pred_mask=pred,
-                bbox=entry["bbox"],
-                dice=metrics["dice"],
-                iou=metrics["iou"],
-            )
-            if not handled_target_vis and entry["idx"] in vis_indices:
-                save_vis(
-                    vis_dir=out_dir / "visualizations",
-                    sample_id=entry["sample"].sample_id,
-                    image=entry["image_uint8"],
-                    gt_mask=entry["gt_mask"],
-                    pred_mask=pred,
-                    bbox=entry["bbox"],
-                )
-        last_entry = pending[-1]
-        print_progress(
-            last_entry["idx"],
-            total_iterations or 0,
-            len(rows),
-            skipped,
-            last_entry["sample"].sample_id,
-            elapsed_s=time.perf_counter() - benchmark_tic,
-            recent_batch_size=len(pending),
-            recent_batch_s=batch_elapsed_s,
-        )
+    metrics_executor.shutdown(wait=True)
 
     if rows or skipped:
         print()

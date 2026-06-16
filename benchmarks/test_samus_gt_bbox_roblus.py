@@ -22,7 +22,7 @@ DEFAULT_ARGS = [
     "--device",
     DEVICE,
     "--save-vis",
-    "20",
+    "99999999",
     "--output-dir",
     OUTPUT_DIR,
 ]

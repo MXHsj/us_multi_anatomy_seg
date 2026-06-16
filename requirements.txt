@@ -1,5 +1,5 @@
 # Core numerical and image processing stack
-numpy
+numpy<2
 scipy
 scikit-image
 
@@ -10,6 +10,9 @@ segment-anything
 
 # SAMUS model adapter runtime
 einops
+
+# UltraSAM COCO export/runtime support
+pycocotools
 
 # Hugging Face dataset materialization
 huggingface_hub
