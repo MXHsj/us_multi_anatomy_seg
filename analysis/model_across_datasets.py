@@ -3,13 +3,20 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 from pathlib import Path
+import sys
 from typing import Any
 
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-METRIC_COLUMNS = ("dice_mean", "dice_std", "iou_mean", "iou_std")
-POINT_METRICS = ("dice", "iou")
+from benchmarks.metrics import METRIC_NAMES
+
+
+DEFAULT_METRICS = tuple(METRIC_NAMES)
 MODEL_COLORS = {
     "medsam": "#4C72B0",
     "samus": "#55A868",
@@ -18,6 +25,8 @@ MODEL_COLORS = {
 DATASET_LABELS = {
     "aulid": "AULID",
     "blusg": "BLUSG",
+    "busbra": "BUS-BRA",
+    "busi": "BUSI",
     "camus": "CAMUS",
     "oku": "OKU",
     "roblus": "RobLUS",
@@ -45,8 +54,36 @@ def parse_result_dir_name(name: str) -> tuple[str, str, str] | None:
     return model, protocol, dataset
 
 
-def load_rows(results_dir: Path, protocol: str, model: str | None) -> list[dict[str, Any]]:
+def parse_metrics_arg(value: str) -> tuple[str, ...]:
+    if value.strip().lower() == "all":
+        return DEFAULT_METRICS
+    metrics = tuple(metric.strip() for metric in value.split(",") if metric.strip())
+    unknown = sorted(set(metrics) - set(DEFAULT_METRICS))
+    if unknown:
+        raise SystemExit(
+            f"Unsupported metric(s): {', '.join(unknown)}. "
+            f"Expected one of: {', '.join(DEFAULT_METRICS)}"
+        )
+    if not metrics:
+        raise SystemExit("At least one metric must be selected.")
+    return metrics
+
+
+def metric_summary_columns(metrics: tuple[str, ...]) -> list[str]:
+    columns: list[str] = []
+    for metric in metrics:
+        columns.extend([f"{metric}_mean", f"{metric}_std"])
+    return columns
+
+
+def load_rows(
+    results_dir: Path,
+    protocol: str,
+    model: str | None,
+    metrics: tuple[str, ...],
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    metric_columns = metric_summary_columns(metrics)
     for summary_path in sorted(results_dir.glob("*/summary.json")):
         parsed = parse_result_dir_name(summary_path.parent.name)
         if parsed is None:
@@ -59,7 +96,7 @@ def load_rows(results_dir: Path, protocol: str, model: str | None) -> list[dict[
             continue
 
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
-        if any(summary.get(column) is None for column in METRIC_COLUMNS):
+        if any(summary.get(column) is None for column in metric_columns):
             continue
 
         rows.append(
@@ -67,7 +104,7 @@ def load_rows(results_dir: Path, protocol: str, model: str | None) -> list[dict[
                 "model": result_model,
                 "dataset": dataset,
                 "result_dir": summary_path.parent,
-                **{column: float(summary[column]) for column in METRIC_COLUMNS},
+                **{column: float(summary[column]) for column in metric_columns},
             }
         )
 
@@ -78,30 +115,30 @@ def format_float(value: float) -> str:
     return f"{value:.4f}"
 
 
-def print_markdown(rows: list[dict[str, Any]]) -> None:
-    headers = ["model", "dataset", *METRIC_COLUMNS]
+def print_markdown(rows: list[dict[str, Any]], metrics: tuple[str, ...]) -> None:
+    headers = ["model", "dataset", *metric_summary_columns(metrics)]
     print("| " + " | ".join(headers) + " |")
     print("| " + " | ".join(["---"] * len(headers)) + " |")
     for row in rows:
         values = [
             row["model"],
             row["dataset"],
-            *(format_float(row[column]) for column in METRIC_COLUMNS),
+            *(format_float(row[column]) for column in metric_summary_columns(metrics)),
         ]
         print("| " + " | ".join(values) + " |")
 
 
-def write_csv(rows: list[dict[str, Any]], output_csv: Path) -> None:
+def write_csv(rows: list[dict[str, Any]], output_csv: Path, metrics: tuple[str, ...]) -> None:
     output_csv.parent.mkdir(parents=True, exist_ok=True)
-    headers = ["model", "dataset", *METRIC_COLUMNS]
+    headers = ["model", "dataset", *metric_summary_columns(metrics)]
     with output_csv.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=headers)
         writer.writeheader()
         writer.writerows({column: row[column] for column in headers} for row in rows)
 
 
-def read_per_sample_points(result_dir: Path) -> dict[str, list[float]]:
-    points = {metric: [] for metric in POINT_METRICS}
+def read_per_sample_points(result_dir: Path, metrics: tuple[str, ...]) -> dict[str, list[float]]:
+    points = {metric: [] for metric in metrics}
     metrics_path = result_dir / "per_sample_metrics.csv"
     if not metrics_path.exists():
         return points
@@ -109,11 +146,13 @@ def read_per_sample_points(result_dir: Path) -> dict[str, list[float]]:
     with metrics_path.open("r", newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
-            for metric in POINT_METRICS:
+            for metric in metrics:
                 try:
-                    points[metric].append(float(row[metric]))
+                    value = float(row[metric])
                 except (KeyError, TypeError, ValueError):
                     continue
+                if math.isfinite(value):
+                    points[metric].append(value)
     return points
 
 
@@ -130,7 +169,27 @@ def _display_label(row: dict[str, Any], include_model: bool) -> str:
     return dataset
 
 
-def plot_rows(rows: list[dict[str, Any]], plot_path: Path, title: str = "") -> None:
+def metric_label(metric: str) -> str:
+    labels = {
+        "dice": "Dice",
+        "iou": "IoU",
+        "precision": "Precision",
+        "recall": "Recall",
+        "specificity": "Specificity",
+        "balanced_accuracy": "Balanced accuracy",
+        "hd95": "HD95 (px)",
+        "assd": "ASSD (px)",
+        "relative_area_error": "Relative area error",
+    }
+    return labels.get(metric, metric)
+
+
+def plot_rows(
+    rows: list[dict[str, Any]],
+    plot_path: Path,
+    metrics: tuple[str, ...],
+    title: str = "",
+) -> None:
     mpl_config_dir = Path("analysis") / ".mplconfig"
     xdg_cache_dir = Path("analysis") / ".cache"
     mpl_config_dir.mkdir(parents=True, exist_ok=True)
@@ -168,16 +227,20 @@ def plot_rows(rows: list[dict[str, Any]], plot_path: Path, title: str = "") -> N
     width = 0.62
     rng = np.random.default_rng(20240515)
 
-    fig_width = max(6.8, len(rows) * 0.68)
+    ncols = min(3, len(metrics))
+    nrows = int(np.ceil(len(metrics) / ncols))
+    fig_width = max(6.8, len(rows) * 0.42, ncols * 3.2)
+    fig_height = max(3.25, nrows * 2.75)
     fig, axes = plt.subplots(
-        nrows=1,
-        ncols=2,
-        figsize=(fig_width, 3.25),
-        sharey=True,
+        nrows=nrows,
+        ncols=ncols,
+        figsize=(fig_width, fig_height),
+        squeeze=False,
         constrained_layout=True,
     )
+    axes_flat = axes.ravel()
 
-    for axis, metric, ylabel in zip(axes, POINT_METRICS, ["Dice score", "IoU score"]):
+    for axis, metric in zip(axes_flat, metrics):
         means = [row[f"{metric}_mean"] for row in rows]
         stds = [row[f"{metric}_std"] for row in rows]
         colors = [MODEL_COLORS.get(row["model"], "#666666") for row in rows]
@@ -205,7 +268,7 @@ def plot_rows(rows: list[dict[str, Any]], plot_path: Path, title: str = "") -> N
         )
 
         for idx, row in enumerate(rows):
-            values = read_per_sample_points(row["result_dir"])[metric]
+            values = read_per_sample_points(row["result_dir"], metrics)[metric]
             if not values:
                 continue
             jitter = rng.uniform(-width * 0.30, width * 0.30, size=len(values))
@@ -219,13 +282,19 @@ def plot_rows(rows: list[dict[str, Any]], plot_path: Path, title: str = "") -> N
                 zorder=3,
             )
 
-        axis.set_title(ylabel)
+        if metric == "relative_area_error":
+            axis.axhline(0.0, color="#555555", linewidth=0.8, linestyle="--", zorder=1)
+        if metric in {"dice", "iou", "precision", "recall", "specificity", "balanced_accuracy"}:
+            axis.set_ylim(0.0, 1.02)
+        axis.set_title(metric_label(metric))
         axis.set_xticks(x_positions)
         axis.set_xticklabels(labels, rotation=35, ha="right")
-        axis.set_ylim(0.0, 1.02)
-        axis.set_ylabel(ylabel)
+        axis.set_ylabel(metric_label(metric))
         axis.grid(axis="x", visible=False)
         axis.set_axisbelow(True)
+
+    for axis in axes_flat[len(metrics) :]:
+        axis.remove()
 
     handles = []
     for model in sorted({row["model"] for row in rows}):
@@ -243,7 +312,11 @@ def plot_rows(rows: list[dict[str, Any]], plot_path: Path, title: str = "") -> N
             )
         )
     if len(handles) > 1:
-        axes[1].legend(handles=handles, frameon=False, loc="lower right")
+        axes_flat[min(len(metrics), len(axes_flat)) - 1].legend(
+            handles=handles,
+            frameon=False,
+            loc="best",
+        )
 
     if title:
         fig.suptitle(title, y=1.02, fontsize=10)
@@ -261,7 +334,15 @@ def main() -> None:
     parser.add_argument(
         "--model",
         default="",
-        help="Optional model filter, for example 'medsam' or 'samus'.",
+        help="Optional model filter, for example 'medsam', 'samus', or 'ultrasam'.",
+    )
+    parser.add_argument(
+        "--metrics",
+        default="all",
+        help=(
+            "Comma-separated metrics to summarize/plot, or 'all'. "
+            f"Available: {', '.join(DEFAULT_METRICS)}."
+        ),
     )
     parser.add_argument(
         "--output-csv",
@@ -289,33 +370,35 @@ def main() -> None:
         help="Print the table without generating a figure.",
     )
     args = parser.parse_args()
+    metrics = parse_metrics_arg(args.metrics)
 
     rows = load_rows(
         results_dir=args.results_dir,
         protocol=args.protocol,
         model=args.model or None,
+        metrics=metrics,
     )
 
     if not rows:
         raise SystemExit("No matching result summaries found.")
 
-    print_markdown(rows)
+    print_markdown(rows, metrics)
     if args.output_csv is not None:
-        write_csv(rows, args.output_csv)
+        write_csv(rows, args.output_csv, metrics)
         print(f"\nSaved CSV to: {args.output_csv}")
     if args.no_plot:
         return
 
     if args.model or args.plot_path is not None:
         plot_path = args.plot_path or default_plot_path(args.protocol, args.model)
-        plot_rows(rows, plot_path, title=args.plot_title)
+        plot_rows(rows, plot_path, metrics=metrics, title=args.plot_title)
         print(f"Saved plot to: {plot_path}")
         return
 
     for model in sorted({row["model"] for row in rows}):
         model_rows = [row for row in rows if row["model"] == model]
         plot_path = default_plot_path(args.protocol, model)
-        plot_rows(model_rows, plot_path, title=args.plot_title)
+        plot_rows(model_rows, plot_path, metrics=metrics, title=args.plot_title)
         print(f"Saved plot to: {plot_path}")
 
 

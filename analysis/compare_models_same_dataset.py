@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import os
 import statistics
 from pathlib import Path
+import sys
 from typing import Any
 
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-METRICS = ("dice", "iou")
+from benchmarks.metrics import METRIC_NAMES
+
+
+DEFAULT_METRICS = tuple(METRIC_NAMES)
 MODEL_COLORS = {
     "medsam": "#4C72B0",
     "samus": "#55A868",
@@ -22,6 +30,8 @@ MODEL_LABELS = {
 DATASET_LABELS = {
     "aulid": "AULID",
     "blusg": "BLUSG",
+    "busbra": "BUS-BRA",
+    "busi": "BUSI",
     "camus": "CAMUS",
     "oku": "OKU",
     "roblus": "RobLUS",
@@ -49,7 +59,22 @@ def parse_result_dir_name(name: str) -> tuple[str, str, str] | None:
     return model, protocol, dataset
 
 
-def read_metrics(csv_path: Path) -> dict[str, dict[str, float]]:
+def parse_metrics_arg(value: str) -> tuple[str, ...]:
+    if value.strip().lower() == "all":
+        return DEFAULT_METRICS
+    metrics = tuple(metric.strip() for metric in value.split(",") if metric.strip())
+    unknown = sorted(set(metrics) - set(DEFAULT_METRICS))
+    if unknown:
+        raise SystemExit(
+            f"Unsupported metric(s): {', '.join(unknown)}. "
+            f"Expected one of: {', '.join(DEFAULT_METRICS)}"
+        )
+    if not metrics:
+        raise SystemExit("At least one metric must be selected.")
+    return metrics
+
+
+def read_metrics(csv_path: Path, metrics: tuple[str, ...]) -> dict[str, dict[str, float]]:
     rows: dict[str, dict[str, float]] = {}
     with csv_path.open("r", newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
@@ -58,9 +83,11 @@ def read_metrics(csv_path: Path) -> dict[str, dict[str, float]]:
             if not sample_id:
                 continue
             try:
-                rows[sample_id] = {metric: float(row[metric]) for metric in METRICS}
+                values = {metric: float(row[metric]) for metric in metrics}
             except (KeyError, TypeError, ValueError):
                 continue
+            if all(math.isfinite(value) for value in values.values()):
+                rows[sample_id] = values
     return rows
 
 
@@ -90,6 +117,7 @@ def compare_models(
     protocol: str,
     model_a: str,
     model_b: str,
+    metrics: tuple[str, ...],
 ) -> list[dict[str, Any]]:
     discovered = discover_results(results_dir, protocol)
     datasets = sorted(
@@ -100,15 +128,15 @@ def compare_models(
 
     rows: list[dict[str, Any]] = []
     for dataset in datasets:
-        metrics_a = read_metrics(discovered[(model_a, dataset)])
-        metrics_b = read_metrics(discovered[(model_b, dataset)])
+        metrics_a = read_metrics(discovered[(model_a, dataset)], metrics)
+        metrics_b = read_metrics(discovered[(model_b, dataset)], metrics)
         shared_ids = sorted(set(metrics_a) & set(metrics_b))
         if not shared_ids:
             continue
 
         row: dict[str, Any] = {"dataset": dataset}
         values_by_metric: dict[str, dict[str, list[float]]] = {}
-        for metric in METRICS:
+        for metric in metrics:
             values_a = [metrics_a[sample_id][metric] for sample_id in shared_ids]
             values_b = [metrics_b[sample_id][metric] for sample_id in shared_ids]
             deltas = [b - a for a, b in zip(values_a, values_b)]
@@ -138,9 +166,9 @@ def format_float(value: float) -> str:
     return f"{value:.4f}"
 
 
-def column_names(model_a: str, model_b: str) -> list[str]:
+def column_names(model_a: str, model_b: str, metrics: tuple[str, ...]) -> list[str]:
     columns = ["dataset"]
-    for metric in METRICS:
+    for metric in metrics:
         columns.extend(
             [
                 f"{model_a}_{metric}_mean",
@@ -189,11 +217,27 @@ def display_model_label(model: str) -> str:
     return MODEL_LABELS.get(model, model)
 
 
+def metric_label(metric: str) -> str:
+    labels = {
+        "dice": "Dice",
+        "iou": "IoU",
+        "precision": "Precision",
+        "recall": "Recall",
+        "specificity": "Specificity",
+        "balanced_accuracy": "Balanced accuracy",
+        "hd95": "HD95 (px)",
+        "assd": "ASSD (px)",
+        "relative_area_error": "Relative area error",
+    }
+    return labels.get(metric, metric)
+
+
 def plot_rows(
     rows: list[dict[str, Any]],
     plot_path: Path,
     model_a: str,
     model_b: str,
+    metrics: tuple[str, ...],
     title: str = "",
 ) -> None:
     mpl_config_dir = Path("analysis") / ".mplconfig"
@@ -236,16 +280,20 @@ def plot_rows(
     }
     rng = np.random.default_rng(20240515)
 
-    fig_width = max(6.8, len(rows) * 0.78)
+    ncols = min(3, len(metrics))
+    nrows = int(np.ceil(len(metrics) / ncols))
+    fig_width = max(6.8, len(rows) * 0.48, ncols * 3.2)
+    fig_height = max(3.25, nrows * 2.75)
     fig, axes = plt.subplots(
-        nrows=1,
-        ncols=2,
-        figsize=(fig_width, 3.25),
-        sharey=True,
+        nrows=nrows,
+        ncols=ncols,
+        figsize=(fig_width, fig_height),
+        squeeze=False,
         constrained_layout=True,
     )
+    axes_flat = axes.ravel()
 
-    for axis, metric, ylabel in zip(axes, METRICS, ["Dice score", "IoU score"]):
+    for axis, metric in zip(axes_flat, metrics):
         for model in (model_a, model_b):
             means = [row[f"{model}_{metric}_mean"] for row in rows]
             stds = [row[f"{model}_{metric}_std"] for row in rows]
@@ -290,13 +338,19 @@ def plot_rows(
                     zorder=3,
                 )
 
-        axis.set_title(ylabel)
+        if metric == "relative_area_error":
+            axis.axhline(0.0, color="#555555", linewidth=0.8, linestyle="--", zorder=1)
+        if metric in {"dice", "iou", "precision", "recall", "specificity", "balanced_accuracy"}:
+            axis.set_ylim(0.0, 1.02)
+        axis.set_title(metric_label(metric))
         axis.set_xticks(x_positions)
         axis.set_xticklabels(labels, rotation=35, ha="right")
-        axis.set_ylim(0.0, 1.02)
-        axis.set_ylabel(ylabel)
+        axis.set_ylabel(metric_label(metric))
         axis.grid(axis="x", visible=False)
         axis.set_axisbelow(True)
+
+    for axis in axes_flat[len(metrics) :]:
+        axis.remove()
 
     handles = [
         plt.Line2D(
@@ -339,6 +393,14 @@ def main() -> None:
     parser.add_argument("--model-a", default="medsam")
     parser.add_argument("--model-b", default="samus")
     parser.add_argument(
+        "--metrics",
+        default="all",
+        help=(
+            "Comma-separated metrics to compare/plot, or 'all'. "
+            f"Available: {', '.join(DEFAULT_METRICS)}."
+        ),
+    )
+    parser.add_argument(
         "--output-csv",
         type=Path,
         default=None,
@@ -361,18 +423,20 @@ def main() -> None:
         help="Print the table without generating a figure.",
     )
     args = parser.parse_args()
+    metrics = parse_metrics_arg(args.metrics)
 
     rows = compare_models(
         results_dir=args.results_dir,
         protocol=args.protocol,
         model_a=args.model_a,
         model_b=args.model_b,
+        metrics=metrics,
     )
 
     if not rows:
         raise SystemExit("No datasets with matched sample IDs found.")
 
-    columns = column_names(args.model_a, args.model_b)
+    columns = column_names(args.model_a, args.model_b, metrics)
     print_markdown(rows, columns)
     if args.output_csv is not None:
         write_csv(rows, columns, args.output_csv)
@@ -388,6 +452,7 @@ def main() -> None:
             plot_path=plot_path,
             model_a=args.model_a,
             model_b=args.model_b,
+            metrics=metrics,
             title=args.plot_title,
         )
         print(f"Saved plot to: {plot_path}")
