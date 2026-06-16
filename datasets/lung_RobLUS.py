@@ -28,11 +28,15 @@ class RobLUSSampleInfo:
 
 
 def _natural_frame_key(path: Path) -> tuple[int, str]:
-    stem = path.stem.removeprefix("US_")
+    stem = _remove_us_prefix(path.stem)
     try:
         return int(stem), stem
     except ValueError:
         return 0, stem
+
+
+def _remove_us_prefix(stem: str) -> str:
+    return stem[3:] if stem.startswith("US_") else stem
 
 
 def _parse_csv_values(value: str) -> list[str]:
@@ -69,7 +73,7 @@ class RobLUSDecoder:
         for subject_dir in self._subject_dirs():
             subject = subject_dir.name
             for image_path in sorted(subject_dir.glob("US_*.jpg"), key=_natural_frame_key):
-                frame_id = image_path.stem.removeprefix("US_")
+                frame_id = _remove_us_prefix(image_path.stem)
                 mask_paths = {
                     label: subject_dir / "mask" / label / f"mask_{frame_id}.png"
                     for label in self.labels
