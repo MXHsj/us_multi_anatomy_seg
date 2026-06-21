@@ -8,6 +8,10 @@ torch
 torchvision
 segment-anything
 
+# Note: the text-prompted Medical SAM3 engine needs the `sam3` package, which is NOT
+# installed here on purpose -- it is a heavy, separate environment. See README.md
+# ("Medical SAM3 (text-prompted)") for the one-off install command.
+
 # SAMUS model adapter runtime
 einops
 
