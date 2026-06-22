@@ -1,0 +1,31 @@
+.git/
+.devcontainer/
+.vscode/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+data_cache/
+
+# Local datasets, checkpoints, and generated benchmark outputs are mounted at runtime.
+datasets/TNSC2020/
+datasets/BLUSG/
+datasets/BUSBRA/
+datasets/BUSI/
+datasets/OKU/
+datasets/CAMUS/
+datasets/FTP/
+datasets/UltraBones100k/
+datasets/AULID/
+datasets/UNS/
+datasets/RobLUS/
+results/
+work_dir/MedSAM/
+work_dir/UltraSam/
+*.pth
+*.zip
+
+# Presentation assets are not needed to build the development image.
+presentation/assets/

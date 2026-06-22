@@ -8,8 +8,15 @@ torch
 torchvision
 segment-anything
 
+# Note: the text-prompted Medical SAM3 engine needs the `sam3` package, which is NOT
+# installed here on purpose -- it is a heavy, separate environment. See README.md
+# ("Medical SAM3 (text-prompted)") for the one-off install command.
+
 # SAMUS model adapter runtime
 einops
+
+# UltraSAM COCO export/runtime support
+pycocotools
 
 # Hugging Face dataset materialization
 huggingface_hub
@@ -25,3 +32,13 @@ nibabel
 
 # UNS decoder support
 imagecodecs
+
+
+# MedSAM3 dependencies
+transformers
+python-dotenv
+iopath
+timm
+decord
+psutil
+ftfy

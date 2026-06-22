@@ -1,0 +1,40 @@
+{
+  "name": "us-multi-anatomy-seg",
+  // Switch models by changing ONLY "dockerfile" here: Dockerfile_UltraSAM or Dockerfile_SAMUS.
+  // Each Dockerfile sets its own model-specific env (PYTHONPATH and ULTRASAM_DIR / SAMUS_DIR),
+  // so nothing else in this file needs to change.
+  "build": {
+    "dockerfile": "Dockerfile_SAMUS",
+    "context": ".."
+  },
+  "remoteUser": "vscode",
+  "workspaceFolder": "/workspaces/us_multi_anatomy_seg",
+  "runArgs": [
+    "--gpus=all",
+    "--shm-size=16g"
+  ],
+  "containerEnv": {
+    "CODEX_HOME": "/home/vscode/.codex",
+    "HF_HOME": "${containerWorkspaceFolder}/.cache/huggingface",
+    "MPLCONFIGDIR": "${containerWorkspaceFolder}/.cache/matplotlib"
+  },
+  "mounts": [
+    "source=us-multi-anatomy-seg-pip-cache,target=/home/vscode/.cache/pip,type=volume",
+    "source=${localEnv:USERPROFILE}/.codex,target=/home/vscode/.codex,type=bind,consistency=cached",
+    "source=${localEnv:USERPROFILE}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached"
+  ],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code",
+        "openai.chatgpt",
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/opt/venv/bin/python",
+        "python.terminal.activateEnvironment": true
+      }
+    }
+  }
+}

@@ -1,13 +1,13 @@
 ﻿## Ultrasound Multi-Anatomy Segmentator
 
-This repo is organized for cross-dataset benchmarking of pretrained and future foundation segmentation models, starting with MedSAM.
+This repo is organized for cross-dataset benchmarking of pretrained and future foundation segmentation models, including MedSAM, SAMUS, and UltraSAM.
 
 ## Installation
 
 Create and activate the project conda environment:
 
 ```bash
-conda create -n monai-usseg python=3.10
+conda create -n monai-usseg python=3.12
 conda activate monai-usseg
 ```
 
@@ -17,6 +17,22 @@ Install Python dependencies from the repository root:
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
+
+## Development Container
+
+This repo includes a VS Code devcontainer under `.devcontainer/`. Open the
+repository in VS Code and choose **Dev Containers: Reopen in Container** to build
+the CUDA-enabled Python 3.10 image, install the top-level `requirements.txt`,
+install the OpenMMLab stack used by UltraSAM, and clone
+`CAMMA-public/UltraSam` into `/opt/UltraSam`.
+
+The container requests all available NVIDIA GPUs. On a CPU-only Docker host,
+remove `--gpus=all` from `.devcontainer/devcontainer.json` before rebuilding.
+
+The devcontainer also installs the OpenAI Codex VS Code extension
+(`openai.chatgpt`). Your local Codex login/config directory is bind-mounted from
+`%USERPROFILE%/.codex` to `/home/vscode/.codex`, so the extension can reuse local
+Codex state without storing secrets in the Docker image.
 
 ## Hugging Face Dataset
 
@@ -107,18 +123,19 @@ us_multi_anatomy_seg/
 |   `-- <dataset cache dirs>/      # ignored local materializations
 |-- benchmarks/
 |   |-- medsam_inference.py        # GT-box prompted MedSAM benchmark engine
-|   `-- samus_inference.py         # GT-box prompted SAMUS benchmark engine
+|   |-- samus_inference.py         # GT-box prompted SAMUS benchmark engine
+|   `-- ultrasam_inference.py      # GT-box prompted UltraSAM/OpenMMLab engine
 |-- analysis/
 |   |-- model_across_datasets.py   # Same-model cross-dataset summaries + figures
 |   `-- compare_models_same_dataset.py
 |-- results/                       # Ignored generated metrics/visualizations
 |-- notebooks/                     # Result exploration notebooks
-`-- work_dir/                     # Local model code/checkpoints, including MedSAM/SAMUS
+`-- work_dir/                     # Local checkpoints, including MedSAM/SAMUS/UltraSAM
 ```
 
 ## Benchmark Usage
 
-Use ground-truth masks to build bounding-box prompts, then run MedSAM and report overlap, pixel-classification, boundary, size-error, and latency metrics.
+Use ground-truth masks to build bounding-box prompts, then run each model and report overlap, pixel-classification, boundary, size-error, and latency metrics.
 
 ### MedSAM
 
@@ -145,6 +162,55 @@ python benchmarks/samus_inference.py \
 ```
 
 If `work_dir/SAMUS/ckp/SAMUS.pth` is missing, the SAMUS benchmark downloads the checkpoint from the upstream Google Drive release. Use `--no-auto-download-checkpoint` to require a local checkpoint.
+
+### UltraSAM
+
+UltraSAM uses the upstream OpenMMLab project from `CAMMA-public/UltraSam`. In
+the devcontainer, that source tree is available at `/opt/UltraSam` through the
+`ULTRASAM_DIR` environment variable.
+
+```bash
+python benchmarks/ultrasam_inference.py \
+  --dataset tnsc2020 \
+  --device cuda:0 \
+  --max-samples 50 \
+  --output-dir results/ultrasam_test_tnsc
+```
+
+If `work_dir/UltraSam/UltraSam.pth` is missing, the benchmark downloads the checkpoint from `https://s3.unistra.fr/camma_public/github/ultrasam/UltraSam.pth`. Use `--no-auto-download-checkpoint` to require a local checkpoint. Outside the devcontainer, pass `--ultrasam-dir path/to/UltraSam`, set `ULTRASAM_DIR`, or add `--auto-clone-source`.
+
+### Medical SAM3 (text-prompted)
+
+Medical SAM3 is a **text-prompted** model: it segments from a clinical concept
+string (e.g. `"thyroid nodule"`) instead of a box. Its results are reported in a
+**separate table** and never cross-compared with the box-prompted models (a GT-derived
+box is a privileged localization cue). The concept for each dataset/class comes from
+`datasets/label_text.py`.
+
+It needs the `sam3` package, which is **not** in `requirements.txt` (it is a heavy,
+separate environment, so install it on its own — ideally a dedicated conda/uv env).
+`sam3` is the Medical-SAM3 repo's own package and is **not on PyPI**, so install it from
+source. One-off command (pip clones and builds it for you):
+
+```bash
+pip install "git+https://github.com/AIM-Research-Lab/Medical-SAM3.git#egg=sam3[train]"
+```
+
+(Equivalently: `git clone` the repo, then `pip install -r requirements.txt && pip install -e ".[train]"` from inside it.) Once `import sam3` works, run:
+
+```bash
+python benchmarks/medical_sam3_inference.py \
+  --dataset tnsc2020 \
+  --device cuda:0 \
+  --max-samples 50 \
+  --output-dir results/medicalsam3_text_prompt_tnsc2020
+```
+
+The fine-tuned `checkpoint_2D.pt` (~10 GB) auto-downloads from the
+[`Chongcong/Medical-SAM3`](https://huggingface.co/Chongcong/Medical-SAM3) HF repo to
+`work_dir/MedicalSAM3/`; use `--no-auto-download-checkpoint` to require a local file, or
+`--checkpoint path/to/checkpoint_2D.pt`. Multi-class datasets (e.g. CAMUS) are queried
+per class and scored independently; empty-GT frames are skipped, matching the box engines.
 
 ### Dataset-Specific Options
 
@@ -193,18 +259,28 @@ The wrapper scripts under `benchmarks/test_*_gt_bbox_*.py` are the current repro
 | `test_medsam_gt_bbox_aulid.py` | MedSAM | `aulid` | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_aulid` |
 | `test_medsam_gt_bbox_uns.py` | MedSAM | `uns` | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_uns` |
 | `test_medsam_gt_bbox_roblus.py` | MedSAM | `roblus` (`pleural_line`) | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_roblus` |
-| `test_samus_gt_bbox_tnsc2020.py` | SAMUS | `tnsc2020` | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_tnsc2020` |
-| `test_samus_gt_bbox_blusg.py` | SAMUS | `blusg` | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_blusg` |
-| `test_samus_gt_bbox_busbra.py` | SAMUS | `busbra` | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_busbra` |
-| `test_samus_gt_bbox_busi.py` | SAMUS | `busi` (`benign,malignant`) | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_busi` |
-| `test_samus_gt_bbox_oku.py` | SAMUS | `oku` | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_oku` |
-| `test_samus_gt_bbox_ultrabones100k.py` | SAMUS | `ultrabones100k` | all | 10 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_ultrabones100k` |
-| `test_samus_gt_bbox_camus.py` | SAMUS | `camus` | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_camus` |
-| `test_samus_gt_bbox_aulid.py` | SAMUS | `aulid` | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_aulid` |
-| `test_samus_gt_bbox_uns.py` | SAMUS | `uns` | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_uns` |
-| `test_samus_gt_bbox_roblus.py` | SAMUS | `roblus` (`pleural_line`) | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/samus_gt_bbox_roblus` |
+| `test_samus_gt_bbox_tnsc2020.py` | SAMUS | `tnsc2020` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_tnsc2020` |
+| `test_samus_gt_bbox_blusg.py` | SAMUS | `blusg` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_blusg` |
+| `test_samus_gt_bbox_busbra.py` | SAMUS | `busbra` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_busbra` |
+| `test_samus_gt_bbox_busi.py` | SAMUS | `busi` (`benign,malignant`) | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_busi` |
+| `test_samus_gt_bbox_oku.py` | SAMUS | `oku` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_oku` |
+| `test_samus_gt_bbox_ultrabones100k.py` | SAMUS | `ultrabones100k` | all | 10 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_ultrabones100k` |
+| `test_samus_gt_bbox_camus.py` | SAMUS | `camus` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_camus` |
+| `test_samus_gt_bbox_aulid.py` | SAMUS | `aulid` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_aulid` |
+| `test_samus_gt_bbox_uns.py` | SAMUS | `uns` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_uns` |
+| `test_samus_gt_bbox_roblus.py` | SAMUS | `roblus` (`pleural_line`) | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_roblus` |
+| `test_ultrasam_gt_bbox_tnsc2020.py` | UltraSAM | `tnsc2020` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_tnsc2020` |
+| `test_ultrasam_gt_bbox_blusg.py` | UltraSAM | `blusg` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_blusg` |
+| `test_ultrasam_gt_bbox_busbra.py` | UltraSAM | `busbra` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_busbra` |
+| `test_ultrasam_gt_bbox_busi.py` | UltraSAM | `busi` (`benign,malignant`) | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_busi` |
+| `test_ultrasam_gt_bbox_oku.py` | UltraSAM | `oku` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_oku` |
+| `test_ultrasam_gt_bbox_ultrabones100k.py` | UltraSAM | `ultrabones100k` | all | 10 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_ultrabones100k` |
+| `test_ultrasam_gt_bbox_camus.py` | UltraSAM | `camus` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_camus` |
+| `test_ultrasam_gt_bbox_aulid.py` | UltraSAM | `aulid` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_aulid` |
+| `test_ultrasam_gt_bbox_uns.py` | UltraSAM | `uns` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_uns` |
+| `test_ultrasam_gt_bbox_roblus.py` | UltraSAM | `roblus` (`pleural_line`) | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_roblus` |
 
-Shared wrapper defaults: GT masks are converted to bounding-box prompts; MedSAM GT wrappers disable bbox jitter with `--bbox-jitter-prob 0.0`; MedSAM and SAMUS GT wrappers now use `--max-samples all` for full decoded-dataset default runs. Pass a positive integer, such as `--max-samples 100`, to run a capped smoke test with the same single parameter. UltraBones100k wrappers use `--box-padding 10`; other datasets use `0`. Dataset-specific options include `--oku-anatomy Capsule`, `--aulid-label mass`, `--roblus-labels pleural_line`, `--camus-labels 1,2,3`, `--include-half-sequence`, `--busbra-pathology`, `--busbra-birads`, and `--busi-categories`. RobLUS is benchmarked class-specifically; merged pleural-line/rib-shadow runs are avoided because a single combined bbox is not a valid prompt protocol for separate anatomies/instances. RobLUS negative-control samples have empty masks and are skipped by the current GT-box engines because no bounding box can be generated.
+Shared wrapper defaults: GT masks are converted to bounding-box prompts; MedSAM GT wrappers disable bbox jitter with `--bbox-jitter-prob 0.0`; MedSAM, SAMUS, and UltraSAM GT wrappers use `--max-samples all` for full decoded-dataset default runs. Pass a positive integer, such as `--max-samples 100`, to run a capped smoke test with the same single parameter. SAMUS and UltraSAM wrappers request all visualizations; MedSAM wrappers save 20. UltraBones100k wrappers use `--box-padding 10`; other datasets use `0`. Dataset-specific options include `--oku-anatomy Capsule`, `--aulid-label mass`, `--roblus-labels pleural_line`, `--camus-labels 1,3`, `--include-half-sequence`, `--busbra-pathology`, `--busbra-birads`, and `--busi-categories`. RobLUS is benchmarked class-specifically; merged pleural-line/rib-shadow runs are avoided because a single combined bbox is not a valid prompt protocol for separate anatomies/instances. RobLUS negative-control samples have empty masks and are skipped by the current GT-box engines because no bounding box can be generated.
 
 When rerunning into an existing output directory, old visualization PNGs are not automatically deleted. Remove or move the existing `visualizations/` folder first if you need the qualitative sample set to reflect only the latest run.
 
@@ -217,6 +293,7 @@ Same-model performance across datasets:
 ```bash
 python analysis/model_across_datasets.py --model medsam
 python analysis/model_across_datasets.py --model samus
+python analysis/model_across_datasets.py --model ultrasam
 ```
 
 These commands print Dice/IoU mean and standard deviation tables and save paper-style plots with mean bars, standard-deviation error bars, and per-sample scatter points under `analysis/figures/`.
