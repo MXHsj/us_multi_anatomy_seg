@@ -21,6 +21,7 @@ MODEL_COLORS = {
     "medsam": "#4C72B0",
     "samus": "#55A868",
     "ultrasam": "#C44E52",
+    "medicalsam3": "#8172B3",
 }
 DATASET_LABELS = {
     "aulid": "AULID",
@@ -48,7 +49,15 @@ def parse_result_dir_name(name: str) -> tuple[str, str, str] | None:
     elif parts[1:3] == ["jitter", "bbox"]:
         protocol = "jitter_bbox"
         dataset = "_".join(parts[3:])
+    elif parts[1:3] == ["text", "prompt"]:
+        # Text-prompted protocol (e.g. medicalsam3_text_prompt_tnsc2020). Reported in
+        # its own table -- never merged with the box (gt_bbox/jitter_bbox) results.
+        protocol = "text"
+        dataset = "_".join(parts[3:])
     else:
+        return None
+
+    if not dataset:
         return None
 
     return model, protocol, dataset
@@ -330,7 +339,9 @@ def main() -> None:
         description="Summarize same-model performance across datasets."
     )
     parser.add_argument("--results-dir", type=Path, default=Path("results"))
-    parser.add_argument("--protocol", default="gt_bbox", choices=["gt_bbox", "jitter_bbox"])
+    parser.add_argument(
+        "--protocol", default="gt_bbox", choices=["gt_bbox", "jitter_bbox", "text"]
+    )
     parser.add_argument(
         "--model",
         default="",

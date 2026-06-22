@@ -179,6 +179,39 @@ python benchmarks/ultrasam_inference.py \
 
 If `work_dir/UltraSam/UltraSam.pth` is missing, the benchmark downloads the checkpoint from `https://s3.unistra.fr/camma_public/github/ultrasam/UltraSam.pth`. Use `--no-auto-download-checkpoint` to require a local checkpoint. Outside the devcontainer, pass `--ultrasam-dir path/to/UltraSam`, set `ULTRASAM_DIR`, or add `--auto-clone-source`.
 
+### Medical SAM3 (text-prompted)
+
+Medical SAM3 is a **text-prompted** model: it segments from a clinical concept
+string (e.g. `"thyroid nodule"`) instead of a box. Its results are reported in a
+**separate table** and never cross-compared with the box-prompted models (a GT-derived
+box is a privileged localization cue). The concept for each dataset/class comes from
+`datasets/label_text.py`.
+
+It needs the `sam3` package, which is **not** in `requirements.txt` (it is a heavy,
+separate environment, so install it on its own — ideally a dedicated conda/uv env).
+`sam3` is the Medical-SAM3 repo's own package and is **not on PyPI**, so install it from
+source. One-off command (pip clones and builds it for you):
+
+```bash
+pip install "git+https://github.com/AIM-Research-Lab/Medical-SAM3.git#egg=sam3[train]"
+```
+
+(Equivalently: `git clone` the repo, then `pip install -r requirements.txt && pip install -e ".[train]"` from inside it.) Once `import sam3` works, run:
+
+```bash
+python benchmarks/medical_sam3_inference.py \
+  --dataset tnsc2020 \
+  --device cuda:0 \
+  --max-samples 50 \
+  --output-dir results/medicalsam3_text_prompt_tnsc2020
+```
+
+The fine-tuned `checkpoint_2D.pt` (~10 GB) auto-downloads from the
+[`Chongcong/Medical-SAM3`](https://huggingface.co/Chongcong/Medical-SAM3) HF repo to
+`work_dir/MedicalSAM3/`; use `--no-auto-download-checkpoint` to require a local file, or
+`--checkpoint path/to/checkpoint_2D.pt`. Multi-class datasets (e.g. CAMUS) are queried
+per class and scored independently; empty-GT frames are skipped, matching the box engines.
+
 ### Dataset-Specific Options
 
 - `--dataset`: any key from `python -m datasets.registry`, such as `tnsc2020`, `blusg`, `busbra`, `busi`, `oku`, `aulid`, `roblus`, `uns`, or `ultrabones100k`.

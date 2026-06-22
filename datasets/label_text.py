@@ -1,6 +1,7 @@
 """Label -> natural-language concept mapping for text-prompted segmentation.
 
 Used by the text-prompted model (MedSAM3), which segments an image given a
+Used by the text-prompted model (Medical SAM3), which segments an image given a
 canonical clinical *concept string* (e.g. "thyroid nodule") rather than a
 bounding box.
 
