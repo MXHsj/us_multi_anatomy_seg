@@ -84,7 +84,12 @@ class BreastBUSIDecoder:
             image = io.imread(image_path)
             merged_mask = None
             for mask_path in mask_paths:
-                mask_bin = to_binary_mask(io.imread(mask_path))
+                raw_mask = io.imread(mask_path)
+                # Some BUSI mask PNGs are saved as RGB/RGBA; collapse to 2D (dropping
+                # any alpha channel) before binarizing so the OR-merge stays 2D.
+                if raw_mask.ndim == 3:
+                    raw_mask = raw_mask[..., :3].max(axis=-1)
+                mask_bin = to_binary_mask(raw_mask)
                 if merged_mask is None:
                     merged_mask = mask_bin
                 else:
