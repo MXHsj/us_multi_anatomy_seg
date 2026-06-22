@@ -22,6 +22,7 @@ MODEL_COLORS = {
     "samus": "#55A868",
     "ultrasam": "#C44E52",
     "medicalsam3": "#8172B3",
+    "medsam3": "#884cb0",
 }
 DATASET_LABELS = {
     "aulid": "AULID",
