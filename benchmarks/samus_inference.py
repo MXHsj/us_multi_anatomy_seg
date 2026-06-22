@@ -262,8 +262,7 @@ def samus_box_inference(
 ) -> list[np.ndarray]:
     input_size = image_tensor.shape[-2:]
     image_tensor = image_tensor.to(model.device)
-    processed = torch.stack([model.preprocess(img) for img in image_tensor], dim=0)
-    image_embeddings = model.image_encoder(processed)
+    image_embeddings = model.image_encoder(image_tensor)
 
     box_torch = torch.as_tensor(boxes_256, dtype=torch.float32, device=model.device)
     sparse_embeddings, dense_embeddings = model.prompt_encoder(
