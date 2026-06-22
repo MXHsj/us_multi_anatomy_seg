@@ -1,5 +1,5 @@
 # Core numerical and image processing stack
-numpy<2
+numpy
 scipy
 scikit-image
 
@@ -32,3 +32,13 @@ nibabel
 
 # UNS decoder support
 imagecodecs
+
+
+# MedSAM3 dependencies
+transformers
+python-dotenv
+iopath
+timm
+decord
+psutil
+ftfy

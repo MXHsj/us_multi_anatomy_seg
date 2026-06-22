@@ -28,3 +28,5 @@ data_cache/
 presentation
 results/**/visualizations/
 results/**/coco_export/
+
+.env
