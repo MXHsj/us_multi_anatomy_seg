@@ -7,7 +7,7 @@ This repo is organized for cross-dataset benchmarking of pretrained and future f
 Create and activate the project conda environment:
 
 ```bash
-conda create -n monai-usseg python=3.10
+conda create -n monai-usseg python=3.12
 conda activate monai-usseg
 ```
 
