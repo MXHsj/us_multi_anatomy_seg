@@ -31,14 +31,14 @@ assert os.environ.get("HF_TOKEN"), f"HF_TOKEN must be set in .env file before us
 
 # Toggle which datasets to run.
 DATASETS: dict[str, bool] = {
-    "aulid": False,
+    "aulid": True,
     "blusg": False,
     "busbra": False,
     "busi": False,
     "camus": False,
     "oku": False,
     "roblus": False,
-    "tnsc2020": True,
+    "tnsc2020": False,
     "ultrabones100k": False,
     "uns": False,
 }
@@ -55,7 +55,7 @@ def main() -> None:
 
     failures: list[str] = []
     for name in selected:
-        script = REPO_ROOT / "benchmarks" / f"test_medsam3_text_prompt_{name}.py"
+        script = REPO_ROOT / "benchmarks" / f"test_medsam3_text_{name}.py"
         if not script.exists():
             print(f"[SKIP] {name}: script not found ({script})")
             failures.append(name)
