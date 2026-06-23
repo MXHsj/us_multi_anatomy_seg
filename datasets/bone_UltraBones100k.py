@@ -92,6 +92,52 @@ class UltraBones100kDecoder:
                     return count
         return count
 
+    def _load_sample(
+        self,
+        sample_id: str,
+        record_dir: Path,
+        image_path: Path,
+        label_path: Path,
+        tracking: Optional[Dict[str, Dict[str, str]]] = None,
+    ) -> DecodedSample:
+        image = io.imread(image_path)
+        mask = io.imread(label_path)
+        timestamp = image_path.stem
+        record_metadata = self._record_metadata(record_dir)
+        metadata = {
+            **record_metadata,
+            "timestamp": timestamp,
+            "raw_image_path": str(image_path),
+            "raw_mask_path": str(label_path),
+            "label_folder": self.label_folder,
+            "thicken_radius": self.thicken_radius,
+            "fill_mask": self.fill_mask,
+        }
+        if tracking is None:
+            tracking = self._tracking_map(record_dir)
+        if timestamp in tracking:
+            metadata["tracking"] = tracking[timestamp]
+
+        return DecodedSample(
+            dataset="UltraBones100k",
+            sample_id=sample_id,
+            image=normalize_to_uint8(image),
+            mask=self._prepare_mask(mask),
+            metadata=metadata,
+        )
+
+    def load_sample(self, sample_id: str) -> DecodedSample:
+        parts = sample_id.split("_", maxsplit=3)
+        if len(parts) != 4:
+            raise KeyError(f"UltraBones100k sample '{sample_id}' not found.")
+        specimen_id, anatomy, record, timestamp = parts
+        record_dir = self.root / specimen_id / anatomy / record
+        image_path = record_dir / "UltrasoundImages" / f"{timestamp}.png"
+        label_path = record_dir / self.label_folder / f"{timestamp}_label.png"
+        if not image_path.exists() or not label_path.exists():
+            raise KeyError(f"UltraBones100k sample '{sample_id}' not found.")
+        return self._load_sample(sample_id, record_dir, image_path, label_path)
+
     def iter_samples(self, max_samples: Optional[int] = None) -> Iterator[DecodedSample]:
         count = 0
         for record_dir in self._record_dirs():
@@ -109,32 +155,16 @@ class UltraBones100kDecoder:
                 if not label_path.exists():
                     continue
 
-                image = io.imread(image_path)
-                mask = io.imread(label_path)
                 sample_id = (
                     f"{record_metadata['specimen_id']}_{record_metadata['anatomy']}_"
                     f"{record_metadata['record']}_{image_path.stem}"
                 )
-
-                metadata = {
-                    **record_metadata,
-                    "timestamp": image_path.stem,
-                    "raw_image_path": str(image_path),
-                    "raw_mask_path": str(label_path),
-                    "label_folder": self.label_folder,
-                    "thicken_radius": self.thicken_radius,
-                    "fill_mask": self.fill_mask,
-                }
-                if image_path.stem in tracking:
-                    # Keep the synchronized probe pose/tracking row available downstream.
-                    metadata["tracking"] = tracking[image_path.stem]
-
-                yield DecodedSample(
-                    dataset="UltraBones100k",
+                yield self._load_sample(
                     sample_id=sample_id,
-                    image=normalize_to_uint8(image),
-                    mask=self._prepare_mask(mask),
-                    metadata=metadata,
+                    record_dir=record_dir,
+                    image_path=image_path,
+                    label_path=label_path,
+                    tracking=tracking,
                 )
 
                 count += 1

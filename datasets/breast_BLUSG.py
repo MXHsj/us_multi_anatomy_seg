@@ -45,37 +45,50 @@ class BreastBLUSGDecoder:
         total = sum(1 for img_path in self._image_paths() if self._mask_paths(img_path.stem))
         return min(total, max_samples) if max_samples is not None else total
 
+    def _load_sample(self, img_path: Path) -> Optional[DecodedSample]:
+        stem = img_path.stem
+        mask_paths = self._mask_paths(stem)
+        if not mask_paths:
+            return None
+
+        image = io.imread(img_path)
+        merged_mask = None
+        for mask_path in mask_paths:
+            mask = io.imread(mask_path)
+            mask_bin = _mask_to_binary(mask)
+            if merged_mask is None:
+                merged_mask = mask_bin
+            else:
+                merged_mask = (merged_mask | mask_bin).astype("uint8")
+
+        if merged_mask is None:
+            return None
+
+        return DecodedSample(
+            dataset="BLUSG",
+            sample_id=stem,
+            image=normalize_to_uint8(image),
+            mask=merged_mask,
+            metadata={
+                "mask_files": [p.name for p in mask_paths],
+                "include_other": self.include_other,
+            },
+        )
+
+    def load_sample(self, sample_id: str) -> DecodedSample:
+        img_path = self.root / f"{sample_id}.png"
+        if img_path.exists() and "_tumor" not in img_path.name and "_other" not in img_path.name:
+            sample = self._load_sample(img_path)
+            if sample is not None:
+                return sample
+        raise KeyError(f"BLUSG sample '{sample_id}' not found.")
+
     def iter_samples(self, max_samples: Optional[int] = None) -> Iterator[DecodedSample]:
         count = 0
         for img_path in self._image_paths():
-            stem = img_path.stem
-            mask_paths = self._mask_paths(stem)
-            if not mask_paths:
+            sample = self._load_sample(img_path)
+            if sample is None:
                 continue
-
-            image = io.imread(img_path)
-            merged_mask = None
-            for mask_path in mask_paths:
-                mask = io.imread(mask_path)
-                mask_bin = _mask_to_binary(mask)
-                if merged_mask is None:
-                    merged_mask = mask_bin
-                else:
-                    merged_mask = (merged_mask | mask_bin).astype("uint8")
-
-            if merged_mask is None:
-                continue
-
-            sample = DecodedSample(
-                dataset="BLUSG",
-                sample_id=stem,
-                image=normalize_to_uint8(image),
-                mask=merged_mask,
-                metadata={
-                    "mask_files": [p.name for p in mask_paths],
-                    "include_other": self.include_other,
-                },
-            )
             yield sample
 
             count += 1

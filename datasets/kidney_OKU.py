@@ -122,34 +122,47 @@ class KidneyOKUDecoder:
             total += 1
         return min(total, max_samples) if max_samples is not None else total
 
+    def _load_sample(self, img_path: Path) -> Optional[DecodedSample]:
+        filename = img_path.name
+        polys = self._annotations.get(filename, [])
+        if not polys:
+            return None
+
+        image = io.imread(img_path)
+        if image.ndim == 3:
+            h, w = image.shape[:2]
+        else:
+            h, w = image.shape
+        mask = self._build_mask((h, w), polys)
+        if mask.sum() == 0:
+            return None
+
+        return DecodedSample(
+            dataset="OKU",
+            sample_id=img_path.stem,
+            image=normalize_to_uint8(image),
+            mask=mask,
+            metadata={
+                "filename": filename,
+                "num_polygons": len(polys),
+                "anatomy_filter": self.anatomy_filter,
+            },
+        )
+
+    def load_sample(self, sample_id: str) -> DecodedSample:
+        img_path = self.root / f"{sample_id}.png"
+        if img_path.exists():
+            sample = self._load_sample(img_path)
+            if sample is not None:
+                return sample
+        raise KeyError(f"OKU sample '{sample_id}' not found.")
+
     def iter_samples(self, max_samples: Optional[int] = None) -> Iterator[DecodedSample]:
         count = 0
         for img_path in self._image_paths():
-            filename = img_path.name
-            polys = self._annotations.get(filename, [])
-            if not polys:
+            sample = self._load_sample(img_path)
+            if sample is None:
                 continue
-
-            image = io.imread(img_path)
-            if image.ndim == 3:
-                h, w = image.shape[:2]
-            else:
-                h, w = image.shape
-            mask = self._build_mask((h, w), polys)
-            if mask.sum() == 0:
-                continue
-
-            sample = DecodedSample(
-                dataset="OKU",
-                sample_id=img_path.stem,
-                image=normalize_to_uint8(image),
-                mask=mask,
-                metadata={
-                    "filename": filename,
-                    "num_polygons": len(polys),
-                    "anatomy_filter": self.anatomy_filter,
-                },
-            )
             yield sample
 
             count += 1

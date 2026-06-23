@@ -122,6 +122,32 @@ class RobLUSDecoder:
             },
         )
 
+    def load_sample(self, sample_id: str) -> DecodedSample:
+        subject, sep, frame = sample_id.partition("/")
+        if not sep:
+            raise KeyError(f"RobLUS sample '{sample_id}' not found.")
+        frame_id = _remove_us_prefix(frame)
+        if subject not in self.subjects:
+            raise KeyError(f"RobLUS sample '{sample_id}' not found.")
+
+        subject_dir = self.root / subject
+        image_path = subject_dir / f"US_{frame_id}.jpg"
+        mask_paths = {
+            label: subject_dir / "mask" / label / f"mask_{frame_id}.png"
+            for label in self.labels
+        }
+        if not image_path.exists() or not all(path.exists() for path in mask_paths.values()):
+            raise KeyError(f"RobLUS sample '{sample_id}' not found.")
+
+        return self.load_sample_from_info(
+            RobLUSSampleInfo(
+                subject=subject,
+                frame_id=frame_id,
+                image_path=image_path,
+                mask_paths=mask_paths,
+            )
+        )
+
     def iter_samples(self, max_samples: Optional[int] = None) -> Iterator[DecodedSample]:
         for info in self.iter_sample_infos(max_samples=max_samples):
             yield self.load_sample_from_info(info)

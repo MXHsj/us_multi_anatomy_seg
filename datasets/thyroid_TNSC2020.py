@@ -49,23 +49,28 @@ class ThyroidTNSC2020Decoder:
         total = len(self._sample_ids())
         return min(total, max_samples) if max_samples is not None else total
 
+    def load_sample(self, sample_id: str) -> DecodedSample:
+        sample_name = f"{sample_id}.PNG" if not sample_id.endswith(".PNG") else sample_id
+        image_path = self.image_dir / sample_name
+        mask_path = self.mask_dir / sample_name
+        if not image_path.exists() or not mask_path.exists():
+            raise KeyError(f"TNSC2020 sample '{sample_id}' not found.")
+
+        return DecodedSample(
+            dataset="TNSC2020",
+            sample_id=sample_name.replace(".PNG", ""),
+            image=normalize_to_uint8(io.imread(image_path)),
+            mask=to_binary_mask(io.imread(mask_path)),
+            metadata={
+                "raw_file": sample_name,
+                "category": self.category_map.get(sample_name, -1),
+            },
+        )
+
     def iter_samples(self, max_samples: Optional[int] = None) -> Iterator[DecodedSample]:
         count = 0
         for sample_name in self._sample_ids():
-            image = io.imread(self.image_dir / sample_name)
-            mask = io.imread(self.mask_dir / sample_name)
-
-            sample = DecodedSample(
-                dataset="TNSC2020",
-                sample_id=sample_name.replace(".PNG", ""),
-                image=normalize_to_uint8(image),
-                mask=to_binary_mask(mask),
-                metadata={
-                    "raw_file": sample_name,
-                    "category": self.category_map.get(sample_name, -1),
-                },
-            )
-            yield sample
+            yield self.load_sample(sample_name)
 
             count += 1
             if max_samples is not None and count >= max_samples:

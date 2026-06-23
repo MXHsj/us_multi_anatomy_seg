@@ -55,33 +55,55 @@ class AULIDDecoder:
         total = sum(1 for image_path in self._image_paths() if self._mask_path(image_path).exists())
         return min(total, max_samples) if max_samples is not None else total
 
+    def _load_sample(self, image_path: Path) -> Optional[DecodedSample]:
+        mask_path = self._mask_path(image_path)
+        if not mask_path.exists():
+            return None
+
+        image = io.imread(image_path)
+        height, width = image.shape[:2]
+        points = json.loads(mask_path.read_text(encoding="utf-8"))
+        mask = _polygon_mask(points, shape=(height, width))
+        if mask.sum() == 0:
+            return None
+
+        category = image_path.parents[1].name
+        return DecodedSample(
+            dataset="AULID",
+            sample_id=f"{category}/{image_path.stem}",
+            image=normalize_to_uint8(image),
+            mask=mask,
+            metadata={
+                "category": category,
+                "label": self.label,
+                "raw_image_path": str(image_path),
+                "raw_mask_path": str(mask_path),
+            },
+        )
+
+    def load_sample(self, sample_id: str) -> DecodedSample:
+        category, sep, stem = sample_id.partition("/")
+        if sep:
+            image_path = self.data_root / category / "image" / f"{stem}.jpg"
+            if image_path.exists():
+                sample = self._load_sample(image_path)
+                if sample is not None:
+                    return sample
+
+        for image_path in self._image_paths():
+            if f"{image_path.parents[1].name}/{image_path.stem}" == sample_id:
+                sample = self._load_sample(image_path)
+                if sample is not None:
+                    return sample
+        raise KeyError(f"AULID sample '{sample_id}' not found.")
+
     def iter_samples(self, max_samples: Optional[int] = None) -> Iterator[DecodedSample]:
         count = 0
         for image_path in self._image_paths():
-            mask_path = self._mask_path(image_path)
-            if not mask_path.exists():
+            sample = self._load_sample(image_path)
+            if sample is None:
                 continue
-
-            image = io.imread(image_path)
-            height, width = image.shape[:2]
-            points = json.loads(mask_path.read_text(encoding="utf-8"))
-            mask = _polygon_mask(points, shape=(height, width))
-            if mask.sum() == 0:
-                continue
-
-            category = image_path.parents[1].name
-            yield DecodedSample(
-                dataset="AULID",
-                sample_id=f"{category}/{image_path.stem}",
-                image=normalize_to_uint8(image),
-                mask=mask,
-                metadata={
-                    "category": category,
-                    "label": self.label,
-                    "raw_image_path": str(image_path),
-                    "raw_mask_path": str(mask_path),
-                },
-            )
+            yield sample
 
             count += 1
             if max_samples is not None and count >= max_samples:

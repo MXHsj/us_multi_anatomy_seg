@@ -74,42 +74,63 @@ class BreastBUSIDecoder:
         total = sum(1 for _cat, img in self._image_paths() if self._mask_paths(img))
         return min(total, max_samples) if max_samples is not None else total
 
+    def _load_sample(self, category: str, image_path: Path) -> Optional[DecodedSample]:
+        mask_paths = self._mask_paths(image_path)
+        if not mask_paths:
+            return None
+
+        image = io.imread(image_path)
+        merged_mask = None
+        for mask_path in mask_paths:
+            raw_mask = io.imread(mask_path)
+            # Some BUSI mask PNGs are saved as RGB/RGBA; collapse to 2D (dropping
+            # any alpha channel) before binarizing so the OR-merge stays 2D.
+            if raw_mask.ndim == 3:
+                raw_mask = raw_mask[..., :3].max(axis=-1)
+            mask_bin = to_binary_mask(raw_mask)
+            if merged_mask is None:
+                merged_mask = mask_bin
+            else:
+                merged_mask = (merged_mask | mask_bin).astype("uint8")
+
+        if merged_mask is None:
+            return None
+
+        return DecodedSample(
+            dataset="BUSI",
+            sample_id=_sanitize_sample_id(category, image_path.stem),
+            image=normalize_to_uint8(image),
+            mask=merged_mask,
+            metadata={
+                "category": category,
+                "image_file": image_path.name,
+                "mask_files": [p.name for p in mask_paths],
+                "num_masks": len(mask_paths),
+            },
+        )
+
+    def load_sample(self, sample_id: str) -> DecodedSample:
+        category, _, index = sample_id.partition("_")
+        if category in self.categories and index:
+            image_path = self.root / category / f"{category} ({index}).png"
+            if image_path.exists():
+                sample = self._load_sample(category, image_path)
+                if sample is not None:
+                    return sample
+
+        for category, image_path in self._image_paths():
+            if _sanitize_sample_id(category, image_path.stem) == sample_id:
+                sample = self._load_sample(category, image_path)
+                if sample is not None:
+                    return sample
+        raise KeyError(f"BUSI sample '{sample_id}' not found.")
+
     def iter_samples(self, max_samples: Optional[int] = None) -> Iterator[DecodedSample]:
         count = 0
         for category, image_path in self._image_paths():
-            mask_paths = self._mask_paths(image_path)
-            if not mask_paths:
+            sample = self._load_sample(category, image_path)
+            if sample is None:
                 continue
-
-            image = io.imread(image_path)
-            merged_mask = None
-            for mask_path in mask_paths:
-                raw_mask = io.imread(mask_path)
-                # Some BUSI mask PNGs are saved as RGB/RGBA; collapse to 2D (dropping
-                # any alpha channel) before binarizing so the OR-merge stays 2D.
-                if raw_mask.ndim == 3:
-                    raw_mask = raw_mask[..., :3].max(axis=-1)
-                mask_bin = to_binary_mask(raw_mask)
-                if merged_mask is None:
-                    merged_mask = mask_bin
-                else:
-                    merged_mask = (merged_mask | mask_bin).astype("uint8")
-
-            if merged_mask is None:
-                continue
-
-            sample = DecodedSample(
-                dataset="BUSI",
-                sample_id=_sanitize_sample_id(category, image_path.stem),
-                image=normalize_to_uint8(image),
-                mask=merged_mask,
-                metadata={
-                    "category": category,
-                    "image_file": image_path.name,
-                    "mask_files": [p.name for p in mask_paths],
-                    "num_masks": len(mask_paths),
-                },
-            )
             yield sample
 
             count += 1
