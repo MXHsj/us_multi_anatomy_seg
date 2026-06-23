@@ -26,7 +26,7 @@ data_cache/
 # results/
 *.zip
 presentation
-results/**/visualizations/
+# results/**/visualizations/
 results/**/coco_export/
 
 .env
