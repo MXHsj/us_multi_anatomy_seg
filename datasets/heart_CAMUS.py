@@ -147,6 +147,9 @@ class HeartCAMUSDecoder:
         for frame_idx in range(arr_img.shape[-1]):
             yield arr_img[..., frame_idx], arr_msk[..., frame_idx], frame_idx
 
+    def _orient_frame(self, frame: np.ndarray) -> np.ndarray:
+        return np.ascontiguousarray(np.rot90(frame, k=-1))
+
     def iter_samples(self, max_samples: Optional[int] = None) -> Iterator[DecodedSample]:
         if max_samples is not None and max_samples <= 0:
             return
@@ -171,6 +174,8 @@ class HeartCAMUSDecoder:
 
             for img_frame, msk_frame, frame_idx in self._iter_frames(img, msk):
                 source_sample_id = f"{patient}_{view}_{phase}_f{frame_idx:03d}"
+                img_frame = self._orient_frame(img_frame)
+                msk_frame = self._orient_frame(msk_frame)
                 image_uint8 = normalize_to_uint8(img_frame)
                 rounded_mask = np.rint(msk_frame).astype(np.int32)
 
