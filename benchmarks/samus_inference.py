@@ -26,7 +26,7 @@ for path in (ROOT_DIR, SAMUS_DIR):
         sys.path.insert(0, str(path))
 
 from datasets.common import (
-    bbox_from_mask,
+    bboxes_from_mask,
     ensure_three_channels,
     normalize_to_uint8,
 )
@@ -367,16 +367,17 @@ def save_vis(
 
     ax[1].imshow(image)
     ax[1].imshow(gt_mask, alpha=0.45, cmap="Greens")
-    ax[1].add_patch(
-        plt.Rectangle(
-            (bbox[0], bbox[1]),
-            bbox[2] - bbox[0],
-            bbox[3] - bbox[1],
-            edgecolor="yellow",
-            facecolor=(0, 0, 0, 0),
-            linewidth=2,
+    for box in np.asarray(bbox).reshape(-1, 4):
+        ax[1].add_patch(
+            plt.Rectangle(
+                (box[0], box[1]),
+                box[2] - box[0],
+                box[3] - box[1],
+                edgecolor="yellow",
+                facecolor=(0, 0, 0, 0),
+                linewidth=2,
+            )
         )
-    )
     ax[1].set_title("GT + Box Prompt")
 
     ax[2].imshow(image)
@@ -517,6 +518,16 @@ def main() -> None:
         help="Evaluate a positive integer cap or use 'all' for the full dataset. Defaults to 'all'.",
     )
     parser.add_argument("--box-padding", type=int, default=0)
+    parser.add_argument(
+        "--bbox-mode",
+        choices=("union", "individual"),
+        default="union",
+        help=(
+            "Use one bbox around the full target mask (union, default) or one bbox "
+            "per connected component larger than 15 pixels (individual). SAMUS "
+            "is point-prompted here, so this affects logging and visualization."
+        ),
+    )
     parser.add_argument("--save-vis", type=int, default=8)
     parser.add_argument("--output-dir", type=str, default="results/samus_test")
     parser.add_argument(
@@ -580,8 +591,12 @@ def main() -> None:
         height, width = image_3c.shape[:2]
 
         gt_mask = (sample.mask > 0).astype(np.uint8)
-        bbox = bbox_from_mask(gt_mask, padding=args.box_padding)
-        if bbox is None:
+        bboxes = bboxes_from_mask(
+            gt_mask,
+            padding=args.box_padding,
+            mode=args.bbox_mode,
+        )
+        if bboxes is None:
             skipped += 1
             print_progress(
                 idx,
@@ -592,6 +607,7 @@ def main() -> None:
                 elapsed_s=time.perf_counter() - benchmark_tic,
             )
             continue
+        metric_bbox = bboxes[0] if args.bbox_mode == "union" and len(bboxes) == 1 else bboxes
 
         image_tensor = prepare_samus_tensor(
             image_3c, size=args.encoder_input_size, device=args.device
@@ -611,7 +627,7 @@ def main() -> None:
                 "height": height,
                 "width": width,
                 "gt_mask": gt_mask,
-                "bbox": bbox,
+                "bbox": metric_bbox,
                 "click_256": click_256,
             }
         )
@@ -674,6 +690,8 @@ def main() -> None:
             "max_samples": format_max_samples(args.max_samples),
             "batch_size": args.batch_size,
             "num_workers": args.num_workers,
+            "bbox_mode": args.bbox_mode,
+            "box_padding": args.box_padding,
             "num_evaluated": len(rows),
             "num_skipped_empty_mask": skipped,
             **summarize_metric_rows(rows),
@@ -692,6 +710,8 @@ def main() -> None:
             "max_samples": format_max_samples(args.max_samples),
             "batch_size": args.batch_size,
             "num_workers": args.num_workers,
+            "bbox_mode": args.bbox_mode,
+            "box_padding": args.box_padding,
             "num_evaluated": 0,
             "num_skipped_empty_mask": skipped,
             "error": "No valid samples were evaluated.",

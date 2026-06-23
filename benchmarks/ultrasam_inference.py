@@ -32,7 +32,12 @@ from benchmarks.eval_utils import (
     summarize_target_class_metrics,
 )
 from benchmarks.metrics import SegmentationMetrics
-from datasets.common import bbox_from_mask, ensure_three_channels, normalize_to_uint8
+from datasets.common import (
+    bbox_from_binary_mask,
+    bbox_masks_from_mask,
+    ensure_three_channels,
+    normalize_to_uint8,
+)
 from datasets.loader import add_dataset_args, build_decoder_from_args
 
 
@@ -168,6 +173,7 @@ def export_decoder_to_coco(
     decoder: Any,
     max_samples: int | None,
     box_padding: int,
+    bbox_mode: str,
     export_dir: Path,
 ) -> tuple[Path, list[dict[str, Any]], int]:
     if export_dir.exists():
@@ -182,31 +188,37 @@ def export_decoder_to_coco(
 
     for sample in decoder.iter_samples(max_samples=max_samples):
         mask = np.asarray(sample.mask).astype(np.uint8)
-        bbox = bbox_from_mask(mask, padding=box_padding)
-        if bbox is None:
+        component_masks = bbox_masks_from_mask(mask, mode=bbox_mode, min_area=16)
+        bboxes = [
+            bbox
+            for component_mask in component_masks
+            if (bbox := bbox_from_binary_mask(component_mask, padding=box_padding)) is not None
+        ]
+        if not bboxes:
             skipped += 1
             continue
 
         image_id = len(images) + 1
-        ann_id = len(annotations) + 1
         height, width = mask.shape[:2]
         file_name = f"{image_id:06d}_{safe_stem(sample.sample_id)}.png"
         image_uint8 = ensure_three_channels(normalize_to_uint8(sample.image))
         io.imsave(image_dir / file_name, image_uint8, check_contrast=False)
 
-        x0, y0, x1, y1 = [int(v) for v in bbox.tolist()]
-        coco_bbox = [x0, y0, x1 - x0 + 1, y1 - y0 + 1]
-        annotations.append(
-            {
-                "id": ann_id,
-                "image_id": image_id,
-                "category_id": 1,
-                "bbox": coco_bbox,
-                "area": int(mask.astype(bool).sum()),
-                "iscrowd": 0,
-                "segmentation": mask_to_coco_rle(mask),
-            }
-        )
+        for component_mask, bbox in zip(component_masks, bboxes):
+            ann_id = len(annotations) + 1
+            x0, y0, x1, y1 = [int(v) for v in bbox.tolist()]
+            coco_bbox = [x0, y0, x1 - x0 + 1, y1 - y0 + 1]
+            annotations.append(
+                {
+                    "id": ann_id,
+                    "image_id": image_id,
+                    "category_id": 1,
+                    "bbox": coco_bbox,
+                    "area": int(component_mask.sum()),
+                    "iscrowd": 0,
+                    "segmentation": mask_to_coco_rle(component_mask),
+                }
+            )
         images.append(
             {
                 "id": image_id,
@@ -215,13 +227,19 @@ def export_decoder_to_coco(
                 "width": int(width),
             }
         )
+        prompt_bboxes = np.stack(bboxes).astype(np.int32)
+        record_bbox = (
+            prompt_bboxes[0]
+            if bbox_mode == "union" and len(prompt_bboxes) == 1
+            else prompt_bboxes
+        )
         records.append(
             {
                 "image_id": image_id,
                 "sample": sample,
                 "image": image_uint8,
                 "mask": mask,
-                "bbox": bbox,
+                "bbox": record_bbox,
             }
         )
 
@@ -242,6 +260,7 @@ def load_existing_coco_export_records(
     decoder: Any,
     max_samples: int | None,
     box_padding: int,
+    bbox_mode: str,
     export_dir: Path,
 ) -> tuple[Path, list[dict[str, Any]], int] | None:
     ann_path = export_dir / "annotations.json"
@@ -253,15 +272,23 @@ def load_existing_coco_export_records(
         coco = json.load(handle)
     images = coco.get("images", [])
     annotations = coco.get("annotations", [])
-    if len(images) != len(annotations):
+    if len(images) == 0 or len(annotations) == 0:
         return None
+    annotations_by_image_id: dict[int, list[dict[str, Any]]] = {}
+    for annotation in annotations:
+        annotations_by_image_id.setdefault(int(annotation.get("image_id", -1)), []).append(annotation)
 
     records: list[dict[str, Any]] = []
     skipped = 0
     for sample in decoder.iter_samples(max_samples=max_samples):
         mask = np.asarray(sample.mask).astype(np.uint8)
-        bbox = bbox_from_mask(mask, padding=box_padding)
-        if bbox is None:
+        component_masks = bbox_masks_from_mask(mask, mode=bbox_mode, min_area=16)
+        bboxes = [
+            bbox
+            for component_mask in component_masks
+            if (bbox := bbox_from_binary_mask(component_mask, padding=box_padding)) is not None
+        ]
+        if not bboxes:
             skipped += 1
             continue
 
@@ -275,14 +302,28 @@ def load_existing_coco_export_records(
             return None
         if not image_path.exists():
             return None
+        expected_coco_bboxes = []
+        for bbox in bboxes:
+            x0, y0, x1, y1 = [int(v) for v in bbox.tolist()]
+            expected_coco_bboxes.append([x0, y0, x1 - x0 + 1, y1 - y0 + 1])
+        existing_annotations = annotations_by_image_id.get(image_id, [])
+        existing_coco_bboxes = [annotation.get("bbox") for annotation in existing_annotations]
+        if existing_coco_bboxes != expected_coco_bboxes:
+            return None
 
+        prompt_bboxes = np.stack(bboxes).astype(np.int32)
+        record_bbox = (
+            prompt_bboxes[0]
+            if bbox_mode == "union" and len(prompt_bboxes) == 1
+            else prompt_bboxes
+        )
         records.append(
             {
                 "image_id": image_id,
                 "sample": sample,
                 "image": ensure_three_channels(normalize_to_uint8(sample.image)),
                 "mask": mask,
-                "bbox": bbox,
+                "bbox": record_bbox,
             }
         )
 
@@ -411,12 +452,9 @@ def iter_ultrasam_predictions(model: Any, dataloader: Any, records_by_image_id: 
                 pred_mask = np.zeros_like(record["mask"], dtype=np.uint8)
             else:
                 masks = pred_instances.masks
-                scores = pred_instances.scores
-                if hasattr(scores, "detach"):
-                    best_idx = int(torch.argmax(scores).detach().cpu().item())
-                else:
-                    best_idx = int(np.argmax(np.asarray(scores)))
-                pred_mask = tensor_mask_to_numpy(masks[best_idx], record["mask"].shape)
+                pred_mask = np.zeros_like(record["mask"], dtype=np.uint8)
+                for mask_idx in range(len(masks)):
+                    pred_mask |= tensor_mask_to_numpy(masks[mask_idx], record["mask"].shape)
             yield record, pred_mask, infer_ms
 
 
@@ -467,6 +505,15 @@ def main() -> None:
         help="Evaluate a positive integer cap or use 'all' for the full dataset. Defaults to 'all'.",
     )
     parser.add_argument("--box-padding", type=int, default=0)
+    parser.add_argument(
+        "--bbox-mode",
+        choices=("union", "individual"),
+        default="union",
+        help=(
+            "Use one bbox around the full target mask (union, default) or one bbox "
+            "per connected component larger than 15 pixels (individual)."
+        ),
+    )
     # batch_size=4 fits 1024x1024 SAM-encoder activations in ~10GB and is the
     # throughput optimum on 16GB cards (e.g. RTX 5080). Larger batches (8) saturate
     # 16GB VRAM, spill into system RAM over PCIe, and run ~5x slower; throughput
@@ -505,6 +552,7 @@ def main() -> None:
         decoder=decoder,
         max_samples=args.max_samples,
         box_padding=args.box_padding,
+        bbox_mode=args.bbox_mode,
         export_dir=coco_dir,
     )
     if existing_export is None:
@@ -513,6 +561,7 @@ def main() -> None:
             decoder=decoder,
             max_samples=args.max_samples,
             box_padding=args.box_padding,
+            bbox_mode=args.bbox_mode,
             export_dir=coco_dir,
         )
     else:
@@ -613,6 +662,7 @@ def main() -> None:
         "device": str(device),
         "max_samples": format_max_samples(args.max_samples),
         "box_padding": args.box_padding,
+        "bbox_mode": args.bbox_mode,
         "batch_size": args.batch_size,
         "num_evaluated": len(rows),
         "num_skipped_empty_masks": export_skipped,

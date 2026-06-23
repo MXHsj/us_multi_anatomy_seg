@@ -301,17 +301,17 @@ def _render_and_save_group(
             color = to_rgb("#d62728")
         _overlay_mask(axes[1], target["gt_mask"], color=color, alpha=0.42)
         _overlay_mask(axes[2], target["pred_mask"], color=color, alpha=0.42)
-        bbox = target["bbox"]
-        axes[1].add_patch(
-            Rectangle(
-                (bbox[0], bbox[1]),
-                max(float(bbox[2] - bbox[0]), 1.0),
-                max(float(bbox[3] - bbox[1]), 1.0),
-                edgecolor=color,
-                facecolor=(0, 0, 0, 0),
-                linewidth=1.8,
+        for bbox in _iter_bboxes(target["bbox"]):
+            axes[1].add_patch(
+                Rectangle(
+                    (bbox[0], bbox[1]),
+                    max(float(bbox[2] - bbox[0]), 1.0),
+                    max(float(bbox[3] - bbox[1]), 1.0),
+                    edgecolor=color,
+                    facecolor=(0, 0, 0, 0),
+                    linewidth=1.8,
+                )
             )
-        )
         label = (
             f"{target['class_name']} "
             f"D={target['dice']:.2f} I={target['iou']:.2f}"
@@ -359,3 +359,7 @@ def _overlay_mask(axis: Any, mask: np.ndarray, color: tuple[float, float, float]
     overlay[mask_bool, :3] = color
     overlay[mask_bool, 3] = alpha
     axis.imshow(overlay)
+
+
+def _iter_bboxes(bbox: np.ndarray) -> np.ndarray:
+    return np.asarray(bbox).reshape(-1, 4)

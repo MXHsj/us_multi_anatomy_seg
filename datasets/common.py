@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
-from typing import Dict, Iterable, Iterator, Optional
+from typing import Dict, Iterable, Iterator, Literal, Optional
 
 import numpy as np
-from skimage import io, transform
+from skimage import io, measure, transform
 
 
 @dataclass
@@ -100,15 +100,82 @@ def to_binary_mask(mask: np.ndarray, positive_labels: Optional[Iterable[int]] = 
     return np.isin(rounded, labels).astype(np.uint8)
 
 
-def bbox_from_mask(mask: np.ndarray, padding: int = 0) -> Optional[np.ndarray]:
-    ys, xs = np.where(mask > 0)
+def connected_component_masks(mask: np.ndarray, min_area: int = 1) -> list[np.ndarray]:
+    arr = np.asarray(mask)
+    if arr.ndim == 3 and arr.shape[-1] == 1:
+        arr = arr[..., 0]
+    if arr.ndim == 3:
+        components: list[np.ndarray] = []
+        for channel in range(arr.shape[-1]):
+            labels = measure.label(arr[..., channel] > 0, connectivity=1)
+            for component_id in range(1, int(labels.max()) + 1):
+                component = labels == component_id
+                if int(component.sum()) >= min_area:
+                    components.append(component)
+        return components
+
+    components: list[np.ndarray] = []
+    positive_values = np.unique(arr[arr > 0])
+    for value in positive_values:
+        labels = measure.label(arr == value, connectivity=1)
+        for component_id in range(1, int(labels.max()) + 1):
+            component = labels == component_id
+            if int(component.sum()) >= min_area:
+                components.append(component)
+    return components
+
+
+def bbox_from_binary_mask(mask: np.ndarray, padding: int = 0) -> Optional[np.ndarray]:
+    arr = np.asarray(mask)
+    if arr.ndim > 2:
+        arr = arr.max(axis=-1)
+
+    ys, xs = np.where(arr > 0)
     if len(xs) == 0 or len(ys) == 0:
         return None
     x_min = max(int(xs.min()) - padding, 0)
     y_min = max(int(ys.min()) - padding, 0)
-    x_max = min(int(xs.max()) + padding, mask.shape[1] - 1)
-    y_max = min(int(ys.max()) + padding, mask.shape[0] - 1)
+    x_max = min(int(xs.max()) + padding, arr.shape[1] - 1)
+    y_max = min(int(ys.max()) + padding, arr.shape[0] - 1)
     return np.array([x_min, y_min, x_max, y_max], dtype=np.int32)
+
+
+BBoxMode = Literal["union", "individual"]
+
+
+def bbox_masks_from_mask(
+    mask: np.ndarray,
+    mode: BBoxMode = "union",
+    min_area: int = 16,
+) -> list[np.ndarray]:
+    if mode == "union":
+        mask_bool = np.asarray(mask) > 0
+        if mask_bool.ndim > 2:
+            mask_bool = mask_bool.max(axis=-1)
+        return [mask_bool] if np.any(mask_bool) else []
+    if mode == "individual":
+        return connected_component_masks(mask, min_area=min_area)
+    raise ValueError(f"Unsupported bbox mode: {mode!r}")
+
+
+def bboxes_from_mask(
+    mask: np.ndarray,
+    padding: int = 0,
+    min_area: int = 16,
+    mode: BBoxMode = "union",
+) -> Optional[np.ndarray]:
+    boxes = [
+        bbox
+        for component in bbox_masks_from_mask(mask, mode=mode, min_area=min_area)
+        if (bbox := bbox_from_binary_mask(component, padding=padding)) is not None
+    ]
+    if not boxes:
+        return None
+    return np.stack(boxes).astype(np.int32)
+
+
+def bbox_from_mask(mask: np.ndarray, padding: int = 0) -> Optional[np.ndarray]:
+    return bbox_from_binary_mask(mask, padding=padding)
 
 
 def prepare_medsam_image(image: np.ndarray, size: int = 1024) -> np.ndarray:
