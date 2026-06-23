@@ -27,6 +27,11 @@ MODEL_LABELS = {
     "samus": "SAMUS",
     "ultrasam": "UltraSAM",
 }
+MODEL_ALIASES = {
+    "ultrasm": "ultrasam",
+    "ultra-sm": "ultrasam",
+    "ultra_sam": "ultrasam",
+}
 DATASET_LABELS = {
     "aulid": "AULID",
     "blusg": "BLUSG",
@@ -72,6 +77,24 @@ def parse_metrics_arg(value: str) -> tuple[str, ...]:
     if not metrics:
         raise SystemExit("At least one metric must be selected.")
     return metrics
+
+
+def normalize_model_name(value: str) -> str:
+    model = value.strip().lower()
+    return MODEL_ALIASES.get(model, model)
+
+
+def parse_models_arg(value: str) -> tuple[str, ...]:
+    models = tuple(
+        normalize_model_name(model)
+        for model in value.split(",")
+        if model.strip()
+    )
+    if not models:
+        raise SystemExit("At least one model must be selected.")
+    if len(set(models)) != len(models):
+        raise SystemExit("Model names must be unique.")
+    return models
 
 
 def read_metrics(csv_path: Path, metrics: tuple[str, ...]) -> dict[str, dict[str, float]]:
@@ -162,6 +185,70 @@ def compare_models(
     return rows
 
 
+def compare_model_set(
+    results_dir: Path,
+    protocol: str,
+    models: tuple[str, ...],
+    metrics: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    discovered = discover_results(results_dir, protocol)
+    candidate_datasets = sorted(
+        {
+            dataset
+            for result_model, dataset in discovered
+            if result_model in models
+        }
+    )
+    datasets = [
+        dataset
+        for dataset in candidate_datasets
+        if all((model, dataset) in discovered for model in models)
+    ]
+
+    rows: list[dict[str, Any]] = []
+    for dataset in datasets:
+        model_metrics = {
+            model: read_metrics(discovered[(model, dataset)], metrics)
+            for model in models
+        }
+        shared_ids = sorted(set.intersection(*(set(values) for values in model_metrics.values())))
+        if not shared_ids:
+            continue
+
+        row: dict[str, Any] = {"dataset": dataset, "matched_samples": len(shared_ids)}
+        values_by_metric: dict[str, dict[str, list[float]]] = {}
+        for metric in metrics:
+            values_by_metric[metric] = {}
+            for model in models:
+                values = [
+                    model_metrics[model][sample_id][metric]
+                    for sample_id in shared_ids
+                ]
+                values_by_metric[metric][model] = values
+                mean, std = mean_std(values)
+                row[f"{model}_{metric}_mean"] = mean
+                row[f"{model}_{metric}_std"] = std
+
+            baseline = models[0]
+            baseline_values = values_by_metric[metric][baseline]
+            for model in models[1:]:
+                deltas = [
+                    value - baseline_value
+                    for baseline_value, value in zip(
+                        baseline_values,
+                        values_by_metric[metric][model],
+                    )
+                ]
+                delta_mean, delta_std = mean_std(deltas)
+                row[f"{model}_minus_{baseline}_{metric}_mean"] = delta_mean
+                row[f"{model}_minus_{baseline}_{metric}_std"] = delta_std
+
+        row["_values_by_metric"] = values_by_metric
+        rows.append(row)
+
+    return rows
+
+
 def format_float(value: float) -> str:
     return f"{value:.4f}"
 
@@ -182,12 +269,30 @@ def column_names(model_a: str, model_b: str, metrics: tuple[str, ...]) -> list[s
     return columns
 
 
+def model_set_column_names(models: tuple[str, ...], metrics: tuple[str, ...]) -> list[str]:
+    columns = ["dataset", "matched_samples"]
+    baseline = models[0]
+    for metric in metrics:
+        for model in models:
+            columns.extend([f"{model}_{metric}_mean", f"{model}_{metric}_std"])
+        for model in models[1:]:
+            columns.extend(
+                [
+                    f"{model}_minus_{baseline}_{metric}_mean",
+                    f"{model}_minus_{baseline}_{metric}_std",
+                ]
+            )
+    return columns
+
+
 def print_markdown(rows: list[dict[str, Any]], columns: list[str]) -> None:
     print("| " + " | ".join(columns) + " |")
     print("| " + " | ".join(["---"] * len(columns)) + " |")
     for row in rows:
         values = [
-            str(row[column]) if column == "dataset" else format_float(row[column])
+            str(row[column])
+            if column in {"dataset", "matched_samples"}
+            else format_float(row[column])
             for column in columns
         ]
         print("| " + " | ".join(values) + " |")
@@ -206,6 +311,15 @@ def default_plot_path(protocol: str, model_a: str, model_b: str) -> Path:
         Path("analysis")
         / "figures"
         / f"compare_models_same_dataset_{protocol}_{model_a}_vs_{model_b}.png"
+    )
+
+
+def default_model_set_plot_path(protocol: str, models: tuple[str, ...]) -> Path:
+    model_slug = "_vs_".join(models)
+    return (
+        Path("analysis")
+        / "figures"
+        / f"compare_models_same_dataset_{protocol}_{model_slug}.png"
     )
 
 
@@ -237,6 +351,22 @@ def plot_rows(
     plot_path: Path,
     model_a: str,
     model_b: str,
+    metrics: tuple[str, ...],
+    title: str = "",
+) -> None:
+    plot_multi_model_rows(
+        rows=rows,
+        plot_path=plot_path,
+        models=(model_a, model_b),
+        metrics=metrics,
+        title=title,
+    )
+
+
+def plot_multi_model_rows(
+    rows: list[dict[str, Any]],
+    plot_path: Path,
+    models: tuple[str, ...],
     metrics: tuple[str, ...],
     title: str = "",
 ) -> None:
@@ -273,16 +403,18 @@ def plot_rows(
 
     labels = [display_dataset_label(row["dataset"]) for row in rows]
     x_positions = np.arange(len(rows))
-    bar_width = 0.32
+    group_width = 0.74
+    bar_width = min(0.24, group_width / len(models))
+    start_offset = -bar_width * (len(models) - 1) / 2
     offsets = {
-        model_a: -bar_width / 2,
-        model_b: bar_width / 2,
+        model: start_offset + idx * bar_width
+        for idx, model in enumerate(models)
     }
     rng = np.random.default_rng(20240515)
 
     ncols = min(3, len(metrics))
     nrows = int(np.ceil(len(metrics) / ncols))
-    fig_width = max(6.8, len(rows) * 0.48, ncols * 3.2)
+    fig_width = max(9.5, len(rows) * 0.85, ncols * 4.2)
     fig_height = max(3.25, nrows * 2.75)
     fig, axes = plt.subplots(
         nrows=nrows,
@@ -294,7 +426,7 @@ def plot_rows(
     axes_flat = axes.ravel()
 
     for axis, metric in zip(axes_flat, metrics):
-        for model in (model_a, model_b):
+        for model in models:
             means = [row[f"{model}_{metric}_mean"] for row in rows]
             stds = [row[f"{model}_{metric}_std"] for row in rows]
             color = MODEL_COLORS.get(model, "#666666")
@@ -331,9 +463,9 @@ def plot_rows(
                 axis.scatter(
                     np.full(len(values), model_positions[idx]) + jitter,
                     values,
-                    s=6,
+                    s=3,
                     color=color,
-                    alpha=0.18,
+                    alpha=0.14,
                     linewidths=0,
                     zorder=3,
                 )
@@ -364,14 +496,14 @@ def plot_rows(
             markersize=7,
             label=display_model_label(model),
         )
-        for model in (model_a, model_b)
+        for model in models
     ]
     fig.legend(
         handles=handles,
         frameon=False,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.04 if not title else 1.10),
-        ncol=2,
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.10),
+        ncol=len(models),
     )
 
     if title:
@@ -384,7 +516,7 @@ def plot_rows(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Compare two models on the same datasets using matched sample IDs "
+            "Compare models on the same datasets using matched sample IDs "
             "from per_sample_metrics.csv."
         )
     )
@@ -392,6 +524,16 @@ def main() -> None:
     parser.add_argument("--protocol", default="gt_bbox", choices=["gt_bbox", "jitter_bbox"])
     parser.add_argument("--model-a", default="medsam")
     parser.add_argument("--model-b", default="samus")
+    parser.add_argument(
+        "--models",
+        default=None,
+        help=(
+            "Comma-separated model list for multi-model comparison, "
+            "for example 'medsam,samus,ultrasam'. One or more models are "
+            "supported. If omitted, --model-a and --model-b are used for the "
+            "original pairwise comparison."
+        ),
+    )
     parser.add_argument(
         "--metrics",
         default="all",
@@ -425,33 +567,49 @@ def main() -> None:
     args = parser.parse_args()
     metrics = parse_metrics_arg(args.metrics)
 
-    rows = compare_models(
-        results_dir=args.results_dir,
-        protocol=args.protocol,
-        model_a=args.model_a,
-        model_b=args.model_b,
-        metrics=metrics,
-    )
+    if args.models is None:
+        models = (
+            normalize_model_name(args.model_a),
+            normalize_model_name(args.model_b),
+        )
+        rows = compare_models(
+            results_dir=args.results_dir,
+            protocol=args.protocol,
+            model_a=models[0],
+            model_b=models[1],
+            metrics=metrics,
+        )
+        columns = column_names(models[0], models[1], metrics)
+    else:
+        models = parse_models_arg(args.models)
+        rows = compare_model_set(
+            results_dir=args.results_dir,
+            protocol=args.protocol,
+            models=models,
+            metrics=metrics,
+        )
+        columns = model_set_column_names(models, metrics)
 
     if not rows:
         raise SystemExit("No datasets with matched sample IDs found.")
 
-    columns = column_names(args.model_a, args.model_b, metrics)
     print_markdown(rows, columns)
     if args.output_csv is not None:
         write_csv(rows, columns, args.output_csv)
         print(f"\nSaved CSV to: {args.output_csv}")
     if not args.no_plot:
-        plot_path = args.plot_path or default_plot_path(
-            args.protocol,
-            args.model_a,
-            args.model_b,
-        )
-        plot_rows(
+        if args.models is None:
+            plot_path = args.plot_path or default_plot_path(
+                args.protocol,
+                models[0],
+                models[1],
+            )
+        else:
+            plot_path = args.plot_path or default_model_set_plot_path(args.protocol, models)
+        plot_multi_model_rows(
             rows=rows,
             plot_path=plot_path,
-            model_a=args.model_a,
-            model_b=args.model_b,
+            models=models,
             metrics=metrics,
             title=args.plot_title,
         )
