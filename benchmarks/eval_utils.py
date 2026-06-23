@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+from dataclasses import dataclass
 import multiprocessing
 import os
 from pathlib import Path
@@ -30,6 +31,17 @@ METRIC_FIELDNAMES = [
     *METRIC_NAMES,
     "infer_ms",
 ]
+
+
+@dataclass
+class InferenceResult:
+    sample: Any
+    image: np.ndarray
+    gt_mask: np.ndarray
+    pred_mask: np.ndarray
+    bbox: np.ndarray
+    metrics: dict[str, float]
+    infer_ms: float
 
 
 def parse_max_samples(value: str | int | None) -> int | None:

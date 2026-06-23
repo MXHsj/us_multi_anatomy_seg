@@ -32,6 +32,7 @@ from datasets.common import (
 )
 from datasets.loader import add_dataset_args, build_decoder_from_args
 from benchmarks.eval_utils import (
+    InferenceResult,
     METRIC_FIELDNAMES,
     TargetVisualizationCollector,
     build_metric_row,
@@ -471,6 +472,111 @@ def process_batch(
         recent_batch_size=len(pending),
         recent_batch_s=batch_elapsed_s,
     )
+
+
+def run_samus_on_samples(
+    samples,
+    *,
+    device: str = "cuda:0",
+    batch_size: int = 16,
+    num_workers: int = 0,
+    checkpoint: str | Path = "work_dir/SAMUS/ckp/SAMUS.pth",
+    sam_ckpt: str | Path = "work_dir/SAMUS/checkpoints/sam_vit_b_01ec64.pth",
+    no_auto_download_checkpoint: bool = False,
+    checkpoint_file_id: str = DEFAULT_SAMUS_CHECKPOINT_FILE_ID,
+    box_padding: int = 0,
+    bbox_mode: str = "union",
+    encoder_input_size: int = 256,
+    low_image_size: int = 128,
+    vit_name: str = "vit_b",
+) -> list[InferenceResult]:
+    """Run the normal SAMUS point-prompt pipeline on already-decoded samples."""
+    del num_workers  # Samples are already decoded; batching still follows the benchmark path.
+    args = argparse.Namespace(
+        checkpoint=str(checkpoint),
+        no_auto_download_checkpoint=no_auto_download_checkpoint,
+        checkpoint_file_id=checkpoint_file_id,
+        sam_ckpt=str(sam_ckpt),
+        device=device,
+        encoder_input_size=encoder_input_size,
+        low_image_size=low_image_size,
+        vit_name=vit_name,
+    )
+    model = build_model(args)
+    metrics_calculator = SegmentationMetrics()
+    results: list[InferenceResult] = []
+    pending: list[dict] = []
+
+    def flush_pending() -> None:
+        if not pending:
+            return
+        batch_image_tensor = torch.stack([entry["image_tensor"] for entry in pending], dim=0)
+        batch_points = np.stack([entry["click_256"] for entry in pending], axis=0)
+        batch_original_sizes = [(entry["height"], entry["width"]) for entry in pending]
+        tic = time.perf_counter()
+        batch_preds = samus_point_inference(
+            model=model,
+            image_tensor=batch_image_tensor,
+            points_256=batch_points,
+            original_sizes=batch_original_sizes,
+        )
+        batch_infer_ms = (time.perf_counter() - tic) * 1000.0 / len(pending)
+        for entry, pred_mask in zip(pending, batch_preds):
+            metrics = metrics_calculator.compute(entry["gt_mask"], pred_mask)
+            results.append(
+                InferenceResult(
+                    sample=entry["sample"],
+                    image=entry["image_uint8"],
+                    gt_mask=entry["gt_mask"],
+                    pred_mask=pred_mask,
+                    bbox=entry["bbox"],
+                    metrics=metrics,
+                    infer_ms=batch_infer_ms,
+                )
+            )
+        pending.clear()
+
+    for sample in samples:
+        image_3c = ensure_three_channels(sample.image)
+        height, width = image_3c.shape[:2]
+        gt_mask = (sample.mask > 0).astype(np.uint8)
+        bboxes = bboxes_from_mask(
+            gt_mask,
+            padding=box_padding,
+            mode=bbox_mode,
+        )
+        if bboxes is None:
+            continue
+        click_xy = foreground_click_xy(gt_mask)
+        if click_xy is None:
+            continue
+        metric_bbox = bboxes[0] if bbox_mode == "union" and len(bboxes) == 1 else bboxes
+        pending.append(
+            {
+                "sample": sample,
+                "image_uint8": normalize_to_uint8(image_3c),
+                "image_tensor": prepare_samus_tensor(
+                    image_3c,
+                    size=encoder_input_size,
+                    device=device,
+                ),
+                "height": height,
+                "width": width,
+                "gt_mask": gt_mask,
+                "bbox": metric_bbox,
+                "click_256": scale_click_to_model_space(
+                    click_xy=click_xy,
+                    src_height=height,
+                    src_width=width,
+                    dst_size=encoder_input_size,
+                ),
+            }
+        )
+        if len(pending) >= batch_size:
+            flush_pending()
+
+    flush_pending()
+    return results
 
 
 def main() -> None:

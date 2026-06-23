@@ -19,10 +19,12 @@ if str(ROOT_DIR) not in sys.path:
 from datasets.common import (
     bboxes_from_mask,
     ensure_three_channels,
+    normalize_to_uint8,
     prepare_medsam_image,
 )
 from datasets.loader import add_dataset_args, build_decoder_from_args
 from benchmarks.eval_utils import (
+    InferenceResult,
     METRIC_FIELDNAMES,
     TargetVisualizationCollector,
     build_metric_row,
@@ -266,6 +268,86 @@ def save_vis(
     fig.tight_layout()
     fig.savefig(vis_dir / f"{name}.png", dpi=140)
     plt.close(fig)
+
+
+def run_medsam_on_samples(
+    samples,
+    *,
+    device: str = "cuda:0",
+    checkpoint: str | Path = "work_dir/MedSAM/medsam_vit_b.pth",
+    checkpoint_repo_id: str = DEFAULT_MEDSAM_CHECKPOINT_REPO_ID,
+    checkpoint_filename: str = DEFAULT_MEDSAM_CHECKPOINT_FILENAME,
+    checkpoint_revision: str = "main",
+    no_auto_download_checkpoint: bool = False,
+    box_padding: int = 0,
+    bbox_mode: str = "union",
+    bbox_jitter_prob: float = 0.0,
+    bbox_jitter_fraction: float = 0.2,
+) -> list[InferenceResult]:
+    """Run the normal MedSAM GT-box pipeline on already-decoded samples."""
+    try:
+        from segment_anything import sam_model_registry
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "segment_anything is required for MedSAM inference."
+        ) from exc
+
+    resolved_checkpoint = ensure_checkpoint(
+        checkpoint=str(checkpoint),
+        auto_download=not no_auto_download_checkpoint,
+        repo_id=checkpoint_repo_id,
+        filename=checkpoint_filename,
+        revision=checkpoint_revision,
+    )
+    torch_device = resolve_torch_device(device)
+    model = load_medsam_model(sam_model_registry, resolved_checkpoint, torch_device)
+    metrics_calculator = SegmentationMetrics()
+    results: list[InferenceResult] = []
+
+    for sample in samples:
+        image_3c = ensure_three_channels(sample.image)
+        height, width = image_3c.shape[:2]
+        gt_mask = (sample.mask > 0).astype(np.uint8)
+        bboxes = bboxes_from_mask(
+            gt_mask,
+            padding=box_padding,
+            mode=bbox_mode,
+        )
+        if bboxes is None:
+            continue
+        if bbox_jitter_fraction > 0 and np.random.rand() < bbox_jitter_prob:
+            bboxes = jitter_bbox(bboxes, bbox_jitter_fraction, height, width)
+
+        image_1024 = prepare_medsam_image(image_3c)
+        image_1024_tensor = (
+            torch.tensor(image_1024)
+            .float()
+            .permute(2, 0, 1)
+            .unsqueeze(0)
+            .to(torch_device)
+        )
+        box_1024 = bboxes / np.array([width, height, width, height]) * 1024
+
+        tic = time.perf_counter()
+        with torch.no_grad():
+            image_embedding = model.image_encoder(image_1024_tensor)
+        pred_mask = medsam_inference(model, image_embedding, box_1024, height, width)
+        infer_ms = (time.perf_counter() - tic) * 1000.0
+        metric_bbox = bboxes[0] if bbox_mode == "union" and len(bboxes) == 1 else bboxes
+        metrics = metrics_calculator.compute(gt_mask, pred_mask)
+        results.append(
+            InferenceResult(
+                sample=sample,
+                image=ensure_three_channels(normalize_to_uint8(image_3c)),
+                gt_mask=gt_mask,
+                pred_mask=pred_mask,
+                bbox=metric_bbox,
+                metrics=metrics,
+                infer_ms=infer_ms,
+            )
+        )
+
+    return results
 
 
 def main() -> None:

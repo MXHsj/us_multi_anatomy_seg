@@ -5,6 +5,7 @@ import csv
 import json
 import re
 import shutil
+import tempfile
 import sys
 import time
 import urllib.request
@@ -20,6 +21,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from benchmarks.eval_utils import (
+    InferenceResult,
     METRIC_FIELDNAMES,
     TargetVisualizationCollector,
     build_metric_row,
@@ -456,6 +458,103 @@ def iter_ultrasam_predictions(model: Any, dataloader: Any, records_by_image_id: 
                 for mask_idx in range(len(masks)):
                     pred_mask |= tensor_mask_to_numpy(masks[mask_idx], record["mask"].shape)
             yield record, pred_mask, infer_ms
+
+
+class _SampleListDecoder:
+    def __init__(self, samples: list[Any]):
+        self.samples = samples
+
+    def iter_samples(self, max_samples: int | None = None):
+        samples = self.samples if max_samples is None else self.samples[:max_samples]
+        yield from samples
+
+
+def run_ultrasam_on_samples(
+    samples,
+    *,
+    device: str = "cuda:0",
+    batch_size: int = 4,
+    num_workers: int = 4,
+    checkpoint: str | Path = "work_dir/UltraSam/UltraSam.pth",
+    checkpoint_url: str = DEFAULT_ULTRASAM_CHECKPOINT_URL,
+    no_auto_download_checkpoint: bool = False,
+    ultrasam_dir: str | Path | None = None,
+    ultrasam_repo: str = DEFAULT_ULTRASAM_REPO,
+    auto_clone_source: bool = False,
+    config: str | Path = DEFAULT_ULTRASAM_CONFIG,
+    box_padding: int = 0,
+    bbox_mode: str = "union",
+) -> list[InferenceResult]:
+    """Run the normal UltraSAM GT-box pipeline on already-decoded samples."""
+    sample_list = list(samples)
+    if not sample_list:
+        return []
+
+    resolved_ultrasam_dir = ensure_ultrasam_source(
+        resolve_repo_path(ultrasam_dir or default_ultrasam_dir()),
+        auto_clone=auto_clone_source,
+        repo_url=ultrasam_repo,
+    )
+    config_path = Path(config)
+    if not config_path.is_absolute():
+        config_path = resolved_ultrasam_dir / config_path
+    if not config_path.exists():
+        raise FileNotFoundError(f"UltraSAM config not found: {config_path}")
+
+    checkpoint_path = ensure_checkpoint(
+        resolve_repo_path(checkpoint),
+        auto_download=not no_auto_download_checkpoint,
+        url=checkpoint_url,
+    )
+    torch_device = resolve_torch_device(device)
+
+    with tempfile.TemporaryDirectory(prefix="ultrasam_sample_inference_") as tmp_dir:
+        coco_dir = Path(tmp_dir) / "coco_export"
+        ann_path, records, _ = export_decoder_to_coco(
+            decoder=_SampleListDecoder(sample_list),
+            max_samples=None,
+            box_padding=box_padding,
+            bbox_mode=bbox_mode,
+            export_dir=coco_dir,
+        )
+        if not records:
+            return []
+
+        model, cfg = load_ultrasam_model(
+            ultrasam_dir=resolved_ultrasam_dir,
+            config_path=config_path,
+            checkpoint_path=checkpoint_path,
+            device=torch_device,
+        )
+        dataloader = build_ultrasam_dataloader(
+            cfg=cfg,
+            coco_dir=coco_dir,
+            ann_path=ann_path,
+            batch_size=batch_size,
+            num_workers=num_workers,
+        )
+        records_by_image_id = {int(record["image_id"]): record for record in records}
+        metrics_calculator = SegmentationMetrics()
+        results: list[InferenceResult] = []
+        for record, pred_mask, infer_ms in iter_ultrasam_predictions(
+            model,
+            dataloader,
+            records_by_image_id,
+        ):
+            gt_mask = record["mask"]
+            metrics = metrics_calculator.compute(gt_mask, pred_mask)
+            results.append(
+                InferenceResult(
+                    sample=record["sample"],
+                    image=record["image"],
+                    gt_mask=gt_mask,
+                    pred_mask=pred_mask,
+                    bbox=record["bbox"],
+                    metrics=metrics,
+                    infer_ms=infer_ms,
+                )
+            )
+        return results
 
 
 def main() -> None:
