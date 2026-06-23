@@ -6,8 +6,15 @@ from pathlib import Path
 from typing import Dict, Iterator, Optional
 
 import numpy as np
-from scipy.ndimage import binary_fill_holes, distance_transform_edt
+from scipy.ndimage import (
+    binary_erosion,
+    binary_fill_holes,
+    convolve,
+    distance_transform_edt,
+)
 from skimage import io
+from skimage.draw import line
+from skimage.morphology import skeletonize
 
 try:
     from datasets.common import DecodedSample, export_samples, normalize_to_uint8, to_binary_mask
@@ -60,13 +67,205 @@ class UltraBones100kDecoder:
             "record": parts[-1],
         }
 
+    def _skeleton_endpoints(self, skeleton: np.ndarray) -> np.ndarray:
+        skel = (skeleton > 0).astype(np.uint8)
+        neighbor_count = convolve(
+            skel,
+            np.ones((3, 3), dtype=np.uint8),
+            mode="constant",
+            cval=0,
+        ) - skel
+        return np.argwhere((skel > 0) & (neighbor_count == 1))
+
+    def _farthest_endpoint_pair(
+        self,
+        endpoints: np.ndarray,
+    ) -> Optional[tuple[tuple[int, int], tuple[int, int]]]:
+        if len(endpoints) < 2:
+            return None
+        points = endpoints.astype(np.float32)
+        distances = ((points[:, None, :] - points[None, :, :]) ** 2).sum(axis=-1)
+        i, j = np.unravel_index(np.argmax(distances), distances.shape)
+        return tuple(int(v) for v in endpoints[i]), tuple(int(v) for v in endpoints[j])
+
+    def _snap_to_shadow_edge(
+        self,
+        point: tuple[int, int],
+        shape: tuple[int, int],
+        tolerance: int = 3,
+    ) -> tuple[Optional[str], tuple[int, int]]:
+        y, x = point
+        h, w = shape
+        candidates = [
+            (abs(x), "left", (y, 0)),
+            (abs(y - (h - 1)), "bottom", (h - 1, x)),
+            (abs(x - (w - 1)), "right", (y, w - 1)),
+        ]
+        distance, edge, snapped = min(candidates, key=lambda item: item[0])
+        if distance <= tolerance:
+            return edge, snapped
+        return None, point
+
+    def _draw_same_shadow_edge_segment(
+        self,
+        closed: np.ndarray,
+        edge: str,
+        p0: tuple[int, int],
+        p1: tuple[int, int],
+    ) -> None:
+        h, w = closed.shape
+        y0, x0 = p0
+        y1, x1 = p1
+        if edge == "left":
+            closed[min(y0, y1) : max(y0, y1) + 1, 0] = True
+        elif edge == "right":
+            closed[min(y0, y1) : max(y0, y1) + 1, w - 1] = True
+        elif edge == "bottom":
+            closed[h - 1, min(x0, x1) : max(x0, x1) + 1] = True
+
+    def _draw_shadow_edge_path(
+        self,
+        closed: np.ndarray,
+        edge0: str,
+        q0: tuple[int, int],
+        edge1: str,
+        q1: tuple[int, int],
+    ) -> None:
+        h, w = closed.shape
+        if edge0 == edge1:
+            self._draw_same_shadow_edge_segment(closed, edge0, q0, q1)
+            return
+
+        anchors: list[int] = []
+        for edge, (y, x) in [(edge0, q0), (edge1, q1)]:
+            if edge == "left":
+                closed[y:, 0] = True
+                anchors.append(0)
+            elif edge == "right":
+                closed[y:, w - 1] = True
+                anchors.append(w - 1)
+            elif edge == "bottom":
+                anchors.append(x)
+
+        if len(anchors) >= 2:
+            closed[h - 1, min(anchors) : max(anchors) + 1] = True
+
+    def _connect_endpoints_or_shadow_edge(
+        self,
+        closed: np.ndarray,
+        p0: tuple[int, int],
+        p1: tuple[int, int],
+        tolerance: int = 3,
+    ) -> None:
+        edge0, q0 = self._snap_to_shadow_edge(p0, closed.shape, tolerance=tolerance)
+        edge1, q1 = self._snap_to_shadow_edge(p1, closed.shape, tolerance=tolerance)
+        if edge0 is not None and edge1 is not None:
+            self._draw_shadow_edge_path(closed, edge0, q0, edge1, q1)
+            return
+
+        y0, x0 = p0
+        y1, x1 = p1
+        rr, cc = line(y0, x0, y1, x1)
+        closed[rr, cc] = True
+
+    def _close_shadow_border_contacts(
+        self,
+        mask: np.ndarray,
+        tolerance: int = 3,
+    ) -> np.ndarray:
+        closed = np.asarray(mask).astype(bool).copy()
+        h, w = closed.shape
+        ys, xs = np.where(closed)
+        if ys.size == 0:
+            return closed
+
+        contacts: list[tuple[str, tuple[int, int], tuple[int, int]]] = []
+        touches_left = xs <= tolerance
+        touches_right = xs >= w - 1 - tolerance
+        touches_bottom = ys >= h - 1 - tolerance
+
+        if touches_left.any():
+            left_ys = ys[touches_left]
+            contacts.append(("left", (int(left_ys.min()), 0), (int(left_ys.max()), 0)))
+        if touches_right.any():
+            right_ys = ys[touches_right]
+            contacts.append(("right", (int(right_ys.min()), w - 1), (int(right_ys.max()), w - 1)))
+        if touches_bottom.any():
+            bottom_xs = xs[touches_bottom]
+            contacts.append(("bottom", (h - 1, int(bottom_xs.min())), (h - 1, int(bottom_xs.max()))))
+
+        if len(contacts) == 1:
+            edge, p0, p1 = contacts[0]
+            self._draw_same_shadow_edge_segment(closed, edge, p0, p1)
+            return closed
+
+        anchors: list[int] = []
+        for edge, p0, p1 in contacts:
+            if edge == "left":
+                closed[p0[0] :, 0] = True
+                anchors.append(0)
+            elif edge == "right":
+                closed[p0[0] :, w - 1] = True
+                anchors.append(w - 1)
+            elif edge == "bottom":
+                anchors.extend([p0[1], p1[1]])
+
+        if len(anchors) >= 2:
+            closed[h - 1, min(anchors) : max(anchors) + 1] = True
+        return closed
+
+    def _touches_shadow_edge(self, mask: np.ndarray, tolerance: int = 3) -> bool:
+        ys, xs = np.where(mask > 0)
+        if ys.size == 0:
+            return False
+        h, w = mask.shape
+        return bool(
+            (xs <= tolerance).any()
+            or (xs >= w - 1 - tolerance).any()
+            or (ys >= h - 1 - tolerance).any()
+        )
+
+    def _fill_contour_mask(self, mask: np.ndarray) -> np.ndarray:
+        mask_bin = np.asarray(mask).astype(bool)
+        if not mask_bin.any():
+            return np.zeros_like(mask_bin, dtype=np.uint8)
+
+        hole_filled = binary_fill_holes(mask_bin)
+        eroded = binary_erosion(
+            hole_filled,
+            structure=np.ones((5, 5), dtype=bool),
+            iterations=1,
+        )
+
+        raw_area = int(mask_bin.sum())
+        filled_area = int(hole_filled.sum())
+        if int(eroded.sum()) >= 10 and (
+            not self._touches_shadow_edge(mask_bin)
+            or filled_area >= max(raw_area * 2, raw_area + 10)
+        ):
+            return hole_filled.astype(np.uint8)
+
+        skeleton = skeletonize(mask_bin)
+        endpoints = self._skeleton_endpoints(skeleton)
+        closed = mask_bin.copy()
+        pair = self._farthest_endpoint_pair(endpoints)
+        if pair is not None:
+            self._connect_endpoints_or_shadow_edge(closed, pair[0], pair[1])
+
+        filled = binary_fill_holes(closed)
+        if int(filled.sum()) <= raw_area + 10:
+            filled = binary_fill_holes(self._close_shadow_border_contacts(mask_bin))
+        return filled.astype(np.uint8)
+
     def _prepare_mask(self, mask) -> np.ndarray:
         mask_bin = to_binary_mask(mask)
+        if mask_bin.ndim == 3:
+            mask_bin = mask_bin.max(axis=-1)
         if self.fill_mask:
             # UltraBones100k is the one decoder where filling is intentional:
             # the source labels trace the visible bone surface, while the filled
             # region approximates the clinically meaningful acoustic shadow.
-            mask_bin = binary_fill_holes(mask_bin.astype(bool)).astype(np.uint8)
+            mask_bin = self._fill_contour_mask(mask_bin)
 
         if self.thicken_radius <= 0:
             return mask_bin
