@@ -171,6 +171,24 @@ def mask_to_coco_rle(mask: np.ndarray) -> dict[str, Any]:
     return rle
 
 
+def raw_image_path_from_sample(sample: Any) -> Path | None:
+    metadata = getattr(sample, "metadata", {}) or {}
+    for key in ("raw_image_path", "image_path", "source_image_path"):
+        value = metadata.get(key)
+        if value:
+            path = Path(str(value))
+            if path.exists():
+                return path.resolve()
+    return None
+
+
+def resolve_coco_image_path(coco_dir: Path, file_name: str) -> Path:
+    path = Path(file_name)
+    if path.is_absolute():
+        return path
+    return coco_dir / path
+
+
 def export_decoder_to_coco(
     decoder: Any,
     max_samples: int | None,
@@ -181,7 +199,7 @@ def export_decoder_to_coco(
     if export_dir.exists():
         shutil.rmtree(export_dir)
     image_dir = export_dir / "images"
-    image_dir.mkdir(parents=True, exist_ok=True)
+    export_dir.mkdir(parents=True, exist_ok=True)
 
     images: list[dict[str, Any]] = []
     annotations: list[dict[str, Any]] = []
@@ -202,9 +220,14 @@ def export_decoder_to_coco(
 
         image_id = len(images) + 1
         height, width = mask.shape[:2]
-        file_name = f"{image_id:06d}_{safe_stem(sample.sample_id)}.png"
         image_uint8 = ensure_three_channels(normalize_to_uint8(sample.image))
-        io.imsave(image_dir / file_name, image_uint8, check_contrast=False)
+        raw_image_path = raw_image_path_from_sample(sample)
+        if raw_image_path is None:
+            image_dir.mkdir(parents=True, exist_ok=True)
+            file_name = f"images/{image_id:06d}_{safe_stem(sample.sample_id)}.png"
+            io.imsave(export_dir / file_name, image_uint8, check_contrast=False)
+        else:
+            file_name = str(raw_image_path)
 
         for component_mask, bbox in zip(component_masks, bboxes):
             ann_id = len(annotations) + 1
@@ -266,8 +289,7 @@ def load_existing_coco_export_records(
     export_dir: Path,
 ) -> tuple[Path, list[dict[str, Any]], int] | None:
     ann_path = export_dir / "annotations.json"
-    image_dir = export_dir / "images"
-    if not ann_path.exists() or not image_dir.exists():
+    if not ann_path.exists():
         return None
 
     with ann_path.open("r", encoding="utf-8") as handle:
@@ -298,8 +320,12 @@ def load_existing_coco_export_records(
         if image_id > len(images):
             return None
         image_info = images[image_id - 1]
-        expected_name = f"{image_id:06d}_{safe_stem(sample.sample_id)}.png"
-        image_path = image_dir / expected_name
+        raw_image_path = raw_image_path_from_sample(sample)
+        if raw_image_path is None:
+            expected_name = f"images/{image_id:06d}_{safe_stem(sample.sample_id)}.png"
+        else:
+            expected_name = str(raw_image_path)
+        image_path = resolve_coco_image_path(export_dir, expected_name)
         if image_info.get("id") != image_id or image_info.get("file_name") != expected_name:
             return None
         if not image_path.exists():
@@ -418,7 +444,7 @@ def build_ultrasam_dataloader(
         cfg.test_dataloader.prefetch_factor = 4
     cfg.test_dataloader.dataset.data_root = str(coco_dir)
     cfg.test_dataloader.dataset.ann_file = ann_path.name
-    cfg.test_dataloader.dataset.data_prefix = {"img": "images"}
+    cfg.test_dataloader.dataset.data_prefix = {"img": ""}
     cfg.test_dataloader.dataset.test_mode = True
     if "test_evaluator" in cfg and hasattr(cfg.test_evaluator, "ann_file"):
         cfg.test_evaluator.ann_file = str(ann_path)
