@@ -98,6 +98,14 @@ DATASET_REGISTRY: dict[str, DatasetSpec] = {
         decoder_class="datasets.nerve_UNS:UNSDecoder",
         hf_repo_path="zips/Nerve/UNS.zip",
     ),
+    "ussc": DatasetSpec(
+        key="ussc",
+        display_name="Ultrasound Spinal Cord",
+        anatomy="Spinal Cord",
+        default_root="datasets/USSC",
+        decoder_class="datasets.spinal_cord_USSC:SpinalCordUSDecoder",
+        hf_repo_path="zips/SpinalCord/USSC.zip",
+    ),
 }
 
 

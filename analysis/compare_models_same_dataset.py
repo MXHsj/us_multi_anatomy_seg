@@ -43,6 +43,7 @@ DATASET_LABELS = {
     "tnsc2020": "TNSC2020",
     "ultrabones100k": "UltraBones",
     "uns": "UNS",
+    "ussc": "USSC",
 }
 
 

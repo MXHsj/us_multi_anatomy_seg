@@ -56,6 +56,9 @@ def _decoder_kwargs(dataset_name: str, args: argparse.Namespace) -> dict[str, An
             "labels": labels,
             "subjects": subjects or None,
         }
+    if dataset_name == "ussc":
+        labels = [label.strip() for label in args.ussc_labels.split(",") if label.strip()]
+        return {"labels": labels or None}
     return {}
 
 
@@ -172,4 +175,14 @@ def add_dataset_args(parser: argparse.ArgumentParser, include_camus: bool = True
         type=str,
         default="",
         help="Optional comma-separated RobLUS subject filter, e.g. AP,BM.",
+    )
+    parser.add_argument(
+        "--ussc-labels",
+        type=str,
+        default="",
+        help=(
+            "Comma-separated USSC semantic labels. Defaults to all non-background "
+            "classes: dura,csf,pia,spinal_cord,dorsal_space,hematoma,"
+            "dura_pia_complex,dura_ventral_complex,ventral_space."
+        ),
     )

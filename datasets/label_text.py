@@ -47,6 +47,17 @@ LABEL_TEXT: Dict[str, Union[str, Dict]] = {
         "pleural_line": "pleural line",
         "rib_shadow": "rib shadow",
     },
+    "ussc": {
+        "dura": "spinal dura",
+        "csf": "cerebrospinal fluid",
+        "pia": "spinal pia",
+        "spinal_cord": "spinal cord",
+        "dorsal_space": "dorsal space",
+        "hematoma": "hematoma",
+        "dura_pia_complex": "dura pia complex",
+        "dura_ventral_complex": "dura ventral complex",
+        "ventral_space": "ventral space",
+    },
 
     # --- Selectable-label datasets: one concept per option ---
     "oku": {
