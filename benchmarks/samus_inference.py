@@ -485,7 +485,7 @@ def run_samus_on_samples(
     no_auto_download_checkpoint: bool = False,
     checkpoint_file_id: str = DEFAULT_SAMUS_CHECKPOINT_FILE_ID,
     box_padding: int = 0,
-    bbox_mode: str = "union",
+    bbox_mode: str = "individual",
     encoder_input_size: int = 256,
     low_image_size: int = 128,
     vit_name: str = "vit_b",
@@ -627,10 +627,10 @@ def main() -> None:
     parser.add_argument(
         "--bbox-mode",
         choices=("union", "individual"),
-        default="union",
+        default="individual",
         help=(
-            "Use one bbox around the full target mask (union, default) or one bbox "
-            "per connected component larger than 15 pixels (individual). SAMUS "
+            "Use one bbox around the full target mask (union) or one bbox "
+            "per connected component larger than 15 pixels (individual, default). SAMUS "
             "is point-prompted here, so this affects logging and visualization."
         ),
     )

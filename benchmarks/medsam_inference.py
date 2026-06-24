@@ -280,7 +280,7 @@ def run_medsam_on_samples(
     checkpoint_revision: str = "main",
     no_auto_download_checkpoint: bool = False,
     box_padding: int = 0,
-    bbox_mode: str = "union",
+    bbox_mode: str = "individual",
     bbox_jitter_prob: float = 0.0,
     bbox_jitter_fraction: float = 0.2,
 ) -> list[InferenceResult]:
@@ -389,10 +389,10 @@ def main() -> None:
     parser.add_argument(
         "--bbox-mode",
         choices=("union", "individual"),
-        default="union",
+        default="individual",
         help=(
-            "Use one bbox around the full target mask (union, default) or one bbox "
-            "per connected component larger than 15 pixels (individual)."
+            "Use one bbox around the full target mask (union) or one bbox "
+            "per connected component larger than 15 pixels (individual, default)."
         ),
     )
     parser.add_argument(

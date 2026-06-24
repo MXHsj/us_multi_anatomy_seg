@@ -171,13 +171,19 @@ def mask_to_coco_rle(mask: np.ndarray) -> dict[str, Any]:
     return rle
 
 
+# Extensions mmcv.imread (the UltraSAM LoadImageFromFile pipeline) can decode.
+# NIfTI volumes (e.g. CAMUS .nii/.nii.gz) are not loadable and must be exported
+# as decoded PNGs instead of referenced by their raw path.
+_MMCV_LOADABLE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+
+
 def raw_image_path_from_sample(sample: Any) -> Path | None:
     metadata = getattr(sample, "metadata", {}) or {}
     for key in ("raw_image_path", "image_path", "source_image_path"):
         value = metadata.get(key)
         if value:
             path = Path(str(value))
-            if path.exists():
+            if path.exists() and path.suffix.lower() in _MMCV_LOADABLE_SUFFIXES:
                 return path.resolve()
     return None
 
@@ -509,7 +515,7 @@ def run_ultrasam_on_samples(
     auto_clone_source: bool = False,
     config: str | Path = DEFAULT_ULTRASAM_CONFIG,
     box_padding: int = 0,
-    bbox_mode: str = "union",
+    bbox_mode: str = "individual",
 ) -> list[InferenceResult]:
     """Run the normal UltraSAM GT-box pipeline on already-decoded samples."""
     sample_list = list(samples)
@@ -633,10 +639,10 @@ def main() -> None:
     parser.add_argument(
         "--bbox-mode",
         choices=("union", "individual"),
-        default="union",
+        default="individual",
         help=(
-            "Use one bbox around the full target mask (union, default) or one bbox "
-            "per connected component larger than 15 pixels (individual)."
+            "Use one bbox around the full target mask (union) or one bbox "
+            "per connected component larger than 15 pixels (individual, default)."
         ),
     )
     # batch_size=4 fits 1024x1024 SAM-encoder activations in ~10GB and is the
