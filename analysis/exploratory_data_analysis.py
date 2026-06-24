@@ -24,6 +24,7 @@ from datasets.loader import add_dataset_args, build_decoder_from_args
 
 
 GROUP_KEYS = (
+    "split",
     "category",
     "pathology",
     "birads",
@@ -158,10 +159,23 @@ def sample_row(dataset_key: str, sample: Any) -> dict[str, Any]:
 def collect_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     decoder = build_decoder_from_args(args)
     dataset_key = args.dataset.lower()
-    return [
-        sample_row(dataset_key, sample)
-        for sample in decoder.iter_samples(max_samples=args.max_samples)
-    ]
+    total: int | None = None
+    if hasattr(decoder, "count_samples"):
+        try:
+            total = decoder.count_samples(max_samples=args.max_samples)
+        except Exception:
+            total = None
+
+    rows: list[dict[str, Any]] = []
+    for idx, sample in enumerate(decoder.iter_samples(max_samples=args.max_samples), start=1):
+        rows.append(sample_row(dataset_key, sample))
+        if idx == 1 or idx % 1000 == 0 or (total is not None and idx == total):
+            if total is None:
+                print(f"Decoded {idx} samples...", flush=True)
+            else:
+                pct = 100.0 * idx / max(total, 1)
+                print(f"Decoded {idx}/{total} samples ({pct:.1f}%)...", flush=True)
+    return rows
 
 
 def finite_values(rows: list[dict[str, Any]], column: str) -> list[float]:
