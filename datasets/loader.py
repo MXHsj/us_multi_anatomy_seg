@@ -58,7 +58,8 @@ def _decoder_kwargs(dataset_name: str, args: argparse.Namespace) -> dict[str, An
         }
     if dataset_name == "ussc":
         labels = [label.strip() for label in args.ussc_labels.split(",") if label.strip()]
-        return {"labels": labels or None}
+        splits = [split.strip() for split in args.ussc_splits.split(",") if split.strip()]
+        return {"labels": labels or None, "splits": splits or None}
     return {}
 
 
@@ -185,4 +186,10 @@ def add_dataset_args(parser: argparse.ArgumentParser, include_camus: bool = True
             "classes: dura,csf,pia,spinal_cord,dorsal_space,hematoma,"
             "dura_pia_complex,dura_ventral_complex,ventral_space."
         ),
+    )
+    parser.add_argument(
+        "--ussc-splits",
+        type=str,
+        default="",
+        help="Comma-separated USSC splits to decode (train,val,test). Defaults to all splits.",
     )

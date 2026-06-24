@@ -112,11 +112,32 @@ def parse_csv_labels(value: str) -> list[str]:
     return [token.strip() for token in value.split(",") if token.strip()]
 
 
+def parse_csv_splits(value: str) -> list[str]:
+    return [token.strip() for token in value.split(",") if token.strip()]
+
+
+def _parse_splits(splits: Optional[list[str] | tuple[str, ...]]) -> tuple[str, ...]:
+    if not splits:
+        return SPLITS
+
+    parsed: list[str] = []
+    for value in splits:
+        split = str(value).strip().lower()
+        if not split:
+            continue
+        if split not in SPLITS:
+            raise ValueError(f"Unknown USSC split '{value}'. Expected one of: {SPLITS}.")
+        if split not in parsed:
+            parsed.append(split)
+    return tuple(parsed) if parsed else SPLITS
+
+
 class SpinalCordUSDecoder:
     def __init__(
         self,
         root: str | Path = "datasets/USSC",
         labels: Optional[list[str] | tuple[str, ...]] = None,
+        splits: Optional[list[str] | tuple[str, ...]] = None,
     ):
         root_path = Path(root)
         nested = root_path / "SegmentationDataset"
@@ -124,13 +145,14 @@ class SpinalCordUSDecoder:
             root_path = nested
         self.root = root_path
         self.labels = _parse_label_tokens(labels)
+        self.splits = _parse_splits(splits)
 
         if not self.root.exists():
             raise FileNotFoundError(f"USSC root '{self.root}' not found.")
 
         missing = [
             folder
-            for split in SPLITS
+            for split in self.splits
             for folder in (self.root / f"{split}_images", self.root / f"{split}_masks")
             if not folder.is_dir()
         ]
@@ -139,7 +161,7 @@ class SpinalCordUSDecoder:
 
     def _iter_sample_infos(self, max_sources: Optional[int] = None) -> Iterator[USSCSampleInfo]:
         count = 0
-        for split in SPLITS:
+        for split in self.splits:
             image_dir = self.root / f"{split}_images"
             mask_dir = self.root / f"{split}_masks"
             for image_path in sorted(image_dir.glob("*.png"), key=lambda path: path.name):
@@ -176,9 +198,14 @@ class SpinalCordUSDecoder:
             )
         return np.asarray(mask[..., :3], dtype=np.uint8)
 
-    def _load_target(self, info: USSCSampleInfo, label: USSCLabel, target_index: int) -> DecodedSample:
-        image = normalize_to_uint8(io.imread(info.image_path))
-        mask_rgb = self._read_mask_rgb(info.mask_path)
+    def _sample_from_arrays(
+        self,
+        info: USSCSampleInfo,
+        label: USSCLabel,
+        target_index: int,
+        image: np.ndarray,
+        mask_rgb: np.ndarray,
+    ) -> DecodedSample:
         target_color = np.array(label.color, dtype=np.uint8)
         target_mask = np.all(mask_rgb == target_color, axis=-1).astype(np.uint8)
 
@@ -210,6 +237,17 @@ class SpinalCordUSDecoder:
             image=image,
             mask=target_mask,
             metadata=target_metadata,
+        )
+
+    def _load_target(self, info: USSCSampleInfo, label: USSCLabel, target_index: int) -> DecodedSample:
+        image = normalize_to_uint8(io.imread(info.image_path))
+        mask_rgb = self._read_mask_rgb(info.mask_path)
+        return self._sample_from_arrays(
+            info=info,
+            label=label,
+            target_index=target_index,
+            image=image,
+            mask_rgb=mask_rgb,
         )
 
     def load_sample(self, sample_id: str) -> DecodedSample:
@@ -244,8 +282,16 @@ class SpinalCordUSDecoder:
 
         target_count = 0
         for source_index, info in enumerate(self._iter_sample_infos()):
+            image = normalize_to_uint8(io.imread(info.image_path))
+            mask_rgb = self._read_mask_rgb(info.mask_path)
             for target_index, label in enumerate(self.labels):
-                sample = self._load_target(info, label=label, target_index=target_index)
+                sample = self._sample_from_arrays(
+                    info=info,
+                    label=label,
+                    target_index=target_index,
+                    image=image,
+                    mask_rgb=mask_rgb,
+                )
                 sample.metadata["source_sample_index"] = source_index
                 yield sample
 
@@ -268,6 +314,12 @@ if __name__ == "__main__":
         default="",
         help="Comma-separated USSC labels. Defaults to all non-background classes.",
     )
+    parser.add_argument(
+        "--splits",
+        type=str,
+        default="",
+        help="Comma-separated USSC splits to decode. Defaults to train,val,test.",
+    )
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--export-dir", type=str, default="")
     args = parser.parse_args()
@@ -275,6 +327,7 @@ if __name__ == "__main__":
     decoder = SpinalCordUSDecoder(
         root=args.root,
         labels=parse_csv_labels(args.labels),
+        splits=parse_csv_splits(args.splits),
     )
 
     if args.export_dir:
