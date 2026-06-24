@@ -88,6 +88,7 @@ Available Hugging Face zips scanned from the dataset repo:
 | Liver | AULID | `zips/Liver/AULID.zip` | `aulid` |
 | Lung | RobLUS | `zips/Lung/RobLUS.zip` | `roblus` |
 | Nerve | UNS | `zips/Nerve/UNS.zip` | `uns` |
+| Spinal Cord | Ultrasound Spinal Cord | `zips/SpinalCord/USSC.zip` | `ussc` |
 | Thyroid | TNSC2020 | `zips/Thyroid/TNSC2020.zip` | `tnsc2020` |
 
 ### Dataset Structures
@@ -106,6 +107,7 @@ Each decoder normalizes its source dataset into the shared `DecodedSample` schem
 | `aulid` | `datasets/AULID` | Category folders `Benign/`, `Malignant/`, `Normal/`, each with `image/*.jpg` and `segmentation/<label>/*.json` polygon masks. | One liver image with selected JSON polygon label; default label is `mass`. |
 | `uns` | `datasets/UNS` | `train/*.tif` images paired with same-stem `*_mask.tif`. | One nerve image/mask pair per training TIFF. |
 | `roblus` | `datasets/RobLUS` | Cleaned category folders `AP/`, `BM/`, `CP/`, `SG/`, and `XM/`; ultrasound frames are `US_*.jpg`, with paired `mask/pleural_line/mask_*.png` and `mask/rib_shadow/mask_*.png`. Unused `rib` and `cartilage` label folders are removed. | Class-specific lung benchmark. The current default target is pleural-line segmentation only; rib-shadow masks remain available but are not part of the default benchmark. Cleaned local data has 615 annotated frames plus 149 empty-mask negative controls. |
+| `ussc` | `datasets/USSC` | Upstream `SegmentationDataset.zip`, either with a nested `SegmentationDataset/` folder or direct split folders. `train_images/`, `val_images/`, and `test_images/` PNGs pair with same-name RGB semantic masks in `train_masks/`, `val_masks/`, and `test_masks/`. | CAMUS-style multi-class benchmark: one binary target per selected semantic class per source image. Default `--ussc-labels` uses all non-background labels: dura, CSF, pia, spinal cord, dorsal space, hematoma, dura/pia complex, dura/ventral complex, and ventral space. Source: https://github.com/avishakumar21/ultrasound-spinal-cord-dataset |
 
 ## Project Structure
 
@@ -120,6 +122,7 @@ us_multi_anatomy_seg/
 |   |-- heart_CAMUS.py             # CAMUS raw-data decoder
 |   |-- kidney_OKU.py              # OKU raw-data decoder
 |   |-- lung_RobLUS.py             # RobLUS cleaned lung decoder
+|   |-- spinal_cord_USSC.py        # USSC semantic spinal cord decoder
 |   `-- <dataset cache dirs>/      # ignored local materializations
 |-- benchmarks/
 |   |-- medsam_inference.py        # GT-box prompted MedSAM benchmark engine
@@ -214,7 +217,7 @@ per class and scored independently; empty-GT frames are skipped, matching the bo
 
 ### Dataset-Specific Options
 
-- `--dataset`: any key from `python -m datasets.registry`, such as `tnsc2020`, `blusg`, `busbra`, `busi`, `oku`, `aulid`, `roblus`, `uns`, or `ultrabones100k`.
+- `--dataset`: any key from `python -m datasets.registry`, such as `tnsc2020`, `blusg`, `busbra`, `busi`, `oku`, `aulid`, `roblus`, `uns`, `ussc`, or `ultrabones100k`.
 - `--no-auto-download`: require an existing local dataset cache.
 - `--hf-revision`: pin a Hugging Face dataset revision for reproducibility.
 - `--oku-anatomy Capsule`: choose OKU annotation anatomy.
@@ -224,6 +227,7 @@ per class and scored independently; empty-GT frames are skipped, matching the bo
 - `--busi-categories benign,malignant`: select BUSI categories to decode; default excludes `normal` (empty masks).
 - `--roblus-labels pleural_line`: choose RobLUS labels to merge into the binary lung mask. The default is `pleural_line`; avoid merged class runs for benchmark reporting.
 - `--roblus-subjects AP,BM`: optionally restrict RobLUS decoding to selected subjects.
+- `--ussc-labels spinal_cord,hematoma`: choose USSC semantic classes to decode as separate binary targets. The default is all non-background classes.
 - `--box-padding 10`: used by the UltraBones100k wrappers to give the GT box prompt context around the filled bone-shadow mask.
 
 Outputs:
@@ -259,6 +263,7 @@ The wrapper scripts under `benchmarks/test_*_gt_bbox_*.py` are the current repro
 | `test_medsam_gt_bbox_aulid.py` | MedSAM | `aulid` | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_aulid` |
 | `test_medsam_gt_bbox_uns.py` | MedSAM | `uns` | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_uns` |
 | `test_medsam_gt_bbox_roblus.py` | MedSAM | `roblus` (`pleural_line`) | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_roblus` |
+| `test_medsam_gt_bbox_ussc.py` | MedSAM | `ussc` (all non-background classes) | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_ussc` |
 | `test_samus_gt_bbox_tnsc2020.py` | SAMUS | `tnsc2020` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_tnsc2020` |
 | `test_samus_gt_bbox_blusg.py` | SAMUS | `blusg` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_blusg` |
 | `test_samus_gt_bbox_busbra.py` | SAMUS | `busbra` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_busbra` |
@@ -269,6 +274,7 @@ The wrapper scripts under `benchmarks/test_*_gt_bbox_*.py` are the current repro
 | `test_samus_gt_bbox_aulid.py` | SAMUS | `aulid` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_aulid` |
 | `test_samus_gt_bbox_uns.py` | SAMUS | `uns` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_uns` |
 | `test_samus_gt_bbox_roblus.py` | SAMUS | `roblus` (`pleural_line`) | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_roblus` |
+| `test_samus_gt_bbox_ussc.py` | SAMUS | `ussc` (all non-background classes) | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_ussc` |
 | `test_ultrasam_gt_bbox_tnsc2020.py` | UltraSAM | `tnsc2020` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_tnsc2020` |
 | `test_ultrasam_gt_bbox_blusg.py` | UltraSAM | `blusg` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_blusg` |
 | `test_ultrasam_gt_bbox_busbra.py` | UltraSAM | `busbra` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_busbra` |
@@ -279,8 +285,9 @@ The wrapper scripts under `benchmarks/test_*_gt_bbox_*.py` are the current repro
 | `test_ultrasam_gt_bbox_aulid.py` | UltraSAM | `aulid` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_aulid` |
 | `test_ultrasam_gt_bbox_uns.py` | UltraSAM | `uns` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_uns` |
 | `test_ultrasam_gt_bbox_roblus.py` | UltraSAM | `roblus` (`pleural_line`) | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_roblus` |
+| `test_ultrasam_gt_bbox_ussc.py` | UltraSAM | `ussc` (all non-background classes) | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_ussc` |
 
-Shared wrapper defaults: GT masks are converted to bounding-box prompts; MedSAM GT wrappers disable bbox jitter with `--bbox-jitter-prob 0.0`; MedSAM, SAMUS, and UltraSAM GT wrappers use `--max-samples all` for full decoded-dataset default runs. Pass a positive integer, such as `--max-samples 100`, to run a capped smoke test with the same single parameter. SAMUS and UltraSAM wrappers request all visualizations; MedSAM wrappers save 20. UltraBones100k wrappers use `--box-padding 10`; other datasets use `0`. Dataset-specific options include `--oku-anatomy Capsule`, `--aulid-label mass`, `--roblus-labels pleural_line`, `--camus-labels 1,3`, `--include-half-sequence`, `--busbra-pathology`, `--busbra-birads`, and `--busi-categories`. RobLUS is benchmarked class-specifically; merged pleural-line/rib-shadow runs are avoided because a single combined bbox is not a valid prompt protocol for separate anatomies/instances. RobLUS negative-control samples have empty masks and are skipped by the current GT-box engines because no bounding box can be generated.
+Shared wrapper defaults: GT masks are converted to bounding-box prompts; MedSAM GT wrappers disable bbox jitter with `--bbox-jitter-prob 0.0`; MedSAM, SAMUS, and UltraSAM GT wrappers use `--max-samples all` for full decoded-dataset default runs. Pass a positive integer, such as `--max-samples 100`, to run a capped smoke test with the same single parameter. SAMUS and UltraSAM wrappers request all visualizations; MedSAM wrappers save 20. UltraBones100k wrappers use `--box-padding 10`; other datasets use `0`. Dataset-specific options include `--oku-anatomy Capsule`, `--aulid-label mass`, `--roblus-labels pleural_line`, `--ussc-labels spinal_cord,hematoma`, `--camus-labels 1,3`, `--include-half-sequence`, `--busbra-pathology`, `--busbra-birads`, and `--busi-categories`. RobLUS is benchmarked class-specifically; merged pleural-line/rib-shadow runs are avoided because a single combined bbox is not a valid prompt protocol for separate anatomies/instances. RobLUS negative-control samples have empty masks and are skipped by the current GT-box engines because no bounding box can be generated.
 
 When rerunning into an existing output directory, old visualization PNGs are not automatically deleted. Remove or move the existing `visualizations/` folder first if you need the qualitative sample set to reflect only the latest run.
 
