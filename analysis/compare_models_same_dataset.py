@@ -193,6 +193,9 @@ def compare_model_set(
     metrics: tuple[str, ...],
 ) -> list[dict[str, Any]]:
     discovered = discover_results(results_dir, protocol)
+    # Include any dataset that at least one selected model has results for. Models
+    # missing a dataset are simply left out of that dataset's row (no bar plotted),
+    # rather than dropping the whole dataset.
     candidate_datasets = sorted(
         {
             dataset
@@ -200,19 +203,24 @@ def compare_model_set(
             if result_model in models
         }
     )
-    datasets = [
-        dataset
-        for dataset in candidate_datasets
-        if all((model, dataset) in discovered for model in models)
-    ]
 
     rows: list[dict[str, Any]] = []
-    for dataset in datasets:
+    nan = float("nan")
+    baseline = models[0]
+    for dataset in candidate_datasets:
         model_metrics = {
             model: read_metrics(discovered[(model, dataset)], metrics)
             for model in models
+            if (model, dataset) in discovered
         }
-        shared_ids = sorted(set.intersection(*(set(values) for values in model_metrics.values())))
+        model_metrics = {model: values for model, values in model_metrics.items() if values}
+        present_models = [model for model in models if model in model_metrics]
+        if not present_models:
+            continue
+        # Match samples across the models that are present for this dataset.
+        shared_ids = sorted(
+            set.intersection(*(set(model_metrics[model]) for model in present_models))
+        )
         if not shared_ids:
             continue
 
@@ -221,26 +229,32 @@ def compare_model_set(
         for metric in metrics:
             values_by_metric[metric] = {}
             for model in models:
-                values = [
-                    model_metrics[model][sample_id][metric]
-                    for sample_id in shared_ids
-                ]
+                if model in model_metrics:
+                    values = [
+                        model_metrics[model][sample_id][metric]
+                        for sample_id in shared_ids
+                    ]
+                    mean, std = mean_std(values)
+                else:
+                    values = []
+                    mean, std = nan, nan
                 values_by_metric[metric][model] = values
-                mean, std = mean_std(values)
                 row[f"{model}_{metric}_mean"] = mean
                 row[f"{model}_{metric}_std"] = std
 
-            baseline = models[0]
             baseline_values = values_by_metric[metric][baseline]
             for model in models[1:]:
-                deltas = [
-                    value - baseline_value
-                    for baseline_value, value in zip(
-                        baseline_values,
-                        values_by_metric[metric][model],
-                    )
-                ]
-                delta_mean, delta_std = mean_std(deltas)
+                if baseline in model_metrics and model in model_metrics:
+                    deltas = [
+                        value - baseline_value
+                        for baseline_value, value in zip(
+                            baseline_values,
+                            values_by_metric[metric][model],
+                        )
+                    ]
+                    delta_mean, delta_std = mean_std(deltas)
+                else:
+                    delta_mean, delta_std = nan, nan
                 row[f"{model}_minus_{baseline}_{metric}_mean"] = delta_mean
                 row[f"{model}_minus_{baseline}_{metric}_std"] = delta_std
 
@@ -428,14 +442,21 @@ def plot_multi_model_rows(
 
     for axis, metric in zip(axes_flat, metrics):
         for model in models:
-            means = [row[f"{model}_{metric}_mean"] for row in rows]
-            stds = [row[f"{model}_{metric}_std"] for row in rows]
+            means = np.array(
+                [row.get(f"{model}_{metric}_mean", np.nan) for row in rows], dtype=float
+            )
+            stds = np.array(
+                [row.get(f"{model}_{metric}_std", np.nan) for row in rows], dtype=float
+            )
             color = MODEL_COLORS.get(model, "#666666")
             model_positions = x_positions + offsets[model]
+            # Only draw bars/error bars where the model actually has results;
+            # missing models leave an empty slot rather than a zero-height bar.
+            finite = np.isfinite(means)
 
             axis.bar(
-                model_positions,
-                means,
+                model_positions[finite],
+                means[finite],
                 width=bar_width,
                 color=color,
                 alpha=0.32,
@@ -445,9 +466,9 @@ def plot_multi_model_rows(
                 label=display_model_label(model),
             )
             axis.errorbar(
-                model_positions,
-                means,
-                yerr=stds,
+                model_positions[finite],
+                means[finite],
+                yerr=stds[finite],
                 fmt="none",
                 ecolor="#222222",
                 elinewidth=1.0,
