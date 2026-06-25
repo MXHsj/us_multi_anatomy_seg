@@ -36,6 +36,7 @@ LABEL_TEXT: Dict[str, Union[str, Dict]] = {
     "busi": "breast lesion",          # covers benign + malignant
     "ultrabones100k": "bone surface",
     "uns": "brachial plexus",         # brachial plexus nerve
+    "umud": "muscle aponeurosis",
 
     # --- Multi-class dataset: label id -> concept ---
     "camus": {

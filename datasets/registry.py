@@ -106,6 +106,14 @@ DATASET_REGISTRY: dict[str, DatasetSpec] = {
         decoder_class="datasets.spinal_cord_USSC:SpinalCordUSDecoder",
         hf_repo_path="zips/SpinalCord/USSC.zip",
     ),
+    "umud": DatasetSpec(
+        key="umud",
+        display_name="UMUD Aponeurosis",
+        anatomy="Muscle",
+        default_root="datasets/UMUD",
+        decoder_class="datasets.muscle_UMUD:UMUDAponeurosisDecoder",
+        hf_repo_path="zips/Muscle/UMUD.zip",
+    ),
 }
 
 
