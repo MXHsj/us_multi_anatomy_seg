@@ -17,6 +17,11 @@ from benchmarks.metrics import METRIC_NAMES
 
 
 DEFAULT_METRICS = tuple(METRIC_NAMES)
+# Derived metrics computed per-sample from the raw columns rather than read
+# directly. hd95_norm rescales HD95 by each image's diagonal (as a percentage)
+# so boundary error is comparable across datasets of different resolutions.
+DERIVED_METRICS = ("hd95_norm", "assd_norm")
+ALLOWED_METRICS = set(DEFAULT_METRICS) | set(DERIVED_METRICS)
 MODEL_COLORS = {
     "medsam": "#4C72B0",
     "samus": "#55A868",
@@ -70,15 +75,31 @@ def parse_metrics_arg(value: str) -> tuple[str, ...]:
     if value.strip().lower() == "all":
         return DEFAULT_METRICS
     metrics = tuple(metric.strip() for metric in value.split(",") if metric.strip())
-    unknown = sorted(set(metrics) - set(DEFAULT_METRICS))
+    unknown = sorted(set(metrics) - ALLOWED_METRICS)
     if unknown:
         raise SystemExit(
             f"Unsupported metric(s): {', '.join(unknown)}. "
-            f"Expected one of: {', '.join(DEFAULT_METRICS)}"
+            f"Expected one of: {', '.join(sorted(ALLOWED_METRICS))}"
         )
     if not metrics:
         raise SystemExit("At least one metric must be selected.")
     return metrics
+
+
+def _image_diagonal(row: dict[str, str]) -> float:
+    return math.hypot(float(row["height"]), float(row["width"]))
+
+
+def compute_metric_value(row: dict[str, str], metric: str) -> float:
+    """Read a metric from a per_sample_metrics row, computing resolution-
+    normalized variants (as % of the image diagonal) on the fly."""
+    if metric == "hd95_norm":
+        diagonal = _image_diagonal(row)
+        return float(row["hd95"]) / diagonal if diagonal > 0 else float("nan")
+    if metric == "assd_norm":
+        diagonal = _image_diagonal(row)
+        return float(row["assd"]) / diagonal if diagonal > 0 else float("nan")
+    return float(row[metric])
 
 
 def normalize_model_name(value: str) -> str:
@@ -108,8 +129,8 @@ def read_metrics(csv_path: Path, metrics: tuple[str, ...]) -> dict[str, dict[str
             if not sample_id:
                 continue
             try:
-                values = {metric: float(row[metric]) for metric in metrics}
-            except (KeyError, TypeError, ValueError):
+                values = {metric: compute_metric_value(row, metric) for metric in metrics}
+            except (KeyError, TypeError, ValueError, ZeroDivisionError):
                 continue
             if all(math.isfinite(value) for value in values.values()):
                 rows[sample_id] = values
@@ -122,6 +143,18 @@ def mean_std(values: list[float]) -> tuple[float, float]:
     mean = statistics.fmean(values)
     std = statistics.pstdev(values) if len(values) > 1 else 0.0
     return mean, std
+
+
+# Datasets pinned to the end of the plot, in this exact order. Everything else
+# stays alphabetical ahead of them.
+DATASET_TAIL_ORDER = ("ultrabones100k", "umud", "ussc", "roblus")
+
+
+def order_datasets(datasets: set[str] | list[str]) -> list[str]:
+    datasets = set(datasets)
+    head = sorted(d for d in datasets if d not in DATASET_TAIL_ORDER)
+    tail = [d for d in DATASET_TAIL_ORDER if d in datasets]
+    return head + tail
 
 
 def discover_results(results_dir: Path, protocol: str) -> dict[tuple[str, str], Path]:
@@ -145,10 +178,12 @@ def compare_models(
     metrics: tuple[str, ...],
 ) -> list[dict[str, Any]]:
     discovered = discover_results(results_dir, protocol)
-    datasets = sorted(
-        dataset
-        for result_model, dataset in discovered
-        if result_model == model_a and (model_b, dataset) in discovered
+    datasets = order_datasets(
+        {
+            dataset
+            for result_model, dataset in discovered
+            if result_model == model_a and (model_b, dataset) in discovered
+        }
     )
 
     rows: list[dict[str, Any]] = []
@@ -197,7 +232,7 @@ def compare_model_set(
     # Include any dataset that at least one selected model has results for. Models
     # missing a dataset are simply left out of that dataset's row (no bar plotted),
     # rather than dropping the whole dataset.
-    candidate_datasets = sorted(
+    candidate_datasets = order_datasets(
         {
             dataset
             for result_model, dataset in discovered
@@ -356,7 +391,9 @@ def metric_label(metric: str) -> str:
         "specificity": "Specificity",
         "balanced_accuracy": "Balanced accuracy",
         "hd95": "HD95 (px)",
+        "hd95_norm": "Normalized HD95",
         "assd": "ASSD (px)",
+        "assd_norm": "Normalized ASSD",
         "relative_area_error": "Relative area error",
     }
     return labels.get(metric, metric)
@@ -497,6 +534,8 @@ def plot_multi_model_rows(
             axis.axhline(0.0, color="#555555", linewidth=0.8, linestyle="--", zorder=1)
         if metric in {"dice", "iou", "precision", "recall", "specificity", "balanced_accuracy"}:
             axis.set_ylim(0.0, 1.02)
+        if metric in {"hd95_norm", "assd_norm"}:
+            axis.set_ylim(0.0, 1.0)
         axis.set_title(metric_label(metric))
         axis.set_xticks(x_positions)
         axis.set_xticklabels(labels, rotation=35, ha="right")
@@ -562,7 +601,8 @@ def main() -> None:
         default="all",
         help=(
             "Comma-separated metrics to compare/plot, or 'all'. "
-            f"Available: {', '.join(DEFAULT_METRICS)}."
+            f"Available: {', '.join(DEFAULT_METRICS)}. "
+            f"Resolution-normalized (% of image diagonal): {', '.join(DERIVED_METRICS)}."
         ),
     )
     parser.add_argument(
