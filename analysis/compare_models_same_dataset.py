@@ -480,21 +480,35 @@ def plot_multi_model_rows(
 
     for axis, metric in zip(axes_flat, metrics):
         for model in models:
-            means = np.array(
-                [row.get(f"{model}_{metric}_mean", np.nan) for row in rows], dtype=float
-            )
-            stds = np.array(
-                [row.get(f"{model}_{metric}_std", np.nan) for row in rows], dtype=float
-            )
+            # Bars show the median with P25-P75 (IQR) whiskers. These bounded,
+            # skewed metrics are poorly summarized by mean +/- SD (whiskers run
+            # past [0, 1]); median + IQR reflects the real spread.
+            medians = []
+            lower_err = []
+            upper_err = []
+            for row in rows:
+                values = row.get("_values_by_metric", {}).get(metric, {}).get(model, [])
+                if values:
+                    median = float(np.median(values))
+                    p25, p75 = np.percentile(values, [25, 75])
+                    medians.append(median)
+                    lower_err.append(max(median - p25, 0.0))
+                    upper_err.append(max(p75 - median, 0.0))
+                else:
+                    medians.append(np.nan)
+                    lower_err.append(np.nan)
+                    upper_err.append(np.nan)
+            medians = np.array(medians, dtype=float)
+            yerr = np.vstack([np.array(lower_err), np.array(upper_err)])
             color = MODEL_COLORS.get(model, "#666666")
             model_positions = x_positions + offsets[model]
             # Only draw bars/error bars where the model actually has results;
             # missing models leave an empty slot rather than a zero-height bar.
-            finite = np.isfinite(means)
+            finite = np.isfinite(medians)
 
             axis.bar(
                 model_positions[finite],
-                means[finite],
+                medians[finite],
                 width=bar_width,
                 color=color,
                 alpha=0.32,
@@ -505,8 +519,8 @@ def plot_multi_model_rows(
             )
             axis.errorbar(
                 model_positions[finite],
-                means[finite],
-                yerr=stds[finite],
+                medians[finite],
+                yerr=yerr[:, finite],
                 fmt="none",
                 ecolor="#222222",
                 elinewidth=1.0,
