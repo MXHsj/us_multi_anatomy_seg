@@ -30,6 +30,7 @@ DATASET_LABELS = {
     "busbra": "BUS-BRA",
     "busi": "BUSI",
     "camus": "CAMUS",
+    "kus": "KUS",
     "oku": "OKU",
     "roblus": "RobLUS",
     "tnsc2020": "TNSC2020",

@@ -1,3 +1,5 @@
 .cache/
 .mplconfig/
 __pycache__/
+eda/
+datasets/*.png

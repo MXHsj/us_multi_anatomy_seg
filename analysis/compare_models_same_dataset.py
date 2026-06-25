@@ -43,6 +43,7 @@ DATASET_LABELS = {
     "busbra": "BUS-BRA",
     "busi": "BUSI",
     "camus": "CAMUS",
+    "kus": "KUS",
     "oku": "OKU",
     "roblus": "RobLUS",
     "tnsc2020": "TNSC2020",
@@ -147,7 +148,7 @@ def mean_std(values: list[float]) -> tuple[float, float]:
 
 # Datasets pinned to the end of the plot, in this exact order. Everything else
 # stays alphabetical ahead of them.
-DATASET_TAIL_ORDER = ("ultrabones100k", "umud", "ussc", "roblus")
+DATASET_TAIL_ORDER = ("ultrabones100k", "umud", "ussc", "roblus", "kus")
 
 
 def order_datasets(datasets: set[str] | list[str]) -> list[str]:

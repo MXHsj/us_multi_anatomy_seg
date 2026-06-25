@@ -114,6 +114,14 @@ DATASET_REGISTRY: dict[str, DatasetSpec] = {
         decoder_class="datasets.muscle_UMUD:UMUDAponeurosisDecoder",
         hf_repo_path="zips/Muscle/UMUD.zip",
     ),
+    "kus": DatasetSpec(
+        key="kus",
+        display_name="Knee Cartilage US",
+        anatomy="Knee",
+        default_root="datasets/KUS",
+        decoder_class="datasets.knee_KUS:KneeKUSDecoder",
+        hf_repo_path="zips/Knee/KUS.zip",
+    ),
 }
 
 
