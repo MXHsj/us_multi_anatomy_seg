@@ -148,7 +148,7 @@ def mean_std(values: list[float]) -> tuple[float, float]:
 
 # Datasets pinned to the end of the plot, in this exact order. Everything else
 # stays alphabetical ahead of them.
-DATASET_TAIL_ORDER = ("ultrabones100k", "umud", "ussc", "roblus", "kus")
+DATASET_TAIL_ORDER = ("tnsc2020", "ultrabones100k", "umud", "ussc", "roblus", "kus")
 
 
 def order_datasets(datasets: set[str] | list[str]) -> list[str]:
@@ -245,6 +245,10 @@ def compare_model_set(
     nan = float("nan")
     baseline = models[0]
     for dataset in candidate_datasets:
+        # Each model is summarized from ALL of its own results for this dataset.
+        # No cross-model sample matching/intersection is performed: a model with
+        # no result file for a dataset is simply skipped (no bar), and result
+        # files do not need to share a common sample_id scheme.
         model_metrics = {
             model: read_metrics(discovered[(model, dataset)], metrics)
             for model in models
@@ -254,22 +258,15 @@ def compare_model_set(
         present_models = [model for model in models if model in model_metrics]
         if not present_models:
             continue
-        # Match samples across the models that are present for this dataset.
-        shared_ids = sorted(
-            set.intersection(*(set(model_metrics[model]) for model in present_models))
-        )
-        if not shared_ids:
-            continue
 
-        row: dict[str, Any] = {"dataset": dataset, "matched_samples": len(shared_ids)}
+        row: dict[str, Any] = {"dataset": dataset}
         values_by_metric: dict[str, dict[str, list[float]]] = {}
         for metric in metrics:
             values_by_metric[metric] = {}
             for model in models:
                 if model in model_metrics:
                     values = [
-                        model_metrics[model][sample_id][metric]
-                        for sample_id in shared_ids
+                        sample[metric] for sample in model_metrics[model].values()
                     ]
                     mean, std = mean_std(values)
                 else:
@@ -279,21 +276,16 @@ def compare_model_set(
                 row[f"{model}_{metric}_mean"] = mean
                 row[f"{model}_{metric}_std"] = std
 
-            baseline_values = values_by_metric[metric][baseline]
+            # Without matched pairs the delta is an unpaired difference of means
+            # (no per-sample pairing, so no delta std).
+            baseline_mean = row[f"{baseline}_{metric}_mean"]
             for model in models[1:]:
                 if baseline in model_metrics and model in model_metrics:
-                    deltas = [
-                        value - baseline_value
-                        for baseline_value, value in zip(
-                            baseline_values,
-                            values_by_metric[metric][model],
-                        )
-                    ]
-                    delta_mean, delta_std = mean_std(deltas)
+                    delta_mean = row[f"{model}_{metric}_mean"] - baseline_mean
                 else:
-                    delta_mean, delta_std = nan, nan
+                    delta_mean = nan
                 row[f"{model}_minus_{baseline}_{metric}_mean"] = delta_mean
-                row[f"{model}_minus_{baseline}_{metric}_std"] = delta_std
+                row[f"{model}_minus_{baseline}_{metric}_std"] = nan
 
         row["_values_by_metric"] = values_by_metric
         rows.append(row)
@@ -322,7 +314,7 @@ def column_names(model_a: str, model_b: str, metrics: tuple[str, ...]) -> list[s
 
 
 def model_set_column_names(models: tuple[str, ...], metrics: tuple[str, ...]) -> list[str]:
-    columns = ["dataset", "matched_samples"]
+    columns = ["dataset"]
     baseline = models[0]
     for metric in metrics:
         for model in models:
@@ -343,7 +335,7 @@ def print_markdown(rows: list[dict[str, Any]], columns: list[str]) -> None:
     for row in rows:
         values = [
             str(row[column])
-            if column in {"dataset", "matched_samples"}
+            if column == "dataset"
             else format_float(row[column])
             for column in columns
         ]
