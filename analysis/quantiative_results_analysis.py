@@ -17,7 +17,8 @@ if str(ROOT_DIR) not in sys.path:
 from benchmarks.metrics import METRIC_NAMES
 
 
-RESULT_METRICS = (*METRIC_NAMES, "infer_ms")
+DERIVED_RESULT_METRICS = ("fn_per_gt", "fp_per_gt")
+RESULT_METRICS = (*METRIC_NAMES, "infer_ms", *DERIVED_RESULT_METRICS)
 EDA_METRICS = (
     "image_height",
     "image_width",
@@ -33,6 +34,7 @@ EDA_METRICS = (
     "component_count",
     "largest_component_area_pixels",
 )
+X_METRICS = (*EDA_METRICS, *DERIVED_RESULT_METRICS)
 
 DATASET_LABELS = {
     "aulid": "AULID",
@@ -108,6 +110,8 @@ def load_dataset_points(
     stats = pd.read_csv(stats_path, usecols=lambda column: column == "sample_id" or column in EDA_METRICS)
     merged = results.merge(stats, on="sample_id", how="left")
     merged["bbox_image_area_fraction"] = merged.apply(_bbox_area_fraction, axis=1)
+    merged["fn_per_gt"] = 1.0 - merged["recall"]
+    merged["fp_per_gt"] = merged["relative_area_error"] + merged["fn_per_gt"]
     return merged
 
 
@@ -122,6 +126,8 @@ def metric_label(metric: str) -> str:
         "hd95": "HD95 (px)",
         "assd": "ASSD (px)",
         "relative_area_error": "Relative area error",
+        "fn_per_gt": "FN / GT foreground",
+        "fp_per_gt": "FP / GT foreground",
         "infer_ms": "Inference time (ms)",
         "image_height": "Image height",
         "image_width": "Image width",
@@ -181,18 +187,26 @@ def finite_points(df: pd.DataFrame, x_metric: str, y_metric: str, log_x: bool) -
     return points
 
 
-def corr_label(points: pd.DataFrame, x_metric: str, y_metric: str) -> str:
+def corr_label(points: pd.DataFrame, x_metric: str, y_metric: str, log_x: bool) -> str:
     if len(points) < 2 or points[x_metric].nunique() < 2 or points[y_metric].nunique() < 2:
         return "r=NA"
-    return f"r={points[[x_metric, y_metric]].corr().iloc[0, 1]:.2f}"
+    corr_points = points[[x_metric, y_metric]].copy()
+    if log_x:
+        corr_points[x_metric] = corr_points[x_metric].map(math.log10)
+    return f"r={corr_points.corr().iloc[0, 1]:.2f}"
 
 
-def apply_x_axis_limits(axis: Any, log_x: bool, x_min: float, x_max: float, log_x_min: float) -> None:
+def apply_x_axis_limits(axis: Any, log_x: bool, x_min: float, x_max: float) -> None:
     if log_x:
         axis.set_xscale("log")
-        axis.set_xlim(max(log_x_min, 0.0), x_max)
+        axis.set_xlim(right=x_max)
     else:
         axis.set_xlim(x_min, x_max)
+
+
+def apply_y_axis_limits(axis: Any, y_metric: str) -> None:
+    if y_metric == "fp_per_gt":
+        axis.set_ylim(0.0, 6.0)
 
 
 def plot_per_dataset(
@@ -206,7 +220,6 @@ def plot_per_dataset(
     ncols: int,
     x_min: float,
     x_max: float,
-    log_x_min: float,
 ) -> None:
     plt = setup_matplotlib()
 
@@ -226,10 +239,11 @@ def plot_per_dataset(
         points = finite_points(data_by_dataset[dataset], x_metric, y_metric, log_x)
         color = cmap(datasets.index(dataset) % 20)
         axis.scatter(points[x_metric], points[y_metric], s=14, alpha=0.5, edgecolor="none", color=color)
-        apply_x_axis_limits(axis, log_x, x_min, x_max, log_x_min)
+        apply_x_axis_limits(axis, log_x, x_min, x_max)
         label = DATASET_LABELS.get(dataset, dataset.upper())
-        axis.set_title(f"{label} (n={len(points)}, {corr_label(points, x_metric, y_metric)})")
+        axis.set_title(f"{label} (n={len(points)}, {corr_label(points, x_metric, y_metric, log_x)})")
         axis.set_xlabel(metric_label(x_metric))
+        apply_y_axis_limits(axis, y_metric)
         axis.grid(True, alpha=0.3)
 
     for axis in axes.ravel()[len(datasets) :]:
@@ -253,7 +267,6 @@ def plot_overlay(
     log_x: bool,
     x_min: float,
     x_max: float,
-    log_x_min: float,
 ) -> None:
     plt = setup_matplotlib()
 
@@ -272,9 +285,10 @@ def plot_overlay(
             label=f"{label} (n={len(points)})",
         )
 
-    apply_x_axis_limits(axis, log_x, x_min, x_max, log_x_min)
+    apply_x_axis_limits(axis, log_x, x_min, x_max)
     axis.set_xlabel(metric_label(x_metric))
     axis.set_ylabel(metric_label(y_metric))
+    apply_y_axis_limits(axis, y_metric)
     axis.set_title(f"{model} ({protocol}) - {metric_label(y_metric)} vs {metric_label(x_metric)}")
     axis.legend(fontsize=7, markerscale=1.5, loc="best")
     axis.grid(True, alpha=0.3)
@@ -322,7 +336,10 @@ def main() -> None:
     parser.add_argument(
         "--eda-metrics",
         default="all",
-        help=f"Comma-separated EDA measurements or 'all'. Available: {', '.join(EDA_METRICS)}.",
+        help=(
+            "Comma-separated x-axis metrics or 'all'. "
+            f"Available EDA measurements plus derived result metrics: {', '.join(X_METRICS)}."
+        ),
     )
     parser.add_argument(
         "--plot-kind",
@@ -333,12 +350,6 @@ def main() -> None:
     parser.add_argument("--x-min", type=float, default=0.0)
     parser.add_argument("--x-max", type=float, default=1.0)
     parser.add_argument(
-        "--log-x-min",
-        type=float,
-        default=1e-6,
-        help="Lower x limit for log-x plots; log axes cannot include zero.",
-    )
-    parser.add_argument(
         "--log-x",
         action="store_true",
         help="Use a log-scaled x-axis and append _logx to output filenames.",
@@ -346,7 +357,7 @@ def main() -> None:
     args = parser.parse_args()
 
     result_metrics = parse_csv_arg(args.result_metrics, RESULT_METRICS, "result metric")
-    eda_metrics = parse_csv_arg(args.eda_metrics, EDA_METRICS, "EDA metric")
+    eda_metrics = parse_csv_arg(args.eda_metrics, X_METRICS, "x-axis metric")
     requested_datasets = parse_datasets_arg(args.datasets)
     datasets = list(requested_datasets) if requested_datasets else discover_datasets(args.results_dir, args.model, args.protocol)
     if not datasets:
@@ -393,7 +404,6 @@ def main() -> None:
                         args.ncols,
                         args.x_min,
                         args.x_max,
-                        args.log_x_min,
                     )
                 else:
                     plot_overlay(
@@ -406,7 +416,6 @@ def main() -> None:
                         args.log_x,
                         args.x_min,
                         args.x_max,
-                        args.log_x_min,
                     )
                 saved_paths.append(path)
 
