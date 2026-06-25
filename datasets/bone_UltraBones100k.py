@@ -107,10 +107,30 @@ class UltraBones100kDecoder:
         if len(hit_indices) < 2:
             return completed
 
-        start = hit_indices[0]
-        stop = hit_indices[-1]
-        for x, y in edge_loop[start : stop + 1]:
-            completed[y, x] = True
+        groups = [[hit_indices[0]]]
+        for hit in hit_indices[1:]:
+            if hit == groups[-1][-1] + 1:
+                groups[-1].append(hit)
+            else:
+                groups.append([hit])
+
+        if (
+            len(groups) > 1
+            and groups[0][0] == 0
+            and groups[-1][-1] == len(edge_loop) - 1
+        ):
+            groups[0] = groups[-1] + groups[0]
+            groups.pop()
+
+        for index in range(0, len(groups) - 1, 2):
+            start = groups[index][-1]
+            stop = groups[index + 1][0]
+            if start <= stop:
+                path = edge_loop[start : stop + 1]
+            else:
+                path = edge_loop[start:] + edge_loop[: stop + 1]
+            for x, y in path:
+                completed[y, x] = True
         return completed
 
     def _fill_contour_mask(self, mask: np.ndarray) -> np.ndarray:
