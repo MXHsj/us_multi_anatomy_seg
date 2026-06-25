@@ -12,6 +12,7 @@ import numpy as np
 import torch
 import os
 from dotenv import load_dotenv
+import cv2
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -401,6 +402,77 @@ def resolve_concept(args: argparse.Namespace, sample) -> str:
 
 
 
+def apply_augmentation(
+    image: np.ndarray,
+    mask: np.ndarray,
+    scale_range: tuple[float, float] | None = None,
+    shift_range: tuple[float, float] | None = None,
+    seed: int | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Apply geometric augmentations to image and mask consistently.
+    
+    Args:
+        image: Input image (H, W, C)
+        mask: Ground truth mask (H, W)
+        scale_range: (min_scale, max_scale) for random scaling, e.g., (0.8, 1.2)
+        shift_range: (max_horizontal_shift, max_vertical_shift) as fraction of image size, e.g., (0.1, 0.1)
+        seed: Random seed for reproducibility
+    
+    Returns:
+        Augmented image and mask
+    """
+    if seed is not None:
+        np.random.seed(seed)
+    
+    H, W = image.shape[:2]
+    aug_image = image.copy()
+    aug_mask = mask.copy()
+    
+    # Apply scaling
+    if scale_range is not None:
+        scale = np.random.uniform(scale_range[0], scale_range[1])
+        new_h, new_w = int(H * scale), int(W * scale)
+        aug_image = cv2.resize(aug_image, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        aug_mask = cv2.resize(aug_mask, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+        
+        # Crop or pad to original size
+        if scale > 1.0:
+            # Crop center
+            start_h = (new_h - H) // 2
+            start_w = (new_w - W) // 2
+            aug_image = aug_image[start_h:start_h + H, start_w:start_w + W]
+            aug_mask = aug_mask[start_h:start_h + H, start_w:start_w + W]
+        else:
+            # Pad to original size
+            pad_h = (H - new_h) // 2
+            pad_w = (W - new_w) // 2
+            aug_image = cv2.copyMakeBorder(
+                aug_image,
+                pad_h, H - new_h - pad_h,
+                pad_w, W - new_w - pad_w,
+                cv2.BORDER_CONSTANT,
+                value=0
+            )
+            aug_mask = cv2.copyMakeBorder(
+                aug_mask,
+                pad_h, H - new_h - pad_h,
+                pad_w, W - new_w - pad_w,
+                cv2.BORDER_CONSTANT,
+                value=0
+            )
+    
+    # Apply translation (shift)
+    if shift_range is not None:
+        shift_h = int(np.random.uniform(-shift_range[1], shift_range[1]) * H)
+        shift_w = int(np.random.uniform(-shift_range[0], shift_range[0]) * W)
+        
+        M = np.float32([[1, 0, shift_w], [0, 1, shift_h]])
+        aug_image = cv2.warpAffine(aug_image, M, (W, H), borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        aug_mask = cv2.warpAffine(aug_mask, M, (W, H), borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    
+    return aug_image, aug_mask
+
+
 def resize_mask(mask: np.ndarray, target_shape: tuple[int, int]) -> np.ndarray:
     from PIL import Image
 
@@ -527,10 +599,53 @@ def main() -> None:
     )
     parser.add_argument("--save-vis", type=int, default=8)
     parser.add_argument("--output-dir", type=str, default= ROOT_DIR / "results/medsam3_text_prompt")
+    parser.add_argument(
+        "--augment",
+        action="store_true",
+        help="Apply augmentation to images and masks during inference.",
+    )
+    parser.add_argument(
+        "--aug-scale-range",
+        type=str,
+        default="0.8,1.2",
+        help="Scale range for augmentation as 'min,max' (default: 0.8,1.2).",
+    )
+    parser.add_argument(
+        "--aug-shift-range",
+        type=str,
+        default="0.1,0.1",
+        help="Shift range for augmentation as 'horizontal,vertical' fraction (default: 0.1,0.1).",
+    )
+    parser.add_argument(
+        "--aug-seed",
+        type=int,
+        default=None,
+        help="Random seed for augmentation (default: None for random).",
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Parse augmentation parameters
+    aug_scale_range = None
+    aug_shift_range = None
+    if args.augment:
+        try:
+            scale_parts = [float(x.strip()) for x in args.aug_scale_range.split(",")]
+            if len(scale_parts) != 2:
+                raise ValueError("--aug-scale-range must have exactly 2 values")
+            aug_scale_range = tuple(scale_parts)
+        except Exception as e:
+            raise ValueError(f"Invalid --aug-scale-range: {e}")
+        
+        try:
+            shift_parts = [float(x.strip()) for x in args.aug_shift_range.split(",")]
+            if len(shift_parts) != 2:
+                raise ValueError("--aug-shift-range must have exactly 2 values")
+            aug_shift_range = tuple(shift_parts)
+        except Exception as e:
+            raise ValueError(f"Invalid --aug-shift-range: {e}")
 
     decoder = build_decoder_from_args(args)
     total_iterations = get_total_iterations(decoder, args.max_samples)
@@ -577,6 +692,17 @@ def main() -> None:
         image_3c = ensure_three_channels(normalize_to_uint8(sample.image))
         H, W = image_3c.shape[:2]
         gt_mask = (sample.mask > 0).astype(np.uint8)
+        
+        # Apply augmentation if enabled
+        if args.augment:
+            aug_seed = args.aug_seed + idx if args.aug_seed is not None else None
+            image_3c, gt_mask = apply_augmentation(
+                image_3c,
+                gt_mask,
+                scale_range=aug_scale_range,
+                shift_range=aug_shift_range,
+                seed=aug_seed,
+            )
 
         if not gt_mask.any():
             skipped += 1
@@ -663,6 +789,10 @@ def main() -> None:
             "confidence_threshold": args.confidence_threshold,
             "nms_iou_threshold": args.nms_iou_threshold,
             "text_prompt_override": args.text_prompt or None,
+            "augmentation_enabled": args.augment,
+            "aug_scale_range": args.aug_scale_range if args.augment else None,
+            "aug_shift_range": args.aug_shift_range if args.augment else None,
+            "aug_seed": args.aug_seed if args.augment else None,
             "max_samples": format_max_samples(args.max_samples),
             "num_evaluated": len(rows),
             "num_skipped_empty_mask": skipped,
