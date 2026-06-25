@@ -25,14 +25,44 @@ class UltraBones100kDecoder:
         label_folder: str = "Labels_full",
         thicken_radius: int = 0,
         fill_mask: bool = True,
+        frame_fraction: float = 1.0,
     ):
         self.root = Path(root)
         self.label_folder = label_folder
         self.thicken_radius = thicken_radius
         self.fill_mask = fill_mask
+        if not (0.0 < frame_fraction <= 1.0):
+            raise ValueError(f"frame_fraction must be in (0, 1], got {frame_fraction}")
+        self.frame_fraction = frame_fraction
 
         if not self.root.exists():
             raise FileNotFoundError(f"UltraBones100k root '{self.root}' not found.")
+
+    def _select_record_frames(self, image_paths: list[Path]) -> list[Path]:
+        """Stratify within a record (video): keep equally-spaced frames at
+        ``frame_fraction`` (e.g. 0.1 -> ~10% of the clip), always at least one."""
+        n = len(image_paths)
+        if n == 0 or self.frame_fraction >= 1.0:
+            return image_paths
+        k = max(1, int(round(n * self.frame_fraction)))
+        if k >= n:
+            return image_paths
+        indices = np.unique(np.linspace(0, n - 1, k).round().astype(int))
+        return [image_paths[i] for i in indices]
+
+    def _record_frame_paths(self, record_dir: Path) -> list[Path]:
+        """Sorted image paths in a record that have a matching label, after
+        applying the per-record frame sampling."""
+        image_dir = record_dir / "UltrasoundImages"
+        label_dir = record_dir / self.label_folder
+        if not label_dir.exists():
+            return []
+        valid = [
+            image_path
+            for image_path in sorted(image_dir.glob("*.png"))
+            if (label_dir / f"{image_path.stem}_label.png").exists()
+        ]
+        return self._select_record_frames(valid)
 
     def _record_dirs(self) -> list[Path]:
         # Each record folder contains sibling UltrasoundImages and label folders.
@@ -111,15 +141,7 @@ class UltraBones100kDecoder:
     def count_samples(self, max_samples: Optional[int] = None) -> int:
         count = 0
         for record_dir in self._record_dirs():
-            image_dir = record_dir / "UltrasoundImages"
-            label_dir = record_dir / self.label_folder
-            if not label_dir.exists():
-                continue
-
-            for image_path in sorted(image_dir.glob("*.png")):
-                label_path = label_dir / f"{image_path.stem}_label.png"
-                if not label_path.exists():
-                    continue
+            for _ in self._record_frame_paths(record_dir):
                 count += 1
                 if max_samples is not None and count >= max_samples:
                     return count
@@ -174,19 +196,17 @@ class UltraBones100kDecoder:
     def iter_samples(self, max_samples: Optional[int] = None) -> Iterator[DecodedSample]:
         count = 0
         for record_dir in self._record_dirs():
-            image_dir = record_dir / "UltrasoundImages"
-            label_dir = record_dir / self.label_folder
-            if not label_dir.exists():
+            frame_paths = self._record_frame_paths(record_dir)
+            if not frame_paths:
                 continue
 
+            label_dir = record_dir / self.label_folder
             record_metadata = self._record_metadata(record_dir)
             tracking = self._tracking_map(record_dir)
 
-            for image_path in sorted(image_dir.glob("*.png")):
+            for image_path in frame_paths:
                 # UltraBones pairs 24363.png with 24363_label.png.
                 label_path = label_dir / f"{image_path.stem}_label.png"
-                if not label_path.exists():
-                    continue
 
                 sample_id = (
                     f"{record_metadata['specimen_id']}_{record_metadata['anatomy']}_"
