@@ -2,6 +2,7 @@
 numpy
 scipy
 scikit-image
+opencv-python
 
 # Model inference and MedSAM/SAM runtime
 torch
