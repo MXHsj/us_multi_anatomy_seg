@@ -148,7 +148,7 @@ def mean_std(values: list[float]) -> tuple[float, float]:
 
 # Datasets pinned to the end of the plot, in this exact order. Everything else
 # stays alphabetical ahead of them.
-DATASET_TAIL_ORDER = ("tnsc2020", "ultrabones100k", "umud", "ussc", "roblus", "kus")
+DATASET_TAIL_ORDER = ("tnsc2020", "ultrabones100k", "umud", "ussc", "kus", "roblus")
 
 
 def order_datasets(datasets: set[str] | list[str]) -> list[str]:
@@ -458,10 +458,11 @@ def plot_multi_model_rows(
     }
     rng = np.random.default_rng(20240515)
 
-    ncols = min(3, len(metrics))
-    nrows = int(np.ceil(len(metrics) / ncols))
-    fig_width = max(9.5, len(rows) * 0.85, ncols * 4.2)
-    fig_height = max(3.25, nrows * 2.75)
+    # Stack metric panels vertically (one column), so e.g. Dice sits above HD95.
+    ncols = 1
+    nrows = len(metrics)
+    fig_width = max(7.0, len(rows) * 0.5, ncols * 4.2)
+    fig_height = max(4.0, nrows * 3.6)
     fig, axes = plt.subplots(
         nrows=nrows,
         ncols=ncols,
