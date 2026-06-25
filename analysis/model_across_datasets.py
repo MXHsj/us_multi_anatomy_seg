@@ -63,6 +63,49 @@ def parse_result_dir_name(name: str) -> tuple[str, str, str] | None:
     return model, protocol, dataset
 
 
+def parse_prompt_family_dir(name: str) -> tuple[str, str] | None:
+    """Decode a nested prompt-family dir name into (model, protocol).
+
+    Medical SAM3's text-prompted runs are grouped one level deeper than the flat
+    box convention: results/<model>_<style>_prompt/<dataset>/. The parent name
+    encodes model + prompt style (e.g. medicalsam3_label_prompt -> ('medicalsam3',
+    'label'), medicalsam3_object_prompt -> ('medicalsam3', 'object')); the child
+    dir is the dataset. Returns None for any name not ending in '_prompt'.
+    """
+    parts = name.split("_")
+    if len(parts) >= 3 and parts[-1] == "prompt":
+        model = "_".join(parts[:-2])
+        protocol = parts[-2]
+        if model and protocol:
+            return model, protocol
+    return None
+
+
+def iter_run_dirs(results_dir: Path):
+    """Yield (model, protocol, dataset, run_dir) for every discoverable run.
+
+    Supports both layouts:
+      * flat box/text convention: results/<model>_<protocol>_<dataset>/
+      * nested prompt families:   results/<model>_<style>_prompt/<dataset>/
+    """
+    if not results_dir.is_dir():
+        return
+    for child in sorted(results_dir.iterdir()):
+        if not child.is_dir():
+            continue
+        family = parse_prompt_family_dir(child.name)
+        if family is not None:
+            model, protocol = family
+            for dataset_dir in sorted(child.iterdir()):
+                if dataset_dir.is_dir():
+                    yield model, protocol, dataset_dir.name, dataset_dir
+            continue
+        parsed = parse_result_dir_name(child.name)
+        if parsed is not None:
+            model, protocol, dataset = parsed
+            yield model, protocol, dataset, child
+
+
 def parse_metrics_arg(value: str) -> tuple[str, ...]:
     if value.strip().lower() == "all":
         return DEFAULT_METRICS
@@ -93,17 +136,15 @@ def load_rows(
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     metric_columns = metric_summary_columns(metrics)
-    for summary_path in sorted(results_dir.glob("*/summary.json")):
-        parsed = parse_result_dir_name(summary_path.parent.name)
-        if parsed is None:
-            continue
-
-        result_model, result_protocol, dataset = parsed
+    for result_model, result_protocol, dataset, run_dir in iter_run_dirs(results_dir):
         if result_protocol != protocol:
             continue
         if model is not None and result_model != model:
             continue
 
+        summary_path = run_dir / "summary.json"
+        if not summary_path.exists():
+            continue
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
         if any(summary.get(column) is None for column in metric_columns):
             continue
@@ -112,7 +153,7 @@ def load_rows(
             {
                 "model": result_model,
                 "dataset": dataset,
-                "result_dir": summary_path.parent,
+                "result_dir": run_dir,
                 **{column: float(summary[column]) for column in metric_columns},
             }
         )
@@ -340,7 +381,13 @@ def main() -> None:
     )
     parser.add_argument("--results-dir", type=Path, default=Path("results"))
     parser.add_argument(
-        "--protocol", default="gt_bbox", choices=["gt_bbox", "jitter_bbox", "text"]
+        "--protocol",
+        default="gt_bbox",
+        choices=["gt_bbox", "jitter_bbox", "text", "label", "object"],
+        help=(
+            "Box protocols (gt_bbox/jitter_bbox) or text-prompt styles "
+            "(label/object) for Medical SAM3. Reported in separate tables."
+        ),
     )
     parser.add_argument(
         "--model",

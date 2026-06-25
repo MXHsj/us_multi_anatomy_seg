@@ -21,11 +21,23 @@ MODEL_COLORS = {
     "medsam": "#4C72B0",
     "samus": "#55A868",
     "ultrasam": "#C44E52",
+    "medicalsam3": "#8172B3",
 }
 MODEL_LABELS = {
     "medsam": "MedSAM",
     "samus": "SAMUS",
     "ultrasam": "UltraSAM",
+    "medicalsam3": "Medical SAM3",
+}
+# Fallback colors for the second series when both series share the same model
+# (e.g. comparing Medical SAM3 label vs object), so the two bars stay distinct.
+SECOND_SERIES_COLOR = "#DD8452"
+PROTOCOL_LABELS = {
+    "gt_bbox": "GT box",
+    "jitter_bbox": "jitter box",
+    "text": "text",
+    "label": "label",
+    "object": "object",
 }
 DATASET_LABELS = {
     "aulid": "AULID",
@@ -53,10 +65,58 @@ def parse_result_dir_name(name: str) -> tuple[str, str, str] | None:
     elif parts[1:3] == ["jitter", "bbox"]:
         protocol = "jitter_bbox"
         dataset = "_".join(parts[3:])
+    elif parts[1:3] == ["text", "prompt"]:
+        protocol = "text"
+        dataset = "_".join(parts[3:])
     else:
         return None
 
+    if not dataset:
+        return None
+
     return model, protocol, dataset
+
+
+def parse_prompt_family_dir(name: str) -> tuple[str, str] | None:
+    """Decode a nested prompt-family dir name into (model, protocol).
+
+    Medical SAM3's text-prompted runs are grouped one level deeper than the flat
+    box convention: results/<model>_<style>_prompt/<dataset>/ (e.g.
+    medicalsam3_label_prompt -> ('medicalsam3', 'label'), medicalsam3_object_prompt
+    -> ('medicalsam3', 'object')). Returns None for names not ending in '_prompt'.
+    """
+    parts = name.split("_")
+    if len(parts) >= 3 and parts[-1] == "prompt":
+        model = "_".join(parts[:-2])
+        protocol = parts[-2]
+        if model and protocol:
+            return model, protocol
+    return None
+
+
+def iter_run_dirs(results_dir: Path):
+    """Yield (model, protocol, dataset, run_dir) for every discoverable run.
+
+    Supports both layouts:
+      * flat box/text convention: results/<model>_<protocol>_<dataset>/
+      * nested prompt families:   results/<model>_<style>_prompt/<dataset>/
+    """
+    if not results_dir.is_dir():
+        return
+    for child in sorted(results_dir.iterdir()):
+        if not child.is_dir():
+            continue
+        family = parse_prompt_family_dir(child.name)
+        if family is not None:
+            model, protocol = family
+            for dataset_dir in sorted(child.iterdir()):
+                if dataset_dir.is_dir():
+                    yield model, protocol, dataset_dir.name, dataset_dir
+            continue
+        parsed = parse_result_dir_name(child.name)
+        if parsed is not None:
+            model, protocol, dataset = parsed
+            yield model, protocol, dataset, child
 
 
 def parse_metrics_arg(value: str) -> tuple[str, ...]:
@@ -99,37 +159,43 @@ def mean_std(values: list[float]) -> tuple[float, float]:
     return mean, std
 
 
-def discover_results(results_dir: Path, protocol: str) -> dict[tuple[str, str], Path]:
-    discovered: dict[tuple[str, str], Path] = {}
-    for metrics_path in sorted(results_dir.glob("*/per_sample_metrics.csv")):
-        parsed = parse_result_dir_name(metrics_path.parent.name)
-        if parsed is None:
-            continue
-        model, result_protocol, dataset = parsed
-        if result_protocol != protocol:
-            continue
-        discovered[(model, dataset)] = metrics_path
+def discover_results(results_dir: Path) -> dict[tuple[str, str, str], Path]:
+    """Map (model, protocol, dataset) -> per_sample_metrics.csv for every run."""
+    discovered: dict[tuple[str, str, str], Path] = {}
+    for model, protocol, dataset, run_dir in iter_run_dirs(results_dir):
+        metrics_path = run_dir / "per_sample_metrics.csv"
+        if metrics_path.exists():
+            discovered[(model, protocol, dataset)] = metrics_path
     return discovered
 
 
 def compare_models(
     results_dir: Path,
-    protocol: str,
-    model_a: str,
-    model_b: str,
+    key_a: tuple[str, str],
+    key_b: tuple[str, str],
+    tag_a: str,
+    tag_b: str,
     metrics: tuple[str, ...],
 ) -> list[dict[str, Any]]:
-    discovered = discover_results(results_dir, protocol)
+    """Compare two series, each identified by a (model, protocol) key.
+
+    tag_a/tag_b are the column/legend identifiers; they differ from the model name
+    when both series share a model (e.g. Medical SAM3 label vs object).
+    """
+    discovered = discover_results(results_dir)
+    model_a, protocol_a = key_a
+    model_b, protocol_b = key_b
     datasets = sorted(
         dataset
-        for result_model, dataset in discovered
-        if result_model == model_a and (model_b, dataset) in discovered
+        for (result_model, result_protocol, dataset) in discovered
+        if (result_model, result_protocol) == key_a
+        and (model_b, protocol_b, dataset) in discovered
     )
 
     rows: list[dict[str, Any]] = []
     for dataset in datasets:
-        metrics_a = read_metrics(discovered[(model_a, dataset)], metrics)
-        metrics_b = read_metrics(discovered[(model_b, dataset)], metrics)
+        metrics_a = read_metrics(discovered[(model_a, protocol_a, dataset)], metrics)
+        metrics_b = read_metrics(discovered[(model_b, protocol_b, dataset)], metrics)
         shared_ids = sorted(set(metrics_a) & set(metrics_b))
         if not shared_ids:
             continue
@@ -141,20 +207,20 @@ def compare_models(
             values_b = [metrics_b[sample_id][metric] for sample_id in shared_ids]
             deltas = [b - a for a, b in zip(values_a, values_b)]
             values_by_metric[metric] = {
-                model_a: values_a,
-                model_b: values_b,
+                tag_a: values_a,
+                tag_b: values_b,
             }
 
             mean_a, std_a = mean_std(values_a)
             mean_b, std_b = mean_std(values_b)
             delta_mean, delta_std = mean_std(deltas)
 
-            row[f"{model_a}_{metric}_mean"] = mean_a
-            row[f"{model_a}_{metric}_std"] = std_a
-            row[f"{model_b}_{metric}_mean"] = mean_b
-            row[f"{model_b}_{metric}_std"] = std_b
-            row[f"{model_b}_minus_{model_a}_{metric}_mean"] = delta_mean
-            row[f"{model_b}_minus_{model_a}_{metric}_std"] = delta_std
+            row[f"{tag_a}_{metric}_mean"] = mean_a
+            row[f"{tag_a}_{metric}_std"] = std_a
+            row[f"{tag_b}_{metric}_mean"] = mean_b
+            row[f"{tag_b}_{metric}_std"] = std_b
+            row[f"{tag_b}_minus_{tag_a}_{metric}_mean"] = delta_mean
+            row[f"{tag_b}_minus_{tag_a}_{metric}_std"] = delta_std
 
         row["_values_by_metric"] = values_by_metric
         rows.append(row)
@@ -166,17 +232,17 @@ def format_float(value: float) -> str:
     return f"{value:.4f}"
 
 
-def column_names(model_a: str, model_b: str, metrics: tuple[str, ...]) -> list[str]:
+def column_names(tag_a: str, tag_b: str, metrics: tuple[str, ...]) -> list[str]:
     columns = ["dataset"]
     for metric in metrics:
         columns.extend(
             [
-                f"{model_a}_{metric}_mean",
-                f"{model_a}_{metric}_std",
-                f"{model_b}_{metric}_mean",
-                f"{model_b}_{metric}_std",
-                f"{model_b}_minus_{model_a}_{metric}_mean",
-                f"{model_b}_minus_{model_a}_{metric}_std",
+                f"{tag_a}_{metric}_mean",
+                f"{tag_a}_{metric}_std",
+                f"{tag_b}_{metric}_mean",
+                f"{tag_b}_{metric}_std",
+                f"{tag_b}_minus_{tag_a}_{metric}_mean",
+                f"{tag_b}_minus_{tag_a}_{metric}_std",
             ]
         )
     return columns
@@ -201,11 +267,11 @@ def write_csv(rows: list[dict[str, Any]], columns: list[str], output_csv: Path) 
         writer.writerows({column: row[column] for column in columns} for row in rows)
 
 
-def default_plot_path(protocol: str, model_a: str, model_b: str) -> Path:
+def default_plot_path(tag_a: str, tag_b: str) -> Path:
     return (
         Path("analysis")
         / "figures"
-        / f"compare_models_same_dataset_{protocol}_{model_a}_vs_{model_b}.png"
+        / f"compare_models_same_dataset_{tag_a}_vs_{tag_b}.png"
     )
 
 
@@ -213,8 +279,11 @@ def display_dataset_label(dataset: str) -> str:
     return DATASET_LABELS.get(dataset, dataset.upper())
 
 
-def display_model_label(model: str) -> str:
-    return MODEL_LABELS.get(model, model)
+def display_series_label(model: str, protocol: str, show_protocol: bool) -> str:
+    base = MODEL_LABELS.get(model, model)
+    if show_protocol:
+        return f"{base} ({PROTOCOL_LABELS.get(protocol, protocol)})"
+    return base
 
 
 def metric_label(metric: str) -> str:
@@ -235,11 +304,11 @@ def metric_label(metric: str) -> str:
 def plot_rows(
     rows: list[dict[str, Any]],
     plot_path: Path,
-    model_a: str,
-    model_b: str,
+    series: list[dict[str, str]],
     metrics: tuple[str, ...],
     title: str = "",
 ) -> None:
+    # series: two dicts, each {"tag": ..., "color": ..., "label": ...}.
     mpl_config_dir = Path("analysis") / ".mplconfig"
     xdg_cache_dir = Path("analysis") / ".cache"
     mpl_config_dir.mkdir(parents=True, exist_ok=True)
@@ -275,8 +344,8 @@ def plot_rows(
     x_positions = np.arange(len(rows))
     bar_width = 0.32
     offsets = {
-        model_a: -bar_width / 2,
-        model_b: bar_width / 2,
+        series[0]["tag"]: -bar_width / 2,
+        series[1]["tag"]: bar_width / 2,
     }
     rng = np.random.default_rng(20240515)
 
@@ -294,11 +363,12 @@ def plot_rows(
     axes_flat = axes.ravel()
 
     for axis, metric in zip(axes_flat, metrics):
-        for model in (model_a, model_b):
-            means = [row[f"{model}_{metric}_mean"] for row in rows]
-            stds = [row[f"{model}_{metric}_std"] for row in rows]
-            color = MODEL_COLORS.get(model, "#666666")
-            model_positions = x_positions + offsets[model]
+        for spec in series:
+            tag = spec["tag"]
+            color = spec["color"]
+            means = [row[f"{tag}_{metric}_mean"] for row in rows]
+            stds = [row[f"{tag}_{metric}_std"] for row in rows]
+            model_positions = x_positions + offsets[tag]
 
             axis.bar(
                 model_positions,
@@ -309,7 +379,7 @@ def plot_rows(
                 edgecolor=color,
                 linewidth=1.1,
                 zorder=2,
-                label=display_model_label(model),
+                label=spec["label"],
             )
             axis.errorbar(
                 model_positions,
@@ -324,7 +394,7 @@ def plot_rows(
             )
 
             for idx, row in enumerate(rows):
-                values = row["_values_by_metric"][metric][model]
+                values = row["_values_by_metric"][metric][tag]
                 if not values:
                     continue
                 jitter = rng.uniform(-bar_width * 0.27, bar_width * 0.27, size=len(values))
@@ -358,13 +428,13 @@ def plot_rows(
             [0],
             marker="s",
             color="none",
-            markerfacecolor=MODEL_COLORS.get(model, "#666666"),
-            markeredgecolor=MODEL_COLORS.get(model, "#666666"),
+            markerfacecolor=spec["color"],
+            markeredgecolor=spec["color"],
             alpha=0.55,
             markersize=7,
-            label=display_model_label(model),
+            label=spec["label"],
         )
-        for model in (model_a, model_b)
+        for spec in series
     ]
     fig.legend(
         handles=handles,
@@ -388,8 +458,31 @@ def main() -> None:
             "from per_sample_metrics.csv."
         )
     )
+    _PROTOCOLS = ["gt_bbox", "jitter_bbox", "text", "label", "object"]
     parser.add_argument("--results-dir", type=Path, default=Path("results"))
-    parser.add_argument("--protocol", default="gt_bbox", choices=["gt_bbox", "jitter_bbox"])
+    parser.add_argument(
+        "--protocol",
+        default="gt_bbox",
+        choices=_PROTOCOLS,
+        help="Protocol used for both series unless overridden by --protocol-a/-b.",
+    )
+    parser.add_argument(
+        "--protocol-a",
+        default=None,
+        choices=_PROTOCOLS,
+        help="Protocol for series A (defaults to --protocol).",
+    )
+    parser.add_argument(
+        "--protocol-b",
+        default=None,
+        choices=_PROTOCOLS,
+        help=(
+            "Protocol for series B (defaults to --protocol). Set this with "
+            "--model-a/--model-b equal to compare prompt styles of one model, "
+            "e.g. --model-a medicalsam3 --model-b medicalsam3 "
+            "--protocol-a label --protocol-b object."
+        ),
+    )
     parser.add_argument("--model-a", default="medsam")
     parser.add_argument("--model-b", default="samus")
     parser.add_argument(
@@ -425,33 +518,57 @@ def main() -> None:
     args = parser.parse_args()
     metrics = parse_metrics_arg(args.metrics)
 
+    protocol_a = args.protocol_a or args.protocol
+    protocol_b = args.protocol_b or args.protocol
+    key_a = (args.model_a, protocol_a)
+    key_b = (args.model_b, protocol_b)
+
+    # Disambiguate series identifiers/labels when the two share a model (e.g. one
+    # model's label vs object prompt) or differ only by protocol; otherwise keep
+    # plain model names so existing box-vs-box output is unchanged.
+    show_protocol = (args.model_a == args.model_b) or (protocol_a != protocol_b)
+    tag_a = f"{args.model_a}_{protocol_a}" if args.model_a == args.model_b else args.model_a
+    tag_b = f"{args.model_b}_{protocol_b}" if args.model_a == args.model_b else args.model_b
+
     rows = compare_models(
         results_dir=args.results_dir,
-        protocol=args.protocol,
-        model_a=args.model_a,
-        model_b=args.model_b,
+        key_a=key_a,
+        key_b=key_b,
+        tag_a=tag_a,
+        tag_b=tag_b,
         metrics=metrics,
     )
 
     if not rows:
         raise SystemExit("No datasets with matched sample IDs found.")
 
-    columns = column_names(args.model_a, args.model_b, metrics)
+    columns = column_names(tag_a, tag_b, metrics)
     print_markdown(rows, columns)
     if args.output_csv is not None:
         write_csv(rows, columns, args.output_csv)
         print(f"\nSaved CSV to: {args.output_csv}")
     if not args.no_plot:
-        plot_path = args.plot_path or default_plot_path(
-            args.protocol,
-            args.model_a,
-            args.model_b,
-        )
+        color_a = MODEL_COLORS.get(args.model_a, "#4C72B0")
+        color_b = MODEL_COLORS.get(args.model_b, "#55A868")
+        if args.model_a == args.model_b:
+            color_b = SECOND_SERIES_COLOR
+        series = [
+            {
+                "tag": tag_a,
+                "color": color_a,
+                "label": display_series_label(args.model_a, protocol_a, show_protocol),
+            },
+            {
+                "tag": tag_b,
+                "color": color_b,
+                "label": display_series_label(args.model_b, protocol_b, show_protocol),
+            },
+        ]
+        plot_path = args.plot_path or default_plot_path(tag_a, tag_b)
         plot_rows(
             rows=rows,
             plot_path=plot_path,
-            model_a=args.model_a,
-            model_b=args.model_b,
+            series=series,
             metrics=metrics,
             title=args.plot_title,
         )
