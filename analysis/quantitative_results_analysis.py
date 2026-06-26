@@ -17,35 +17,9 @@ if str(ROOT_DIR) not in sys.path:
 from benchmarks.metrics import METRIC_NAMES
 
 
-DERIVED_RESULT_METRICS = ("fn_per_gt", "fp_per_gt")
-RESULT_METRICS = (*METRIC_NAMES, "infer_ms", *DERIVED_RESULT_METRICS)
-EDA_METRICS = (
-    "image_height",
-    "image_width",
-    "mask_height",
-    "mask_width",
-    "target_area_pixels",
-    "target_area_fraction",
-    "bbox_width",
-    "bbox_height",
-    "bbox_area_pixels",
-    "bbox_area_fraction",
-    "target_bbox_area_ratio",
-    "component_count",
-    "largest_component_area_pixels",
-    "shape_component_count",
-    "shape_component_area_pixels",
-    "component_weighted_bbox_width",
-    "component_weighted_bbox_height",
-    "component_weighted_bbox_area_pixels",
-    "component_weighted_bbox_area_fraction",
-    "component_weighted_target_bbox_area_ratio",
-    "aspect_ratio_feret",
-    "circularity",
-    "convexity",
-    "solidity",
-)
-X_METRICS = (*EDA_METRICS, *DERIVED_RESULT_METRICS)
+# Result metrics are the y-axis columns read straight from per_sample_metrics.csv.
+# x-axis metrics are read from the EDA sample_stats.csv columns at run time.
+RESULT_METRICS = (*METRIC_NAMES, "infer_ms")
 
 DATASET_LABELS = json.loads((ROOT_DIR / "datasets" / "datasets.json").read_text())["labels"]
 
@@ -71,6 +45,23 @@ def parse_datasets_arg(value: str) -> tuple[str, ...] | None:
     return tuple(dataset.strip() for dataset in value.split(",") if dataset.strip())
 
 
+def parse_derived_arg(value: str) -> tuple[str, ...]:
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
+def compute_derived_metrics(df: pd.DataFrame, derived_metrics: tuple[str, ...]) -> pd.DataFrame:
+    """Compute each requested derived metric from the result columns."""
+    df = df.copy()
+    for metric in derived_metrics:
+        if metric == "fn_per_gt":
+            df[metric] = 1.0 - df["recall"]
+        elif metric == "fp_per_gt":
+            df[metric] = df["relative_area_error"] + (1.0 - df["recall"])
+        else:
+            raise NotImplementedError(f"Derived metric not implemented: {metric}")
+    return df
+
+
 def result_dir(results_dir: Path, model: str, dataset: str, protocol: str) -> Path:
     return results_dir / f"{model}_{protocol}_{dataset}"
 
@@ -80,12 +71,19 @@ def discover_datasets(results_dir: Path, model: str, protocol: str) -> list[str]
     return sorted(path.name[len(prefix) :] for path in results_dir.glob(f"{prefix}*") if path.is_dir())
 
 
-def _bbox_area_fraction(row: pd.Series) -> float:
-    boxes = json.loads(row["bbox"])
-    boxes_array = pd.DataFrame(boxes, columns=["x0", "y0", "x1", "y1"]).astype(float)
-    box_area = float(((boxes_array["x1"] - boxes_array["x0"]) * (boxes_array["y1"] - boxes_array["y0"])).sum())
-    image_area = float(row["height"]) * float(row["width"])
-    return box_area / image_area if image_area else math.nan
+def discover_eda_metrics(eda_dir: Path, datasets: list[str]) -> tuple[str, ...]:
+    """Read available x-axis metrics from the EDA sample_stats.csv column headers."""
+    metrics: list[str] = []
+    seen: set[str] = set()
+    for dataset in datasets:
+        stats_path = eda_dir / dataset / "sample_stats.csv"
+        if not stats_path.exists():
+            continue
+        for column in pd.read_csv(stats_path, nrows=0).columns:
+            if column != "sample_id" and column not in seen:
+                seen.add(column)
+                metrics.append(column)
+    return tuple(metrics)
 
 
 def load_dataset_points(
@@ -94,6 +92,8 @@ def load_dataset_points(
     model: str,
     dataset: str,
     protocol: str,
+    eda_metrics: tuple[str, ...],
+    derived_metrics: tuple[str, ...],
 ) -> pd.DataFrame:
     metrics_path = result_dir(results_dir, model, dataset, protocol) / "per_sample_metrics.csv"
     if not metrics_path.exists():
@@ -103,55 +103,21 @@ def load_dataset_points(
     if not stats_path.exists():
         raise FileNotFoundError(stats_path)
 
+    wanted = {"sample_id", *eda_metrics}
     results = pd.read_csv(metrics_path)
-    stats = pd.read_csv(stats_path, usecols=lambda column: column == "sample_id" or column in EDA_METRICS)
+    stats = pd.read_csv(stats_path, usecols=lambda column: column in wanted)
+    for metric in eda_metrics:
+        if metric not in stats.columns:
+            stats[metric] = math.nan
     merged = results.merge(stats, on="sample_id", how="left")
-    merged["bbox_image_area_fraction"] = merged.apply(_bbox_area_fraction, axis=1)
-    merged["fn_per_gt"] = 1.0 - merged["recall"]
-    merged["fp_per_gt"] = merged["relative_area_error"] + merged["fn_per_gt"]
+    if derived_metrics:
+        merged = compute_derived_metrics(merged, derived_metrics)
     return merged
 
 
 def metric_label(metric: str) -> str:
-    labels = {
-        "dice": "Dice",
-        "iou": "IoU",
-        "precision": "Precision",
-        "recall": "Recall",
-        "specificity": "Specificity",
-        "balanced_accuracy": "Balanced accuracy",
-        "hd95": "HD95 (px)",
-        "assd": "ASSD (px)",
-        "relative_area_error": "Relative area error",
-        "fn_per_gt": "FN / GT foreground",
-        "fp_per_gt": "FP / GT foreground",
-        "infer_ms": "Inference time (ms)",
-        "image_height": "Image height",
-        "image_width": "Image width",
-        "mask_height": "Mask height",
-        "mask_width": "Mask width",
-        "target_area_pixels": "Target area (px)",
-        "target_area_fraction": "Target area / image area",
-        "bbox_width": "BBox width",
-        "bbox_height": "BBox height",
-        "bbox_area_pixels": "BBox area (px)",
-        "bbox_area_fraction": "BBox area / image area",
-        "target_bbox_area_ratio": "Target area / bbox area",
-        "component_count": "Component count",
-        "largest_component_area_pixels": "Largest component area (px)",
-        "shape_component_count": "Shape component count",
-        "shape_component_area_pixels": "Shape component area (px)",
-        "component_weighted_bbox_width": "Component-weighted bbox width",
-        "component_weighted_bbox_height": "Component-weighted bbox height",
-        "component_weighted_bbox_area_pixels": "Component-weighted bbox area (px)",
-        "component_weighted_bbox_area_fraction": "Component-weighted bbox / image area",
-        "component_weighted_target_bbox_area_ratio": "Component-weighted target / bbox area",
-        "aspect_ratio_feret": "Feret aspect ratio",
-        "circularity": "Circularity",
-        "convexity": "Convexity",
-        "solidity": "Solidity",
-    }
-    return labels.get(metric, metric)
+    """Sentence-case label derived from the metric name (underscores -> spaces)."""
+    return metric.replace("_", " ").capitalize()
 
 
 def setup_matplotlib() -> Any:
@@ -318,7 +284,7 @@ def output_name(
     return f"results_vs_eda_{plot_kind}_{protocol}_{model}_{y_metric}_vs_{x_metric}{suffix}.png"
 
 
-def main() -> None:
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Plot benchmark result metrics against EDA measurements."
     )
@@ -342,11 +308,16 @@ def main() -> None:
         help=f"Comma-separated result metrics or 'all'. Available: {', '.join(RESULT_METRICS)}.",
     )
     parser.add_argument(
+        "--derived-metrics",
+        default="",
+        help="Comma-separated derived (y-axis) metrics, e.g. fn_per_gt,fp_per_gt.",
+    )
+    parser.add_argument(
         "--eda-metrics",
-        default="all",
+        default="target_bbox_area_ratio",
         help=(
-            "Comma-separated x-axis metrics or 'all'. "
-            f"Available EDA measurements plus derived result metrics: {', '.join(X_METRICS)}."
+            "Comma-separated EDA (x-axis) metrics or 'all'. "
+            "Available metrics are read from the EDA sample_stats.csv column headers."
         ),
     )
     parser.add_argument(
@@ -362,14 +333,24 @@ def main() -> None:
         action="store_true",
         help="Use a log-scaled x-axis and append _logx to output filenames.",
     )
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
 
     result_metrics = parse_csv_arg(args.result_metrics, RESULT_METRICS, "result metric")
-    eda_metrics = parse_csv_arg(args.eda_metrics, X_METRICS, "x-axis metric")
+    derived_metrics = parse_derived_arg(args.derived_metrics)
+    y_metrics = (*result_metrics, *derived_metrics)
     requested_datasets = parse_datasets_arg(args.datasets)
     datasets = list(requested_datasets) if requested_datasets else discover_datasets(args.results_dir, args.model, args.protocol)
     if not datasets:
         raise SystemExit(f"No datasets found for {args.model}_{args.protocol}_* in {args.results_dir}.")
+
+    available_eda_metrics = discover_eda_metrics(args.eda_dir, datasets)
+    if not available_eda_metrics:
+        raise SystemExit(f"No EDA sample_stats.csv columns found under {args.eda_dir}.")
+    eda_metrics = parse_csv_arg(args.eda_metrics, available_eda_metrics, "EDA metric")
 
     data_by_dataset: dict[str, pd.DataFrame] = {}
     for dataset in datasets:
@@ -380,6 +361,8 @@ def main() -> None:
                 args.model,
                 dataset,
                 args.protocol,
+                eda_metrics,
+                derived_metrics,
             )
         except FileNotFoundError as error:
             print(f"Skipping {dataset}: {error}", file=sys.stderr)
@@ -389,7 +372,7 @@ def main() -> None:
 
     plot_kinds = ("per_dataset", "overlay") if args.plot_kind == "both" else (args.plot_kind,)
     saved_paths: list[Path] = []
-    for y_metric in result_metrics:
+    for y_metric in y_metrics:
         for x_metric in eda_metrics:
             for plot_kind in plot_kinds:
                 path = args.output_dir / output_name(
