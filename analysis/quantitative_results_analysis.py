@@ -186,6 +186,8 @@ def apply_x_axis_limits(axis: Any, log_x: bool, x_min: float, x_max: float) -> N
 
 
 def apply_y_axis_limits(axis: Any, y_metric: str) -> None:
+    # Temporarily let fp/fn auto-scale per subplot instead of a fixed y-range.
+    return
     if y_metric == "fp_per_gt":
         axis.set_ylim(0.0, 6.0)
 
@@ -207,11 +209,13 @@ def plot_per_dataset(
 
     datasets = list(data_by_dataset)
     nrows = math.ceil(len(datasets) / ncols)
+    # Temporarily let fp/fn scale per-subplot instead of sharing one y-axis.
+    sharey = y_metric not in ("fp_per_gt", "fn_per_gt")
     fig, axes = plt.subplots(
         nrows,
         ncols,
         figsize=(4 * ncols, 3.2 * nrows),
-        sharey=True,
+        sharey=sharey,
         squeeze=False,
         constrained_layout=True,
     )
