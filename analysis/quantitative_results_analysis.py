@@ -33,6 +33,17 @@ EDA_METRICS = (
     "target_bbox_area_ratio",
     "component_count",
     "largest_component_area_pixels",
+    "shape_component_count",
+    "shape_component_area_pixels",
+    "component_weighted_bbox_width",
+    "component_weighted_bbox_height",
+    "component_weighted_bbox_area_pixels",
+    "component_weighted_bbox_area_fraction",
+    "component_weighted_target_bbox_area_ratio",
+    "aspect_ratio_feret",
+    "circularity",
+    "convexity",
+    "solidity",
 )
 X_METRICS = (*EDA_METRICS, *DERIVED_RESULT_METRICS)
 
@@ -142,6 +153,17 @@ def metric_label(metric: str) -> str:
         "target_bbox_area_ratio": "Target area / bbox area",
         "component_count": "Component count",
         "largest_component_area_pixels": "Largest component area (px)",
+        "shape_component_count": "Shape component count",
+        "shape_component_area_pixels": "Shape component area (px)",
+        "component_weighted_bbox_width": "Component-weighted bbox width",
+        "component_weighted_bbox_height": "Component-weighted bbox height",
+        "component_weighted_bbox_area_pixels": "Component-weighted bbox area (px)",
+        "component_weighted_bbox_area_fraction": "Component-weighted bbox / image area",
+        "component_weighted_target_bbox_area_ratio": "Component-weighted target / bbox area",
+        "aspect_ratio_feret": "Feret aspect ratio",
+        "circularity": "Circularity",
+        "convexity": "Convexity",
+        "solidity": "Solidity",
     }
     return labels.get(metric, metric)
 

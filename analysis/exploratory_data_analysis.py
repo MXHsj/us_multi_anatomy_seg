@@ -18,7 +18,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from datasets.common import bbox_from_mask
+from datasets.common import bbox_from_mask, connected_component_masks
 from datasets.label_text import concept_for
 from datasets.loader import add_dataset_args, build_decoder_from_args
 
@@ -43,7 +43,20 @@ STAT_COLUMNS = (
     "target_bbox_area_ratio",
     "component_count",
     "largest_component_area_pixels",
+    "shape_component_count",
+    "shape_component_area_pixels",
+    "component_weighted_bbox_width",
+    "component_weighted_bbox_height",
+    "component_weighted_bbox_area_pixels",
+    "component_weighted_bbox_area_fraction",
+    "component_weighted_target_bbox_area_ratio",
+    "aspect_ratio_feret",
+    "circularity",
+    "convexity",
+    "solidity",
 )
+
+SHAPE_MIN_AREA = 16
 
 
 def parse_args() -> argparse.Namespace:
@@ -109,6 +122,157 @@ def component_stats(mask: np.ndarray) -> tuple[int, int]:
     return int(areas.size), int(areas.max())
 
 
+def weighted_mean(values: list[float], weights: list[int]) -> float:
+    finite_pairs = [
+        (float(value), int(weight))
+        for value, weight in zip(values, weights)
+        if math.isfinite(float(value)) and int(weight) > 0
+    ]
+    if not finite_pairs:
+        return float("nan")
+    total_weight = sum(weight for _, weight in finite_pairs)
+    return sum(value * weight for value, weight in finite_pairs) / total_weight
+
+
+def _convex_hull_points(component: np.ndarray) -> np.ndarray:
+    hull = measure.regionprops(measure.label(component))[0].image_convex
+    ys, xs = np.nonzero(hull)
+    if xs.size == 0:
+        return np.empty((0, 2), dtype=float)
+    return np.column_stack([xs.astype(float), ys.astype(float)])
+
+
+def feret_aspect_ratio(component: np.ndarray) -> float:
+    points = _convex_hull_points(component)
+    if len(points) < 2:
+        return float("nan")
+
+    try:
+        from scipy.spatial import ConvexHull
+
+        hull = ConvexHull(points)
+        hull_points = points[hull.vertices]
+    except Exception:
+        hull_points = points
+
+    spans: list[float] = []
+    n_points = len(hull_points)
+    for i in range(n_points):
+        p0 = hull_points[i]
+        p1 = hull_points[(i + 1) % n_points]
+        edge = p1 - p0
+        edge_length = float(np.linalg.norm(edge))
+        if edge_length <= 0.0:
+            continue
+        direction = edge / edge_length
+        normal = np.array([-direction[1], direction[0]])
+        projections = points @ normal
+        spans.append(float(projections.max() - projections.min() + 1.0))
+
+    if not spans:
+        return float("nan")
+
+    max_feret = 0.0
+    for i in range(n_points):
+        deltas = hull_points[i + 1 :] - hull_points[i]
+        if len(deltas):
+            max_feret = max(max_feret, float(np.sqrt(np.sum(deltas * deltas, axis=1)).max()) + 1.0)
+    min_feret = min(spans)
+    if max_feret <= 0.0:
+        return float("nan")
+    return max(0.0, min(1.0, min_feret / max_feret))
+
+
+def component_shape_descriptors(component: np.ndarray) -> dict[str, float]:
+    props = measure.regionprops(measure.label(component))[0]
+    area = float(props.area)
+    convex_area = float(props.area_convex)
+    perimeter = float(measure.perimeter(component, neighborhood=8))
+    convex_perimeter = float(measure.perimeter(props.image_convex, neighborhood=8))
+
+    circularity = (4.0 * math.pi * area / (perimeter * perimeter)) if perimeter > 0.0 else float("nan")
+    convexity = (convex_perimeter / perimeter) if perimeter > 0.0 else float("nan")
+    solidity = (area / convex_area) if convex_area > 0.0 else float("nan")
+    if math.isfinite(circularity):
+        circularity = max(0.0, min(1.0, circularity))
+    if math.isfinite(convexity):
+        convexity = max(0.0, min(1.0, convexity))
+    if math.isfinite(solidity):
+        solidity = max(0.0, min(1.0, solidity))
+
+    return {
+        "aspect_ratio_feret": feret_aspect_ratio(component),
+        "circularity": circularity,
+        "convexity": convexity,
+        "solidity": solidity,
+    }
+
+
+def component_bbox_descriptors(component: np.ndarray, image_area: int) -> dict[str, float]:
+    bbox = bbox_from_mask(component)
+    if bbox is None:
+        return {
+            "component_weighted_bbox_width": float("nan"),
+            "component_weighted_bbox_height": float("nan"),
+            "component_weighted_bbox_area_pixels": float("nan"),
+            "component_weighted_bbox_area_fraction": float("nan"),
+            "component_weighted_target_bbox_area_ratio": float("nan"),
+        }
+
+    x_min, y_min, x_max, y_max = [int(value) for value in bbox]
+    bbox_width = x_max - x_min + 1
+    bbox_height = y_max - y_min + 1
+    bbox_area = bbox_width * bbox_height
+    component_area = int(component.sum())
+    return {
+        "component_weighted_bbox_width": float(bbox_width),
+        "component_weighted_bbox_height": float(bbox_height),
+        "component_weighted_bbox_area_pixels": float(bbox_area),
+        "component_weighted_bbox_area_fraction": bbox_area / image_area,
+        "component_weighted_target_bbox_area_ratio": component_area / bbox_area if bbox_area > 0 else float("nan"),
+    }
+
+
+def shape_stats(mask: np.ndarray, image_area: int) -> dict[str, float | int]:
+    components = connected_component_masks(mask, min_area=SHAPE_MIN_AREA)
+    if not components:
+        return {
+            "shape_component_count": 0,
+            "shape_component_area_pixels": 0,
+            "component_weighted_bbox_width": float("nan"),
+            "component_weighted_bbox_height": float("nan"),
+            "component_weighted_bbox_area_pixels": float("nan"),
+            "component_weighted_bbox_area_fraction": float("nan"),
+            "component_weighted_target_bbox_area_ratio": float("nan"),
+            "aspect_ratio_feret": float("nan"),
+            "circularity": float("nan"),
+            "convexity": float("nan"),
+            "solidity": float("nan"),
+        }
+
+    weights = [int(component.sum()) for component in components]
+    descriptors = [
+        {
+            **component_bbox_descriptors(component, image_area),
+            **component_shape_descriptors(component),
+        }
+        for component in components
+    ]
+    return {
+        "shape_component_count": len(components),
+        "shape_component_area_pixels": sum(weights),
+        "component_weighted_bbox_width": weighted_mean([d["component_weighted_bbox_width"] for d in descriptors], weights),
+        "component_weighted_bbox_height": weighted_mean([d["component_weighted_bbox_height"] for d in descriptors], weights),
+        "component_weighted_bbox_area_pixels": weighted_mean([d["component_weighted_bbox_area_pixels"] for d in descriptors], weights),
+        "component_weighted_bbox_area_fraction": weighted_mean([d["component_weighted_bbox_area_fraction"] for d in descriptors], weights),
+        "component_weighted_target_bbox_area_ratio": weighted_mean([d["component_weighted_target_bbox_area_ratio"] for d in descriptors], weights),
+        "aspect_ratio_feret": weighted_mean([d["aspect_ratio_feret"] for d in descriptors], weights),
+        "circularity": weighted_mean([d["circularity"] for d in descriptors], weights),
+        "convexity": weighted_mean([d["convexity"] for d in descriptors], weights),
+        "solidity": weighted_mean([d["solidity"] for d in descriptors], weights),
+    }
+
+
 def sample_row(dataset_key: str, sample: Any) -> dict[str, Any]:
     mask = (np.asarray(sample.mask) > 0).astype(np.uint8)
     height, width = mask.shape[:2]
@@ -128,6 +292,7 @@ def sample_row(dataset_key: str, sample: Any) -> dict[str, Any]:
         bbox_area = bbox_width * bbox_height
 
     component_count, largest_component_area = component_stats(mask)
+    shape_metrics = shape_stats(mask, image_area)
     metadata = dict(sample.metadata or {})
 
     row: dict[str, Any] = {
@@ -148,6 +313,7 @@ def sample_row(dataset_key: str, sample: Any) -> dict[str, Any]:
         "target_bbox_area_ratio": target_area / bbox_area if bbox_area > 0 else 0.0,
         "component_count": component_count,
         "largest_component_area_pixels": largest_component_area,
+        **shape_metrics,
     }
 
     for key in GROUP_KEYS:
@@ -254,6 +420,17 @@ def write_csv(rows: list[dict[str, Any]], output_path: Path) -> None:
         "target_bbox_area_ratio",
         "component_count",
         "largest_component_area_pixels",
+        "shape_component_count",
+        "shape_component_area_pixels",
+        "component_weighted_bbox_width",
+        "component_weighted_bbox_height",
+        "component_weighted_bbox_area_pixels",
+        "component_weighted_bbox_area_fraction",
+        "component_weighted_target_bbox_area_ratio",
+        "aspect_ratio_feret",
+        "circularity",
+        "convexity",
+        "solidity",
         *GROUP_KEYS,
     ]
     with output_path.open("w", newline="", encoding="utf-8") as handle:
