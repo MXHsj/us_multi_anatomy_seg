@@ -13,18 +13,21 @@ results_plot_labels="Dice"
 derived_metrics="fn_per_gt,fp_per_gt"
 derived_plot_labels="FN / GT,FP / GT"
 
-eda_metrics="target_bbox_area_ratio,target_area_fraction,solidity,aspect_ratio_feret,circularity,convexity"
-eda_plot_labels="Target area / bbox area,Target area / image area,Solidity,Aspect ratio,Circularity,Convexity"
+eda_metrics="target_area_fraction,target_bbox_area_ratio,solidity,circularity,aspect_ratio_feret,convexity"
+eda_plot_labels="Target area / image area,Target area / bbox area,Solidity,Circularity,Aspect ratio,Convexity"
+
+# Datasets in the order they appear in datasets.json (columns left-to-right).
+datasets=$(python -c "import json; print(','.join(json.load(open('datasets/datasets.json'))['labels']))")
 
 # What to generate, and which correlation coefficients the heatmaps use.
-make_scatter="true"
+make_scatter="false"
 make_heatmap="true"
 correlations="pearson,log_pearson,spearman"
 
 # Generate the results-vs-EDA figures (plain + heatmaps, then log-x scatters).
 echo "Generating results-vs-EDA figures..."
 python analysis/quantitative_results_analysis.py \
-  --output-dir "${output_dir}" \
+  --output-dir "${output_dir}" --datasets "${datasets}" \
   --result-metrics "${result_metrics}" --result-labels "${results_plot_labels}" \
   --derived-metrics "${derived_metrics}" --derived-labels "${derived_plot_labels}" \
   --eda-metrics "${eda_metrics}" --eda-labels "${eda_plot_labels}" \
@@ -32,7 +35,7 @@ python analysis/quantitative_results_analysis.py \
 
 echo "Generating results-vs-EDA figures (log-x)..."
 python analysis/quantitative_results_analysis.py \
-  --output-dir "${output_dir}" \
+  --output-dir "${output_dir}" --datasets "${datasets}" \
   --result-metrics "${result_metrics}" --result-labels "${results_plot_labels}" \
   --derived-metrics "${derived_metrics}" --derived-labels "${derived_plot_labels}" \
   --eda-metrics "${eda_metrics}" --eda-labels "${eda_plot_labels}" \
