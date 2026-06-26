@@ -32,4 +32,6 @@ presentation
 results/**/visualizations/
 results/**/coco_export/
 
+analysis/figures/results_vs_eda/
+
 .env
