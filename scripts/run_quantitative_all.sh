@@ -13,16 +13,22 @@ results_plot_labels="Dice"
 derived_metrics="fn_per_gt,fp_per_gt"
 derived_plot_labels="FN / GT,FP / GT"
 
-eda_metrics="target_bbox_area_ratio"
-eda_plot_labels="Target area / bbox area"
+eda_metrics="target_bbox_area_ratio,target_area_fraction,solidity,aspect_ratio_feret,circularity,convexity"
+eda_plot_labels="Target area / bbox area,Target area / image area,Solidity,Aspect ratio,Circularity,Convexity"
 
-# Generate the results-vs-EDA figures (plain and log-x).
+# What to generate, and which correlation coefficients the heatmaps use.
+make_scatter="true"
+make_heatmap="true"
+correlations="pearson,log_pearson,spearman"
+
+# Generate the results-vs-EDA figures (plain + heatmaps, then log-x scatters).
 echo "Generating results-vs-EDA figures..."
 python analysis/quantitative_results_analysis.py \
   --output-dir "${output_dir}" \
   --result-metrics "${result_metrics}" --result-labels "${results_plot_labels}" \
   --derived-metrics "${derived_metrics}" --derived-labels "${derived_plot_labels}" \
-  --eda-metrics "${eda_metrics}" --eda-labels "${eda_plot_labels}"
+  --eda-metrics "${eda_metrics}" --eda-labels "${eda_plot_labels}" \
+  --scatter "${make_scatter}" --heatmap "${make_heatmap}" --correlations "${correlations}"
 
 echo "Generating results-vs-EDA figures (log-x)..."
 python analysis/quantitative_results_analysis.py \
@@ -30,4 +36,5 @@ python analysis/quantitative_results_analysis.py \
   --result-metrics "${result_metrics}" --result-labels "${results_plot_labels}" \
   --derived-metrics "${derived_metrics}" --derived-labels "${derived_plot_labels}" \
   --eda-metrics "${eda_metrics}" --eda-labels "${eda_plot_labels}" \
+  --scatter "${make_scatter}" --heatmap "false" \
   --log-x
