@@ -355,18 +355,17 @@ def default_plot_path(
     return (
         Path("analysis")
         / "figures"
-        / f"compare_models_same_dataset_{protocol}_{model_a}_vs_{model_b}_{plot_type}.{plot_format}"
+        / f"{plot_type}_plot_per_model_per_dataset.{plot_format}"
     )
 
 
 def default_model_set_plot_path(
     protocol: str, models: tuple[str, ...], plot_type: str, plot_format: str
 ) -> Path:
-    model_slug = "_vs_".join(models)
     return (
         Path("analysis")
         / "figures"
-        / f"compare_models_same_dataset_{protocol}_{model_slug}_{plot_type}.{plot_format}"
+        / f"{plot_type}_plot_per_model_per_dataset.{plot_format}"
     )
 
 
@@ -420,6 +419,7 @@ def plot_multi_model_rows(
     title: str = "",
     plot_type: str = "box",
     show_outliers: bool = True,
+    orientation: str = "horizontal",
 ) -> None:
     mpl_config_dir = Path("analysis") / ".mplconfig"
     xdg_cache_dir = Path("analysis") / ".cache"
@@ -437,7 +437,7 @@ def plot_multi_model_rows(
             "savefig.dpi": 300,
             "font.family": "serif",
             "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
-            "font.size": 8,
+            "font.size": 12,
             "axes.labelsize": 9,
             "axes.titlesize": 9,
             "xtick.labelsize": 8,
@@ -454,7 +454,7 @@ def plot_multi_model_rows(
 
     labels = [display_dataset_label(row["dataset"]) for row in rows]
     x_positions = np.arange(len(rows))
-    group_width = 0.74
+    group_width = 0.62
     bar_width = min(0.24, group_width / len(models))
     start_offset = -bar_width * (len(models) - 1) / 2
     offsets = {
@@ -463,17 +463,25 @@ def plot_multi_model_rows(
     }
     rng = np.random.default_rng(20240515)
 
-    # Stack metric panels vertically (one column), so e.g. Dice sits above HD95.
-    ncols = 1
-    nrows = len(metrics)
-    fig_width = max(7.0, len(rows) * 0.5, ncols * 4.2)
-    fig_height = max(4.0, nrows * 3.6)
+    # Cap the figure width at US Letter (8.5 in) so it fits a normal page.
+    LETTER_WIDTH = 8.5
+    # Arrange metric panels either side by side (horizontal) or stacked (vertical).
+    if orientation == "horizontal":
+        nrows = 1
+        ncols = len(metrics)
+        panel_width = max(5.4, len(rows) * 0.7)
+        fig_width = min(LETTER_WIDTH, ncols * panel_width)
+        fig_height = max(2, nrows * 3)
+    else:
+        ncols = 1
+        nrows = len(metrics)
+        fig_width = min(LETTER_WIDTH, max(9.0, len(rows) * 0.7, ncols * 5.4))
+        fig_height = max(3.0, nrows * 2.8)
     fig, axes = plt.subplots(
         nrows=nrows,
         ncols=ncols,
         figsize=(fig_width, fig_height),
         squeeze=False,
-        constrained_layout=True,
     )
     axes_flat = axes.ravel()
 
@@ -518,7 +526,7 @@ def plot_multi_model_rows(
                 p75 = np.array([np.percentile(values, 75) for values in data])
                 yerr = np.vstack([medians - p25, p75 - medians])
                 axis.bar(
-                    positions, medians, width=bar_width, color=color, alpha=0.32,
+                    positions, medians, width=bar_width, color=color, alpha=0.7,
                     edgecolor=color, linewidth=1.1, zorder=2,
                 )
                 axis.errorbar(
@@ -533,7 +541,7 @@ def plot_multi_model_rows(
                 for body in parts["bodies"]:
                     body.set_facecolor(color)
                     body.set_edgecolor(color)
-                    body.set_alpha(0.32)
+                    body.set_alpha(0.7)
                     body.set_zorder(2)
                 parts["cmedians"].set_color("#222222")
                 parts["cmedians"].set_linewidth(1.2)
@@ -543,7 +551,7 @@ def plot_multi_model_rows(
                     data, positions=positions, widths=bar_width, showfliers=show_outliers,
                     patch_artist=True,
                     medianprops={"color": "#222222", "linewidth": 1.2},
-                    boxprops={"facecolor": color, "alpha": 0.32, "edgecolor": color, "linewidth": 1.1},
+                    boxprops={"facecolor": color, "alpha": 0.7, "edgecolor": color, "linewidth": 1.1},
                     whiskerprops={"color": color, "linewidth": 1.0},
                     capprops={"color": color, "linewidth": 1.0},
                     flierprops={"marker": "o", "markersize": 2, "markerfacecolor": color,
@@ -551,12 +559,16 @@ def plot_multi_model_rows(
                     zorder=2,
                 )
 
+        # Subtle vertical dividers between adjacent datasets.
+        for boundary in x_positions[:-1] + 0.5:
+            axis.axvline(boundary, color="#EDEDED", linewidth=0.5, alpha=0.6, zorder=0)
+
         if metric == "relative_area_error":
             axis.axhline(0.0, color="#555555", linewidth=0.8, linestyle="--", zorder=1)
         if metric in {"dice", "iou", "precision", "recall", "specificity", "balanced_accuracy"}:
             axis.set_ylim(0.0, 1.02)
         if metric in {"hd95_norm", "assd_norm"}:
-            axis.set_ylim(0.0, 1.0)
+            axis.set_ylim(bottom=0.0)
         axis.set_title(metric_label(metric))
         axis.set_xticks(x_positions)
         axis.set_xticklabels(labels, rotation=35, ha="right")
@@ -575,7 +587,7 @@ def plot_multi_model_rows(
             color="none",
             markerfacecolor=MODEL_COLORS.get(model, "#666666"),
             markeredgecolor=MODEL_COLORS.get(model, "#666666"),
-            alpha=0.55,
+            alpha=0.85,
             markersize=7,
             label=display_model_label(model),
         )
@@ -585,12 +597,13 @@ def plot_multi_model_rows(
         handles=handles,
         frameon=False,
         loc="lower center",
-        bbox_to_anchor=(0.5, -0.10),
+        bbox_to_anchor=(0.5, -0.05),
         ncol=len(models),
     )
 
     if title:
         fig.suptitle(title, y=1.02, fontsize=10)
+    fig.tight_layout()
     plot_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(plot_path, bbox_inches="tight")
     plt.close(fig)
@@ -662,6 +675,12 @@ def main() -> None:
         help="Show outlier markers on box plots. Default: true.",
     )
     parser.add_argument(
+        "--orientation",
+        default="horizontal",
+        choices=["horizontal", "vertical"],
+        help="Lay metric panels side by side (horizontal) or stacked (vertical). Default: horizontal.",
+    )
+    parser.add_argument(
         "--no-plot",
         action="store_true",
         help="Print the table without generating a figure.",
@@ -720,6 +739,7 @@ def main() -> None:
             title=args.plot_title,
             plot_type=args.plot_type,
             show_outliers=args.show_outliers == "true",
+            orientation=args.orientation,
         )
         print(f"Saved plot to: {plot_path}")
 
