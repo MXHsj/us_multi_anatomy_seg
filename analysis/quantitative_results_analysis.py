@@ -339,8 +339,14 @@ def plot_correlation_heatmaps(
         ]
         image = axis.imshow(matrix, cmap="RdBu_r", vmin=-1.0, vmax=1.0, aspect="auto")
         axis.set_yticks(range(len(eda_metrics)), [plot_label(metric, plot_labels) for metric in eda_metrics])
-        axis.set_xticks(range(len(datasets)), [DATASET_LABELS.get(dataset, dataset.upper()) for dataset in datasets])
-        axis.tick_params(axis="x", labelrotation=90, bottom=False)
+        axis.set_xticks(
+            range(len(datasets)),
+            [DATASET_LABELS.get(dataset, dataset.upper()) for dataset in datasets],
+            rotation=45,
+            ha="right",
+            rotation_mode="anchor",
+        )
+        axis.tick_params(axis="x", bottom=False)
         axis.set_title(plot_label(y_metric, plot_labels))
         axis.grid(False)
         for row, x_metric in enumerate(eda_metrics):
