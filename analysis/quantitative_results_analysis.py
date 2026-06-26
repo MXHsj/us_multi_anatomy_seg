@@ -47,21 +47,7 @@ EDA_METRICS = (
 )
 X_METRICS = (*EDA_METRICS, *DERIVED_RESULT_METRICS)
 
-DATASET_LABELS = {
-    "aulid": "AULID",
-    "blusg": "BLUSG",
-    "busbra": "BUS-BRA",
-    "busi": "BUSI",
-    "camus": "CAMUS",
-    "kus": "KUS",
-    "oku": "OKU",
-    "roblus": "RobLUS",
-    "tnsc2020": "TNSC2020",
-    "ultrabones100k": "UltraBones",
-    "umud": "UMUD",
-    "uns": "UNS",
-    "ussc": "USSC",
-}
+DATASET_LABELS = json.loads((ROOT_DIR / "datasets" / "datasets.json").read_text())["labels"]
 
 
 def parse_csv_arg(value: str, allowed: tuple[str, ...], label: str) -> tuple[str, ...]:
