@@ -7,8 +7,8 @@ output_dir="analysis/figures/results_vs_eda"
 
 # Metrics to plot and their axis labels (same order, comma-separated).
 # y-axis = result + derived metrics, x-axis = eda metrics.
-result_metrics="dice"
-results_plot_labels="Dice"
+result_metrics="dice,relative_area_error"
+results_plot_labels="Dice,Relative area error"
 
 derived_metrics="fn_per_gt,fp_per_gt"
 derived_plot_labels="FN / GT,FP / GT"
@@ -20,8 +20,8 @@ eda_plot_labels="Target area / image area,Target area / bbox area,Solidity,Circu
 datasets=$(python -c "import json; print(','.join(json.load(open('datasets/datasets.json'))['labels']))")
 
 # What to generate, and which correlation coefficients the heatmaps use.
-make_scatter="false"
-make_heatmap="true"
+make_scatter="true"
+make_heatmap="false"
 correlations="pearson,log_pearson,spearman"
 
 # Generate the results-vs-EDA figures (plain + heatmaps, then log-x scatters).

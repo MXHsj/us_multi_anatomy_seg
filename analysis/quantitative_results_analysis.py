@@ -307,6 +307,23 @@ def plot_overlay(
     plt.close(fig)
 
 
+def eda_context_matrix(
+    data_by_dataset: dict[str, pd.DataFrame],
+    eda_metrics: tuple[str, ...],
+) -> list[list[float]]:
+    """Per-dataset median of each EDA metric, normalized across datasets to [0, 1]."""
+    datasets = list(data_by_dataset)
+    matrix = []
+    for x_metric in eda_metrics:
+        medians = pd.Series(
+            [pd.to_numeric(data_by_dataset[dataset][x_metric], errors="coerce").median() for dataset in datasets]
+        )
+        low, high = medians.min(), medians.max()
+        normalized = (medians - low) / (high - low) if high > low else medians * 0.0
+        matrix.append(normalized.tolist())
+    return matrix
+
+
 def plot_correlation_heatmaps(
     data_by_dataset: dict[str, pd.DataFrame],
     output_path: Path,
@@ -320,24 +337,22 @@ def plot_correlation_heatmaps(
     plt = setup_matplotlib()
 
     datasets = list(data_by_dataset)
+    nrows = len(y_metrics) + 1  # extra top panel = EDA context
     fig, axes = plt.subplots(
-        len(y_metrics),
+        nrows,
         1,
-        figsize=(0.6 * len(datasets) + 3, 2.4 * len(y_metrics) + 1),
+        figsize=(0.6 * len(datasets) + 3, 2.4 * nrows + 1),
         squeeze=False,
         constrained_layout=True,
     )
+    axes = axes.ravel()
 
-    image = None
-    for axis, y_metric in zip(axes.ravel(), y_metrics):
-        matrix = [
-            [
-                corr_value(finite_points(data_by_dataset[dataset], x_metric, y_metric, False), x_metric, y_metric, method)
-                for dataset in datasets
-            ]
-            for x_metric in eda_metrics
-        ]
-        image = axis.imshow(matrix, cmap="RdBu_r", vmin=-1.0, vmax=1.0, aspect="auto")
+    def text_color(value: float, cmap: str, vmin: float, vmax: float) -> str:
+        red, green, blue, _ = plt.get_cmap(cmap)((value - vmin) / (vmax - vmin))
+        return "white" if 0.299 * red + 0.587 * green + 0.114 * blue < 0.5 else "black"
+
+    def draw(axis: Any, matrix: list[list[float]], title: str, cmap: str, vmin: float, vmax: float) -> Any:
+        image = axis.imshow(matrix, cmap=cmap, vmin=vmin, vmax=vmax, aspect="auto")
         axis.set_yticks(range(len(eda_metrics)), [plot_label(metric, plot_labels) for metric in eda_metrics])
         axis.set_xticks(
             range(len(datasets)),
@@ -347,16 +362,40 @@ def plot_correlation_heatmaps(
             rotation_mode="anchor",
         )
         axis.tick_params(axis="x", bottom=False)
-        axis.set_title(plot_label(y_metric, plot_labels))
+        axis.set_title(title)
         axis.grid(False)
-        for row, x_metric in enumerate(eda_metrics):
+        for row in range(len(eda_metrics)):
             for col in range(len(datasets)):
                 value = matrix[row][col]
                 if not math.isnan(value):
-                    axis.text(col, row, f"{value:.2f}", ha="center", va="center", fontsize=6)
+                    axis.text(col, row, f"{value:.2f}", ha="center", va="center", fontsize=6, color=text_color(value, cmap, vmin, vmax))
+        return image
 
-    fig.colorbar(image, ax=axes.ravel().tolist(), label=f"{plot_label(method)} r", shrink=0.6)
-    fig.suptitle(f"{model} ({protocol}) - {plot_label(method)} correlation")
+    # Top panel: EDA metric medians per dataset, normalized — context for the correlations below.
+    # Its own sequential colorbar, since these are normalized values, not correlations.
+    eda_image = draw(
+        axes[0],
+        eda_context_matrix(data_by_dataset, eda_metrics),
+        "EDA metrics (per-dataset median, normalized)",
+        "cividis",
+        0.0,
+        1.0,
+    )
+    fig.colorbar(eda_image, ax=axes[0], label="Median (normalized)", shrink=0.8)
+
+    image = None
+    for axis, y_metric in zip(axes[1:], y_metrics):
+        matrix = [
+            [
+                corr_value(finite_points(data_by_dataset[dataset], x_metric, y_metric, False), x_metric, y_metric, method)
+                for dataset in datasets
+            ]
+            for x_metric in eda_metrics
+        ]
+        image = draw(axis, matrix, plot_label(y_metric, plot_labels), "RdBu_r", -1.0, 1.0)
+
+    fig.colorbar(image, ax=axes[1:].tolist(), label=f"{plot_label(method)} r", shrink=0.6)
+    fig.suptitle(f"{model} ({protocol.replace('_', ' ')})")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
