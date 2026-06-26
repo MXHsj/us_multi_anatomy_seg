@@ -24,29 +24,34 @@ RESULT_METRICS = (*METRIC_NAMES, "infer_ms")
 DATASET_LABELS = json.loads((ROOT_DIR / "datasets" / "datasets.json").read_text())["labels"]
 
 
+def split_csv(value: str) -> tuple[str, ...]:
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
 def parse_csv_arg(value: str, allowed: tuple[str, ...], label: str) -> tuple[str, ...]:
     if value.strip().lower() == "all":
         return allowed
-    parsed = tuple(item.strip() for item in value.split(",") if item.strip())
-    unknown = sorted(set(parsed) - set(allowed))
+    names = split_csv(value)
+    unknown = sorted(set(names) - set(allowed))
     if unknown:
         raise SystemExit(
             f"Unsupported {label}: {', '.join(unknown)}. "
             f"Expected one of: {', '.join(allowed)}"
         )
-    if not parsed:
+    if not names:
         raise SystemExit(f"At least one {label} must be selected.")
-    return parsed
+    return names
+
+
+def labels_for(metrics: tuple[str, ...], labels_value: str) -> dict[str, str]:
+    """Pair each metric with the label in the same position (extras ignored)."""
+    return dict(zip(metrics, split_csv(labels_value)))
 
 
 def parse_datasets_arg(value: str) -> tuple[str, ...] | None:
     if not value.strip():
         return None
-    return tuple(dataset.strip() for dataset in value.split(",") if dataset.strip())
-
-
-def parse_derived_arg(value: str) -> tuple[str, ...]:
-    return tuple(item.strip() for item in value.split(",") if item.strip())
+    return split_csv(value)
 
 
 def compute_derived_metrics(df: pd.DataFrame, derived_metrics: tuple[str, ...]) -> pd.DataFrame:
@@ -115,8 +120,10 @@ def load_dataset_points(
     return merged
 
 
-def metric_label(metric: str) -> str:
-    """Sentence-case label derived from the metric name (underscores -> spaces)."""
+def plot_label(metric: str, labels: dict[str, str] | None = None) -> str:
+    """Axis label: the supplied plot label, else derived from the metric name."""
+    if labels and metric in labels:
+        return labels[metric]
     return metric.replace("_", " ").capitalize()
 
 
@@ -194,6 +201,7 @@ def plot_per_dataset(
     ncols: int,
     x_min: float,
     x_max: float,
+    plot_labels: dict[str, str],
 ) -> None:
     plt = setup_matplotlib()
 
@@ -216,16 +224,18 @@ def plot_per_dataset(
         apply_x_axis_limits(axis, log_x, x_min, x_max)
         label = DATASET_LABELS.get(dataset, dataset.upper())
         axis.set_title(f"{label} (n={len(points)}, {corr_label(points, x_metric, y_metric, log_x)})")
-        axis.set_xlabel(metric_label(x_metric))
+        axis.set_xlabel(plot_label(x_metric, plot_labels))
         apply_y_axis_limits(axis, y_metric)
         axis.grid(True, alpha=0.3)
 
     for axis in axes.ravel()[len(datasets) :]:
         axis.set_visible(False)
     for axis in axes[:, 0]:
-        axis.set_ylabel(metric_label(y_metric))
+        axis.set_ylabel(plot_label(y_metric, plot_labels))
 
-    fig.suptitle(f"{model} ({protocol}) - {metric_label(y_metric)} vs {metric_label(x_metric)}")
+    fig.suptitle(
+        f"{model} ({protocol}) - {plot_label(y_metric, plot_labels)} vs {plot_label(x_metric, plot_labels)}"
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
@@ -241,6 +251,7 @@ def plot_overlay(
     log_x: bool,
     x_min: float,
     x_max: float,
+    plot_labels: dict[str, str],
 ) -> None:
     plt = setup_matplotlib()
 
@@ -260,10 +271,12 @@ def plot_overlay(
         )
 
     apply_x_axis_limits(axis, log_x, x_min, x_max)
-    axis.set_xlabel(metric_label(x_metric))
-    axis.set_ylabel(metric_label(y_metric))
+    axis.set_xlabel(plot_label(x_metric, plot_labels))
+    axis.set_ylabel(plot_label(y_metric, plot_labels))
     apply_y_axis_limits(axis, y_metric)
-    axis.set_title(f"{model} ({protocol}) - {metric_label(y_metric)} vs {metric_label(x_metric)}")
+    axis.set_title(
+        f"{model} ({protocol}) - {plot_label(y_metric, plot_labels)} vs {plot_label(x_metric, plot_labels)}"
+    )
     axis.legend(fontsize=7, markerscale=1.5, loc="best")
     axis.grid(True, alpha=0.3)
 
@@ -307,11 +320,13 @@ def parse_args() -> argparse.Namespace:
         default="dice",
         help=f"Comma-separated result metrics or 'all'. Available: {', '.join(RESULT_METRICS)}.",
     )
+    parser.add_argument("--result-labels", default="", help="Comma-separated axis labels for --result-metrics.")
     parser.add_argument(
         "--derived-metrics",
         default="",
         help="Comma-separated derived (y-axis) metrics, e.g. fn_per_gt,fp_per_gt.",
     )
+    parser.add_argument("--derived-labels", default="", help="Comma-separated axis labels for --derived-metrics.")
     parser.add_argument(
         "--eda-metrics",
         default="target_bbox_area_ratio",
@@ -320,6 +335,7 @@ def parse_args() -> argparse.Namespace:
             "Available metrics are read from the EDA sample_stats.csv column headers."
         ),
     )
+    parser.add_argument("--eda-labels", default="", help="Comma-separated axis labels for --eda-metrics.")
     parser.add_argument(
         "--plot-kind",
         choices=["per_dataset", "overlay", "both"],
@@ -340,7 +356,7 @@ def main() -> None:
     args = parse_args()
 
     result_metrics = parse_csv_arg(args.result_metrics, RESULT_METRICS, "result metric")
-    derived_metrics = parse_derived_arg(args.derived_metrics)
+    derived_metrics = split_csv(args.derived_metrics)
     y_metrics = (*result_metrics, *derived_metrics)
     requested_datasets = parse_datasets_arg(args.datasets)
     datasets = list(requested_datasets) if requested_datasets else discover_datasets(args.results_dir, args.model, args.protocol)
@@ -351,6 +367,11 @@ def main() -> None:
     if not available_eda_metrics:
         raise SystemExit(f"No EDA sample_stats.csv columns found under {args.eda_dir}.")
     eda_metrics = parse_csv_arg(args.eda_metrics, available_eda_metrics, "EDA metric")
+    plot_labels = {
+        **labels_for(result_metrics, args.result_labels),
+        **labels_for(derived_metrics, args.derived_labels),
+        **labels_for(eda_metrics, args.eda_labels),
+    }
 
     data_by_dataset: dict[str, pd.DataFrame] = {}
     for dataset in datasets:
@@ -371,10 +392,12 @@ def main() -> None:
         raise SystemExit("No datasets had both result metrics and EDA sample_stats.csv files.")
 
     plot_kinds = ("per_dataset", "overlay") if args.plot_kind == "both" else (args.plot_kind,)
-    saved_paths: list[Path] = []
+    total = len(y_metrics) * len(eda_metrics) * len(plot_kinds)
+    index = 0
     for y_metric in y_metrics:
         for x_metric in eda_metrics:
             for plot_kind in plot_kinds:
+                index += 1
                 path = args.output_dir / output_name(
                     args.model,
                     args.protocol,
@@ -395,6 +418,7 @@ def main() -> None:
                         args.ncols,
                         args.x_min,
                         args.x_max,
+                        plot_labels,
                     )
                 else:
                     plot_overlay(
@@ -407,11 +431,10 @@ def main() -> None:
                         args.log_x,
                         args.x_min,
                         args.x_max,
+                        plot_labels,
                     )
-                saved_paths.append(path)
-
-    for path in saved_paths:
-        print(path)
+                print(f"[{index}/{total}] wrote {path}", flush=True)
+    print("")
 
 
 if __name__ == "__main__":
