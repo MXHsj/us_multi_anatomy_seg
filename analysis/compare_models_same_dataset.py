@@ -350,20 +350,24 @@ def write_csv(rows: list[dict[str, Any]], columns: list[str], output_csv: Path) 
         writer.writerows({column: row[column] for column in columns} for row in rows)
 
 
-def default_plot_path(protocol: str, model_a: str, model_b: str) -> Path:
+def default_plot_path(
+    protocol: str, model_a: str, model_b: str, plot_type: str, plot_format: str
+) -> Path:
     return (
         Path("analysis")
         / "figures"
-        / f"compare_models_same_dataset_{protocol}_{model_a}_vs_{model_b}.png"
+        / f"compare_models_same_dataset_{protocol}_{model_a}_vs_{model_b}_{plot_type}.{plot_format}"
     )
 
 
-def default_model_set_plot_path(protocol: str, models: tuple[str, ...]) -> Path:
+def default_model_set_plot_path(
+    protocol: str, models: tuple[str, ...], plot_type: str, plot_format: str
+) -> Path:
     model_slug = "_vs_".join(models)
     return (
         Path("analysis")
         / "figures"
-        / f"compare_models_same_dataset_{protocol}_{model_slug}.png"
+        / f"compare_models_same_dataset_{protocol}_{model_slug}_{plot_type}.{plot_format}"
     )
 
 
@@ -415,6 +419,8 @@ def plot_multi_model_rows(
     models: tuple[str, ...],
     metrics: tuple[str, ...],
     title: str = "",
+    plot_type: str = "box",
+    show_outliers: bool = True,
 ) -> None:
     mpl_config_dir = Path("analysis") / ".mplconfig"
     xdg_cache_dir = Path("analysis") / ".cache"
@@ -474,68 +480,76 @@ def plot_multi_model_rows(
 
     for axis, metric in zip(axes_flat, metrics):
         for model in models:
-            # Bars show the median with P25-P75 (IQR) whiskers. These bounded,
-            # skewed metrics are poorly summarized by mean +/- SD (whiskers run
-            # past [0, 1]); median + IQR reflects the real spread.
-            medians = []
-            lower_err = []
-            upper_err = []
-            for row in rows:
-                values = row.get("_values_by_metric", {}).get(metric, {}).get(model, [])
-                if values:
-                    median = float(np.median(values))
-                    p25, p75 = np.percentile(values, [25, 75])
-                    medians.append(median)
-                    lower_err.append(max(median - p25, 0.0))
-                    upper_err.append(max(p75 - median, 0.0))
-                else:
-                    medians.append(np.nan)
-                    lower_err.append(np.nan)
-                    upper_err.append(np.nan)
-            medians = np.array(medians, dtype=float)
-            yerr = np.vstack([np.array(lower_err), np.array(upper_err)])
+            # These bounded, skewed metrics are poorly summarized by mean +/- SD.
+            # bar  = median + P25-P75 (IQR) whiskers; box/violin show the full
+            # distribution directly. bar/violin overlay a jittered scatter of raw
+            # values; box instead shows outliers (the scatter bloats the figure).
             color = MODEL_COLORS.get(model, "#666666")
             model_positions = x_positions + offsets[model]
-            # Only draw bars/error bars where the model actually has results;
-            # missing models leave an empty slot rather than a zero-height bar.
-            finite = np.isfinite(medians)
 
-            axis.bar(
-                model_positions[finite],
-                medians[finite],
-                width=bar_width,
-                color=color,
-                alpha=0.32,
-                edgecolor=color,
-                linewidth=1.1,
-                zorder=2,
-                label=display_model_label(model),
-            )
-            axis.errorbar(
-                model_positions[finite],
-                medians[finite],
-                yerr=yerr[:, finite],
-                fmt="none",
-                ecolor="#222222",
-                elinewidth=1.0,
-                capsize=3,
-                capthick=1.0,
-                zorder=4,
-            )
-
+            # Only draw where the model actually has results; missing models
+            # leave an empty slot rather than an empty/zero marker.
+            data = []
+            positions = []
             for idx, row in enumerate(rows):
-                values = row["_values_by_metric"][metric][model]
+                values = row.get("_values_by_metric", {}).get(metric, {}).get(model, [])
                 if not values:
                     continue
-                jitter = rng.uniform(-bar_width * 0.27, bar_width * 0.27, size=len(values))
-                axis.scatter(
-                    np.full(len(values), model_positions[idx]) + jitter,
-                    values,
-                    s=3,
-                    color=color,
-                    alpha=0.14,
-                    linewidths=0,
-                    zorder=3,
+                data.append(values)
+                positions.append(model_positions[idx])
+
+                if plot_type != "box":
+                    jitter = rng.uniform(-bar_width * 0.27, bar_width * 0.27, size=len(values))
+                    axis.scatter(
+                        np.full(len(values), model_positions[idx]) + jitter,
+                        values,
+                        s=3,
+                        color=color,
+                        alpha=0.14,
+                        linewidths=0,
+                        zorder=0,
+                    )
+
+            if not data:
+                continue
+
+            if plot_type == "bar":
+                medians = np.array([np.median(values) for values in data])
+                p25 = np.array([np.percentile(values, 25) for values in data])
+                p75 = np.array([np.percentile(values, 75) for values in data])
+                yerr = np.vstack([medians - p25, p75 - medians])
+                axis.bar(
+                    positions, medians, width=bar_width, color=color, alpha=0.32,
+                    edgecolor=color, linewidth=1.1, zorder=2,
+                )
+                axis.errorbar(
+                    positions, medians, yerr=yerr, fmt="none", ecolor="#222222",
+                    elinewidth=1.0, capsize=3, capthick=1.0, zorder=4,
+                )
+            elif plot_type == "violin":
+                parts = axis.violinplot(
+                    data, positions=positions, widths=bar_width,
+                    showmedians=True, showextrema=False,
+                )
+                for body in parts["bodies"]:
+                    body.set_facecolor(color)
+                    body.set_edgecolor(color)
+                    body.set_alpha(0.32)
+                    body.set_zorder(2)
+                parts["cmedians"].set_color("#222222")
+                parts["cmedians"].set_linewidth(1.2)
+                parts["cmedians"].set_zorder(2)
+            else:  # box
+                axis.boxplot(
+                    data, positions=positions, widths=bar_width, showfliers=show_outliers,
+                    patch_artist=True,
+                    medianprops={"color": "#222222", "linewidth": 1.2},
+                    boxprops={"facecolor": color, "alpha": 0.32, "edgecolor": color, "linewidth": 1.1},
+                    whiskerprops={"color": color, "linewidth": 1.0},
+                    capprops={"color": color, "linewidth": 1.0},
+                    flierprops={"marker": "o", "markersize": 2, "markerfacecolor": color,
+                                "markeredgecolor": "none", "alpha": 0.5},
+                    zorder=2,
                 )
 
         if metric == "relative_area_error":
@@ -631,6 +645,24 @@ def main() -> None:
         help="Optional figure title. By default no title is drawn for paper-style output.",
     )
     parser.add_argument(
+        "--plot-type",
+        default="box",
+        choices=["bar", "box", "violin"],
+        help="Per-dataset plot style for each model. Default: box.",
+    )
+    parser.add_argument(
+        "--plot-format",
+        default="png",
+        choices=["png", "svg", "pdf"],
+        help="File format for the default plot path. Default: png.",
+    )
+    parser.add_argument(
+        "--show-outliers",
+        default="true",
+        choices=["true", "false"],
+        help="Show outlier markers on box plots. Default: true.",
+    )
+    parser.add_argument(
         "--no-plot",
         action="store_true",
         help="Print the table without generating a figure.",
@@ -674,15 +706,21 @@ def main() -> None:
                 args.protocol,
                 models[0],
                 models[1],
+                args.plot_type,
+                args.plot_format,
             )
         else:
-            plot_path = args.plot_path or default_model_set_plot_path(args.protocol, models)
+            plot_path = args.plot_path or default_model_set_plot_path(
+                args.protocol, models, args.plot_type, args.plot_format
+            )
         plot_multi_model_rows(
             rows=rows,
             plot_path=plot_path,
             models=models,
             metrics=metrics,
             title=args.plot_title,
+            plot_type=args.plot_type,
+            show_outliers=args.show_outliers == "true",
         )
         print(f"Saved plot to: {plot_path}")
 
