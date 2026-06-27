@@ -26,5 +26,13 @@ data_cache/
 # results/
 *.zip
 presentation
-results/**/visualizations/
+# results/**/visualizations/
 results/**/coco_export/
+
+.env
+
+# latex
+ASMUS2026_Evaluating_Ultrasound_Segmentation_Models_MONAI_US_WG/
+
+# IDEs
+.vscode/
