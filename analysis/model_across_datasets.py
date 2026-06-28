@@ -51,8 +51,11 @@ def parse_result_dir_name(name: str) -> tuple[str, str, str] | None:
         protocol = "jitter_bbox"
         dataset = "_".join(parts[3:])
     elif parts[1:3] == ["text", "prompt"]:
-        # Text-prompted protocol (e.g. medicalsam3_text_prompt_tnsc2020). Reported in
-        # its own table -- never merged with the box (gt_bbox/jitter_bbox) results.
+        # Legacy flat text-prompt convention (results/<model>_text_prompt_<dataset>/).
+        # Current text runs use the nested label/object prompt families instead
+        # (results/<model>_label_prompt/<dataset>/), handled by parse_prompt_family_dir.
+        # Kept for backward compatibility; reported in its own table -- never merged
+        # with the box (gt_bbox/jitter_bbox) results.
         protocol = "text"
         dataset = "_".join(parts[3:])
     else:
