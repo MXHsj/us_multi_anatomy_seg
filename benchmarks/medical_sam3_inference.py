@@ -341,6 +341,19 @@ def main() -> None:
     )
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument(
+        "--num-shards",
+        type=int,
+        default=1,
+        help="Split the dataset across N shards (process every Nth sample) so it can "
+        "run on N GPUs in parallel. Merge the shard outputs with analysis/merge_shards.py.",
+    )
+    parser.add_argument(
+        "--shard-id",
+        type=int,
+        default=0,
+        help="Which shard this run handles (0-based, < --num-shards).",
+    )
+    parser.add_argument(
         "--max-samples",
         type=parse_max_samples,
         default=None,
@@ -350,6 +363,11 @@ def main() -> None:
     parser.add_argument("--save-vis", type=int, default=8)
     parser.add_argument("--output-dir", type=str, default="results/medicalsam3_text_prompt")
     args = parser.parse_args()
+
+    if args.num_shards < 1:
+        parser.error("--num-shards must be >= 1.")
+    if not (0 <= args.shard_id < args.num_shards):
+        parser.error("--shard-id must satisfy 0 <= shard-id < --num-shards.")
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -402,6 +420,10 @@ def main() -> None:
     )
 
     for idx, sample in enumerate(decoder.iter_samples(max_samples=args.max_samples)):
+        # Sharding: process only every Nth sample so N jobs can split the dataset.
+        if args.num_shards > 1 and idx % args.num_shards != args.shard_id:
+            continue
+
         image_3c = ensure_three_channels(normalize_to_uint8(sample.image))
         H, W = image_3c.shape[:2]
         gt_mask = (sample.mask > 0).astype(np.uint8)
@@ -493,6 +515,8 @@ def main() -> None:
             "device": device,
             "confidence_threshold": args.confidence_threshold,
             "text_prompt_override": args.text_prompt or None,
+            "num_shards": args.num_shards,
+            "shard_id": args.shard_id,
             "max_samples": format_max_samples(args.max_samples),
             "num_evaluated": len(rows),
             "num_skipped_empty_mask": skipped,

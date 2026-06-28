@@ -219,13 +219,13 @@ def read_metric_row(path: Path, sample_id: str) -> dict[str, str] | None:
 
 def text_visualization_path(text_model: str, sample_id: str) -> Path:
     if text_model == "medsam3":
-        return ROOT / "results" / "medsam3_text_prompt_blusg" / "visualizations" / f"{sample_id}.png"
+        return ROOT / "results" / "medsam3_label_prompt" / "blusg" / "visualizations" / f"{sample_id}.png"
     return ROOT / "results" / "medicalsam3_label_prompt" / "blusg" / "visualizations" / f"{sample_id}.png"
 
 
 def text_metric_path(text_model: str) -> Path:
     if text_model == "medsam3":
-        return ROOT / "results" / "medsam3_text_prompt_blusg" / "per_sample_metrics.csv"
+        return ROOT / "results" / "medsam3_label_prompt" / "blusg" / "per_sample_metrics.csv"
     return ROOT / "results" / "medicalsam3_label_prompt" / "blusg" / "per_sample_metrics.csv"
 
 

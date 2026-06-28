@@ -2,8 +2,12 @@
 __pycache__/
 *.pyc
 
+# local secrets (HF_TOKEN, etc.) -- never commit
+.env
+
 # pretrained weights
 *.pth
+*.pt
 # Note: work_dir/UltraSam/ is tracked (README.md), but its UltraSam.pth weight
 # stays ignored via the global *.pth rule above and is auto-downloaded at runtime.
 
@@ -28,11 +32,22 @@ data_cache/
 presentation
 # results/**/visualizations/
 results/**/coco_export/
-
-.env
-
 # latex
 ASMUS2026_Evaluating_Ultrasound_Segmentation_Models_MONAI_US_WG/
 
 # IDEs
 .vscode/
+
+# per-shard outputs are redundant once merged into the parent run dir
+results/**/_shards/
+
+# Medical SAM3 source clone (throwaway; install the `sam3` package instead)
+medical-sam3/
+# scratch dataset download zips (wget -c staging)
+downloads/
+# slurm logs and stray job stdout/stderr
+logs/
+msam3_*.out
+msam3_*.err
+# large reference docs (e.g. the paper PDF) are not committed
+*.pdf
