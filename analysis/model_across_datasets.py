@@ -387,10 +387,11 @@ def main() -> None:
     parser.add_argument(
         "--protocol",
         default="gt_bbox",
-        choices=["gt_bbox", "jitter_bbox", "text", "label", "object"],
+        choices=["gt_bbox", "jitter_bbox", "text", "label", "object", "textbbox"],
         help=(
-            "Box protocols (gt_bbox/jitter_bbox) or text-prompt styles "
-            "(label/object) for Medical SAM3. Reported in separate tables."
+            "Box protocols (gt_bbox/jitter_bbox), text-prompt styles "
+            "(label/object), or text+box (textbbox) for Medical SAM3. "
+            "Reported in separate tables."
         ),
     )
     parser.add_argument(
