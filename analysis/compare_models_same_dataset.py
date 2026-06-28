@@ -22,14 +22,12 @@ MODEL_COLORS = {
     "samus": "#55A868",
     "ultrasam": "#C44E52",
     "medicalsam3": "#8172B3",
-    "medsam3": "#884cb0",
 }
 MODEL_LABELS = {
     "medsam": "MedSAM",
     "samus": "SAMUS",
     "ultrasam": "UltraSAM",
     "medicalsam3": "Medical SAM3",
-    "medsam3": "MedSAM3",
 }
 # Fallback colors for the second series when both series share the same model
 # (e.g. comparing Medical SAM3 label vs object), so the two bars stay distinct.
@@ -40,7 +38,6 @@ PROTOCOL_LABELS = {
     "text": "text",
     "label": "label",
     "object": "object",
-    "textbbox": "text+box",
 }
 DATASET_LABELS = {
     "aulid": "AULID",
