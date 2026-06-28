@@ -21,8 +21,16 @@ datasets=$(python -c "import json; print(','.join(json.load(open('datasets/datas
 
 # What to generate, and which correlation coefficients the heatmaps use.
 make_scatter="true"
-make_heatmap="false"
+make_heatmap="true"
 correlations="pearson,log_pearson,spearman"
+
+# Figure file format: png, svg, or pdf.
+plot_format="pdf"
+
+# Pool every dataset's images into one cloud: scatter becomes a single overlay
+# (dots colored per dataset) and the heatmap correlations are computed across all
+# combined images instead of per dataset. Set to "true" for per-dataset figures.
+per_dataset="false"
 
 # Generate the results-vs-EDA figures (plain + heatmaps, then log-x scatters).
 echo "Generating results-vs-EDA figures..."
@@ -31,6 +39,7 @@ python analysis/quantitative_results_analysis.py \
   --result-metrics "${result_metrics}" --result-labels "${results_plot_labels}" \
   --derived-metrics "${derived_metrics}" --derived-labels "${derived_plot_labels}" \
   --eda-metrics "${eda_metrics}" --eda-labels "${eda_plot_labels}" \
+  --per-dataset "${per_dataset}" --plot-format "${plot_format}" \
   --scatter "${make_scatter}" --heatmap "${make_heatmap}" --correlations "${correlations}"
 
 echo "Generating results-vs-EDA figures (log-x)..."
@@ -39,5 +48,6 @@ python analysis/quantitative_results_analysis.py \
   --result-metrics "${result_metrics}" --result-labels "${results_plot_labels}" \
   --derived-metrics "${derived_metrics}" --derived-labels "${derived_plot_labels}" \
   --eda-metrics "${eda_metrics}" --eda-labels "${eda_plot_labels}" \
+  --per-dataset "${per_dataset}" --plot-format "${plot_format}" \
   --scatter "${make_scatter}" --heatmap "false" \
   --log-x
