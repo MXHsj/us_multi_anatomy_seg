@@ -367,7 +367,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--log-x",
-        action="store_true",
+        type=str2bool,
+        default=False,
         help="Use a log-scaled x-axis and append _logx to output filenames.",
     )
     return parser.parse_args()

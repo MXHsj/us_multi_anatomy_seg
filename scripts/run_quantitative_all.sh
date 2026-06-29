@@ -27,12 +27,15 @@ correlations="pearson,log_pearson,spearman"
 # Figure file format: png, svg, or pdf.
 plot_format="pdf"
 
-# Pool every dataset's images into one cloud: scatter becomes a single overlay
-# (dots colored per dataset) and the heatmap correlations are computed across all
-# combined images instead of per dataset. Set to "true" for per-dataset figures.
-per_dataset="false"
+# How to prepare the data before plotting:
+#   false -> combine all images into one figure (scatter and heatmap).
+#   true  -> one figure per dataset (the same plot, repeated per dataset).
+per_dataset="true"
 
-# Generate the results-vs-EDA figures (plain + heatmaps, then log-x scatters).
+# Use a log-scaled x-axis (true/false).
+log_x="false"
+
+# Generate the results-vs-EDA figures.
 echo "Generating results-vs-EDA figures..."
 python analysis/quantitative_results_analysis.py \
   --output-dir "${output_dir}" --datasets "${datasets}" \
@@ -40,14 +43,5 @@ python analysis/quantitative_results_analysis.py \
   --derived-metrics "${derived_metrics}" --derived-labels "${derived_plot_labels}" \
   --eda-metrics "${eda_metrics}" --eda-labels "${eda_plot_labels}" \
   --per-dataset "${per_dataset}" --plot-format "${plot_format}" \
-  --scatter "${make_scatter}" --heatmap "${make_heatmap}" --correlations "${correlations}"
-
-echo "Generating results-vs-EDA figures (log-x)..."
-python analysis/quantitative_results_analysis.py \
-  --output-dir "${output_dir}" --datasets "${datasets}" \
-  --result-metrics "${result_metrics}" --result-labels "${results_plot_labels}" \
-  --derived-metrics "${derived_metrics}" --derived-labels "${derived_plot_labels}" \
-  --eda-metrics "${eda_metrics}" --eda-labels "${eda_plot_labels}" \
-  --per-dataset "${per_dataset}" --plot-format "${plot_format}" \
-  --scatter "${make_scatter}" --heatmap "false" \
-  --log-x
+  --scatter "${make_scatter}" --heatmap "${make_heatmap}" --correlations "${correlations}" \
+  --log-x "${log_x}"
