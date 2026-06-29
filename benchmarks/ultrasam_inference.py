@@ -272,7 +272,6 @@ def export_decoder_to_coco(
                 "image": image_uint8,
                 "mask": mask,
                 "bbox": record_bbox,
-                "gt_components": [np.asarray(c).astype(np.uint8) for c in component_masks],
             }
         )
 
@@ -360,7 +359,6 @@ def load_existing_coco_export_records(
                 "image": ensure_three_channels(normalize_to_uint8(sample.image)),
                 "mask": mask,
                 "bbox": record_bbox,
-                "gt_components": [np.asarray(c).astype(np.uint8) for c in component_masks],
             }
         )
 
@@ -473,6 +471,54 @@ def tensor_mask_to_numpy(mask: Any, shape: tuple[int, int]) -> np.ndarray:
     return arr.astype(np.uint8)
 
 
+def read_done_sample_ids(csv_path: Path) -> set[str]:
+    """Sample ids already written to per_sample_metrics.csv (for resuming a crashed run)."""
+    if not csv_path.exists():
+        return set()
+    with csv_path.open(newline="", encoding="utf-8") as handle:
+        return {row["sample_id"] for row in csv.DictReader(handle) if row.get("sample_id")}
+
+
+def read_metric_rows(csv_path: Path) -> list[dict[str, Any]]:
+    """Read prior per-sample rows back, coercing metric columns to float for summary stats."""
+    if not csv_path.exists():
+        return []
+    numeric = {*METRIC_NAMES, "infer_ms"}
+    rows: list[dict[str, Any]] = []
+    with csv_path.open(newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            for column in numeric:
+                try:
+                    row[column] = float(row[column])
+                except (TypeError, ValueError):
+                    pass
+            rows.append(row)
+    return rows
+
+
+def write_pending_annotations(ann_path: Path, keep_image_ids: set[int], out_path: Path) -> Path:
+    """Write a COCO annotations file with only the given image ids (original ids preserved)."""
+    coco = json.loads(ann_path.read_text())
+    coco["images"] = [image for image in coco["images"] if int(image["id"]) in keep_image_ids]
+    coco["annotations"] = [ann for ann in coco["annotations"] if int(ann["image_id"]) in keep_image_ids]
+    out_path.write_text(json.dumps(coco))
+    return out_path
+
+
+def consolidate_box_metrics(jsonl_path: Path, json_path: Path) -> None:
+    """Merge the crash-safe JSONL stream into the per_box_metrics.json list (dedup by sample_id)."""
+    by_sample: dict[str, Any] = {}
+    if json_path.exists():
+        for record in json.loads(json_path.read_text()):
+            by_sample[record["sample_id"]] = record
+    if jsonl_path.exists():
+        for line in jsonl_path.read_text().splitlines():
+            if line.strip():
+                record = json.loads(line)
+                by_sample[record["sample_id"]] = record
+    json_path.write_text(json.dumps(list(by_sample.values()), indent=2))
+
+
 @torch.no_grad()
 def iter_ultrasam_predictions(model: Any, dataloader: Any, records_by_image_id: dict[int, Any]):
     use_amp = next(model.parameters()).is_cuda
@@ -485,8 +531,8 @@ def iter_ultrasam_predictions(model: Any, dataloader: Any, records_by_image_id: 
             image_id = int(getattr(data_sample, "img_id", data_sample.metainfo["img_id"]))
             record = records_by_image_id[image_id]
             pred_instances = data_sample.pred_instances
-            # One predicted mask per prompt box, in prompt order (see SAM mask decoder split
-            # by len(gt_instances)); per_box_masks[i] aligns with record["gt_components"][i].
+            # One predicted mask per prompt box, in prompt order (see SAM mask decoder split by
+            # len(gt_instances)); per_box_masks[i] aligns with the i-th GT component of the mask.
             per_box_masks = [
                 tensor_mask_to_numpy(pred_instances.masks[mask_idx], record["mask"].shape)
                 for mask_idx in range(len(pred_instances))
@@ -705,121 +751,150 @@ def main() -> None:
     if not records:
         raise RuntimeError("No non-empty masks were exported for UltraSAM evaluation.")
 
-    model, cfg = load_ultrasam_model(
-        ultrasam_dir=ultrasam_dir,
-        config_path=config_path,
-        checkpoint_path=checkpoint,
-        device=device,
-    )
-    dataloader = build_ultrasam_dataloader(
-        cfg=cfg,
-        coco_dir=coco_dir,
-        ann_path=ann_path,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-    )
+    metrics_path = output_dir / "per_sample_metrics.csv"
+    box_jsonl_path = output_dir / "per_box_metrics.jsonl"
+    box_metrics_path = output_dir / "per_box_metrics.json"
 
-    records_by_image_id = {int(record["image_id"]): record for record in records}
+    # Resume only when the on-disk export was reused (consistent with the current args) and prior
+    # rows exist; otherwise start fresh and overwrite any stale partial results.
+    resume = existing_export is not None and metrics_path.exists()
+    done = read_done_sample_ids(metrics_path) if resume else set()
+    rows: list[dict[str, Any]] = read_metric_rows(metrics_path) if resume else []
+    pending = [record for record in records if record["sample"].sample_id not in done]
+    if done:
+        print(f"Resuming: {len(done)} samples already done, {len(pending)} remaining.", flush=True)
+
     metrics_calc = SegmentationMetrics()
-    rows: list[dict[str, Any]] = []
-    box_records: list[dict[str, Any]] = []
-    total = len(records)
     start_time = time.time()
 
-    vis_collector = None
-    if args.save_vis > 0:
-        vis_total = source_total if source_total is not None else total
-        source_vis_indices = evenly_spaced_zero_based_indices(vis_total, args.save_vis)
-        vis_collector = TargetVisualizationCollector(
-            output_dir / "visualizations",
-            source_vis_indices,
-            model_label="UltraSAM",
+    if pending:
+        model, _cfg = load_ultrasam_model(
+            ultrasam_dir=ultrasam_dir,
+            config_path=config_path,
+            checkpoint_path=checkpoint,
+            device=device,
         )
+        loader_ann_path = (
+            write_pending_annotations(
+                ann_path,
+                {int(record["image_id"]) for record in pending},
+                coco_dir / "annotations_pending.json",
+            )
+            if len(pending) < len(records)
+            else ann_path
+        )
+        dataloader = build_ultrasam_dataloader(
+            cfg=_cfg,
+            coco_dir=coco_dir,
+            ann_path=loader_ann_path,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+        )
+        records_by_image_id = {int(record["image_id"]): record for record in pending}
 
-    print(f"Running UltraSAM benchmark for dataset '{args.dataset}' on {total} samples...")
-    for idx, (record, pred_mask, per_box_masks, infer_ms) in enumerate(
-        iter_ultrasam_predictions(model, dataloader, records_by_image_id),
-        start=1,
-    ):
-        sample = record["sample"]
-        mask = record["mask"]
-        bbox = record["bbox"]
-        height, width = mask.shape[:2]
-        metrics = metrics_calc.compute(mask, pred_mask)
-        rows.append(
-            build_metric_row(
-                sample=sample,
-                height=height,
-                width=width,
-                bbox=bbox,
-                metrics=metrics,
-                infer_ms=infer_ms,
+        vis_collector = None
+        if args.save_vis > 0:
+            vis_total = source_total if source_total is not None else len(records)
+            source_vis_indices = evenly_spaced_zero_based_indices(vis_total, args.save_vis)
+            vis_collector = TargetVisualizationCollector(
+                output_dir / "visualizations",
+                source_vis_indices,
+                model_label="UltraSAM",
             )
-        )
 
-        # Per-bounding-box metrics: score each prompt box's prediction against its own GT
-        # component (aligned by prompt order). Empty case: predicted mask of zeros.
-        prompt_boxes = np.atleast_2d(np.asarray(bbox))
-        boxes_payload: list[dict[str, Any]] = []
-        for box_index, gt_component in enumerate(record["gt_components"]):
-            box_pred = (
-                per_box_masks[box_index]
-                if box_index < len(per_box_masks)
-                else np.zeros_like(mask, dtype=np.uint8)
-            )
-            box_metrics = metrics_calc.compute(gt_component, box_pred)
-            boxes_payload.append(
-                {
-                    "box_index": box_index,
-                    "bbox": prompt_boxes[box_index].tolist()
-                    if box_index < len(prompt_boxes)
-                    else None,
-                    **{name: float(box_metrics[name]) for name in METRIC_NAMES},
-                }
-            )
-        box_records.append(
-            build_box_metric_record(
-                sample=sample,
-                height=height,
-                width=width,
-                infer_ms=infer_ms,
-                boxes=boxes_payload,
-            )
-        )
+        # Stream per-image results so a crash keeps the finished samples. Write the JSONL box line
+        # before the CSV row, so a CSV row (the resume marker) always implies its JSONL entry.
+        csv_handle = metrics_path.open("a" if resume else "w", newline="", encoding="utf-8")
+        writer = csv.DictWriter(csv_handle, fieldnames=METRIC_FIELDNAMES)
+        if not resume:
+            writer.writeheader()
+        jsonl_handle = box_jsonl_path.open("a" if resume else "w", encoding="utf-8")
+
+        print(f"Running UltraSAM benchmark for dataset '{args.dataset}' on {len(pending)} samples...")
+        try:
+            for record, pred_mask, per_box_masks, infer_ms in iter_ultrasam_predictions(
+                model, dataloader, records_by_image_id
+            ):
+                sample = record["sample"]
+                mask = record["mask"]
+                bbox = record["bbox"]
+                height, width = mask.shape[:2]
+                metrics = metrics_calc.compute(mask, pred_mask)
+                row = build_metric_row(
+                    sample=sample,
+                    height=height,
+                    width=width,
+                    bbox=bbox,
+                    metrics=metrics,
+                    infer_ms=infer_ms,
+                )
+
+                # Per-bounding-box metrics: score each prompt box's prediction against its own GT
+                # component, recomputed here in prompt order (avoids holding components in RAM).
+                gt_components = bbox_masks_from_mask(mask, mode=args.bbox_mode, min_area=16)
+                prompt_boxes = np.atleast_2d(np.asarray(bbox))
+                boxes_payload: list[dict[str, Any]] = []
+                for box_index, gt_component in enumerate(gt_components):
+                    box_pred = (
+                        per_box_masks[box_index]
+                        if box_index < len(per_box_masks)
+                        else np.zeros_like(mask, dtype=np.uint8)
+                    )
+                    box_metrics = metrics_calc.compute(np.asarray(gt_component).astype(np.uint8), box_pred)
+                    boxes_payload.append(
+                        {
+                            "box_index": box_index,
+                            "bbox": prompt_boxes[box_index].tolist()
+                            if box_index < len(prompt_boxes)
+                            else None,
+                            **{name: float(box_metrics[name]) for name in METRIC_NAMES},
+                        }
+                    )
+                box_record = build_box_metric_record(
+                    sample=sample,
+                    height=height,
+                    width=width,
+                    infer_ms=infer_ms,
+                    boxes=boxes_payload,
+                )
+
+                jsonl_handle.write(json.dumps(box_record) + "\n")
+                jsonl_handle.flush()
+                writer.writerow(row)
+                csv_handle.flush()
+                rows.append(row)
+
+                if vis_collector is not None:
+                    vis_collector.add_if_selected(
+                        sample=sample,
+                        image=record["image"],
+                        gt_mask=mask,
+                        pred_mask=pred_mask,
+                        bbox=bbox,
+                        dice=metrics["dice"],
+                        iou=metrics["iou"],
+                    )
+
+                print_progress(
+                    current=len(rows),
+                    total=len(records),
+                    evaluated=len(rows),
+                    skipped=export_skipped,
+                    sample_id=sample.sample_id,
+                    elapsed_s=time.time() - start_time,
+                )
+        finally:
+            csv_handle.close()
+            jsonl_handle.close()
+        print()
 
         if vis_collector is not None:
-            vis_collector.add_if_selected(
-                sample=sample,
-                image=record["image"],
-                gt_mask=mask,
-                pred_mask=pred_mask,
-                bbox=bbox,
-                dice=metrics["dice"],
-                iou=metrics["iou"],
-            )
+            vis_collector.flush_pending()
+    else:
+        print(f"All {len(records)} samples already evaluated; finalizing outputs.", flush=True)
 
-        print_progress(
-            current=idx,
-            total=total,
-            evaluated=len(rows),
-            skipped=export_skipped,
-            sample_id=sample.sample_id,
-            elapsed_s=time.time() - start_time,
-        )
-    print()
-
-    if vis_collector is not None:
-        vis_collector.flush_pending()
-
-    metrics_path = output_dir / "per_sample_metrics.csv"
-    with metrics_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=METRIC_FIELDNAMES)
-        writer.writeheader()
-        writer.writerows(rows)
-
-    box_metrics_path = output_dir / "per_box_metrics.json"
-    with box_metrics_path.open("w", encoding="utf-8") as handle:
-        json.dump(box_records, handle, indent=2)
+    # Consolidate the crash-safe JSONL stream into the per_box_metrics.json list contract.
+    consolidate_box_metrics(box_jsonl_path, box_metrics_path)
 
     target_class_summary = summarize_target_class_metrics(rows)
     summary = {
