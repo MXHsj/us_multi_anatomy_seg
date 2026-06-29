@@ -50,6 +50,9 @@ DEFAULT_ULTRASAM_CHECKPOINT_URL = (
 )
 DEFAULT_ULTRASAM_CONFIG = "configs/UltraSAM/UltraSAM_full/UltraSAM_box_refine.py"
 
+# Thin line-like targets where centerline Dice (clDice) replaces overlap Dice (still saved as "dice").
+CENTERLINE_DICE_DATASETS = {"roblus", "umud"}
+
 
 def resolve_torch_device(requested_device: str) -> torch.device:
     requested = torch.device(requested_device)
@@ -688,6 +691,15 @@ def main() -> None:
     )
     parser.add_argument("--box-padding", type=int, default=0)
     parser.add_argument(
+        "--centerline-tolerance",
+        type=float,
+        default=0.0,
+        help=(
+            "Euclidean pixel tolerance for centerline Dice (clDice) on line-like datasets "
+            f"({', '.join(sorted(CENTERLINE_DICE_DATASETS))}). 0 (default) = strict clDice."
+        ),
+    )
+    parser.add_argument(
         "--bbox-mode",
         choices=("union", "individual"),
         default="individual",
@@ -764,7 +776,10 @@ def main() -> None:
     if done:
         print(f"Resuming: {len(done)} samples already done, {len(pending)} remaining.", flush=True)
 
-    metrics_calc = SegmentationMetrics()
+    metrics_calc = SegmentationMetrics(
+        centerline_dice=args.dataset.lower() in CENTERLINE_DICE_DATASETS,
+        centerline_tolerance=args.centerline_tolerance,
+    )
     start_time = time.time()
 
     if pending:

@@ -5,6 +5,7 @@ from typing import Iterable
 
 import numpy as np
 from scipy import ndimage
+from skimage.morphology import skeletonize
 
 
 METRIC_NAMES = [
@@ -24,6 +25,8 @@ METRIC_NAMES = [
 class SegmentationMetrics:
     hd_percentile: float = 95.0
     spacing: tuple[float, ...] | None = None
+    centerline_dice: bool = False
+    centerline_tolerance: float = 0.0
 
     def compute(self, gt: np.ndarray, pred: np.ndarray) -> dict[str, float]:
         gt_b = np.asarray(gt).astype(bool)
@@ -41,7 +44,10 @@ class SegmentationMetrics:
         precision = _safe_rate(tp, tp + fp, empty_value=1.0 if gt_area == 0 else 0.0)
         recall = _safe_rate(tp, tp + fn, empty_value=1.0 if pred_area == 0 else 0.0)
         specificity = _safe_rate(tn, tn + fp, empty_value=1.0)
-        dice = _safe_rate(2.0 * tp, 2.0 * tp + fp + fn, empty_value=1.0)
+        if self.centerline_dice:
+            dice = self._centerline_dice(gt_b, pred_b)
+        else:
+            dice = _safe_rate(2.0 * tp, 2.0 * tp + fp + fn, empty_value=1.0)
         iou = _safe_rate(tp, tp + fp + fn, empty_value=1.0)
         hd95, assd = self._surface_distances(gt_b, pred_b)
 
@@ -91,6 +97,32 @@ class SegmentationMetrics:
             float(np.percentile(distances, self.hd_percentile)),
             float(distances.mean()),
         )
+
+    def _centerline_dice(self, gt: np.ndarray, pred: np.ndarray) -> float:
+        """Centerline Dice (clDice): topology-aware overlap of each mask's skeleton with the other
+        mask, optionally within ``centerline_tolerance`` Euclidean pixels. Empty GT is skipped (NaN).
+        """
+        if not gt.any():
+            return float("nan")
+        if not pred.any():
+            return 0.0
+
+        skel_gt = skeletonize(gt)
+        skel_pred = skeletonize(pred)
+        skel_gt_sum = float(skel_gt.sum())
+        skel_pred_sum = float(skel_pred.sum())
+        if skel_gt_sum == 0 or skel_pred_sum == 0:
+            return 0.0
+
+        tolerance = self.centerline_tolerance
+        gt_region = gt if tolerance <= 0 else ndimage.distance_transform_edt(~gt) <= tolerance
+        pred_region = pred if tolerance <= 0 else ndimage.distance_transform_edt(~pred) <= tolerance
+
+        tprec = float(np.logical_and(skel_pred, gt_region).sum()) / skel_pred_sum
+        tsens = float(np.logical_and(skel_gt, pred_region).sum()) / skel_gt_sum
+        if tprec + tsens == 0:
+            return 0.0
+        return 2.0 * tprec * tsens / (tprec + tsens)
 
 
 def _safe_rate(numerator: float, denominator: float, empty_value: float) -> float:
