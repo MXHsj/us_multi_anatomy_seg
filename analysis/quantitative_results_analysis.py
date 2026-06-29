@@ -231,16 +231,32 @@ def plot_scatter(
     metrics differ in range; the result metric on the y-axis is shared across subplots.
     """
     plt = setup_matplotlib()
+    import seaborn as sns
 
     fig, axes = plt.subplots(1, len(eda_metrics), figsize=(8.5, 2), sharey=True, squeeze=False, constrained_layout=True)
     for axis, x_metric in zip(axes.ravel(), eda_metrics):
         points = finite_points(df, x_metric, y_metric, log_x)
-        axis.scatter(points[x_metric], points[y_metric], s=2, alpha=0.5, edgecolor="none", color="#1f77b4")
+        sns.regplot(
+            data=points,
+            x=x_metric,
+            y=y_metric,
+            ax=axis,
+            logx=log_x,
+            ci=None,
+            truncate=True,
+            scatter_kws={"s": 2, "alpha": 0.5, "edgecolor": "none", "color": "#1f77b4"},
+            line_kws={"color": "#d62728", "linewidth": 0.6},
+        )
         if log_x:
             axis.set_xscale("log")
         axis.set_title(corr_label(points, x_metric, y_metric, log_x))
         axis.set_xlabel(plot_label(x_metric, plot_labels))
+        axis.set_ylabel("")
         axis.grid(True, alpha=0.3)
+    # Keep the fit line from pushing the shared y-axis past the observed data (e.g. negative Dice).
+    observed = pd.to_numeric(df[y_metric], errors="coerce").replace([float("inf"), float("-inf")], pd.NA).dropna()
+    if not observed.empty:
+        axes[0, 0].set_ylim(observed.min(), observed.max())
     axes[0, 0].set_ylabel(plot_label(y_metric, plot_labels))
 
     fig.suptitle(title)
