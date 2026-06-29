@@ -7,10 +7,10 @@ output_dir="analysis/figures/results_vs_eda"
 
 # Metrics to plot and their axis labels (same order, comma-separated).
 # y-axis = result + derived metrics, x-axis = eda metrics.
-result_metrics="dice,relative_area_error"
-results_plot_labels="Dice,Error"
+result_metrics="dice" #,relative_area_error"
+results_plot_labels="Dice" #,Error"
 
-derived_metrics="fn_per_gt,fp_per_gt"
+derived_metrics="" #fn_per_gt,fp_per_gt"
 derived_plot_labels="FN / GT,FP / GT"
 
 eda_metrics="target_area_fraction,target_bbox_area_ratio,solidity,circularity,aspect_ratio_feret"
@@ -18,14 +18,16 @@ eda_plot_labels="Target/image,Target/bbox,Solidity,Circularity,Aspect ratio"
 
 # Datasets in the order they appear in datasets.json (columns left-to-right).
 datasets=$(python -c "import json; print(','.join(json.load(open('datasets/datasets.json'))['labels']))")
+# datasets="busbra"
+echo $datasets
 
 # What to generate, and which correlation coefficients the heatmaps use.
-make_scatter="false"
-make_heatmap="true"
-correlations="pearson,log_pearson,spearman"
+make_scatter="true"
+make_heatmap="false"
+correlations="log_pearson" #,pearson,spearman"
 
 # Figure file format: png, svg, or pdf.
-plot_format="pdf"
+plot_format="png"
 
 # How to prepare the data before plotting:
 #   false -> combine all images into one figure (scatter and heatmap).
@@ -33,7 +35,7 @@ plot_format="pdf"
 per_dataset="true"
 
 # Use a log-scaled x-axis (true/false).
-log_x="false"
+log_x="true"
 
 # Generate the results-vs-EDA figures.
 echo "Generating results-vs-EDA figures..."
