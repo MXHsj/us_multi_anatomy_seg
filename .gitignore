@@ -21,7 +21,6 @@ datasets/UNS/
 datasets/RobLUS/
 datasets/USSC/
 datasets/UMUD/
-datasets/KUS
 .cache/
 data_cache/
 
