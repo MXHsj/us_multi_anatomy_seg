@@ -13,8 +13,8 @@ results_plot_labels="Dice,Error"
 derived_metrics="fn_per_gt,fp_per_gt"
 derived_plot_labels="FN / GT,FP / GT"
 
-eda_metrics="target_area_fraction,target_bbox_area_ratio,solidity,circularity,aspect_ratio_feret,convexity"
-eda_plot_labels="Target/image,Target/bbox,Solidity,Circularity,Aspect ratio,Convexity"
+eda_metrics="target_area_fraction,target_bbox_area_ratio,solidity,circularity,aspect_ratio_feret"
+eda_plot_labels="Target/image,Target/bbox,Solidity,Circularity,Aspect ratio"
 
 # Datasets in the order they appear in datasets.json (columns left-to-right).
 datasets=$(python -c "import json; print(','.join(json.load(open('datasets/datasets.json'))['labels']))")
