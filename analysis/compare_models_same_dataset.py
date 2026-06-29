@@ -157,6 +157,20 @@ def order_datasets(datasets: set[str] | list[str]) -> list[str]:
     return head + tail
 
 
+def parse_datasets_arg(value: str) -> tuple[str, ...] | None:
+    """Comma-separated dataset list, or None to use all discovered datasets."""
+    if not value.strip():
+        return None
+    return tuple(dataset.strip() for dataset in value.split(",") if dataset.strip())
+
+
+def select_datasets(available: set[str], requested: tuple[str, ...] | None) -> list[str]:
+    """Requested datasets (in the given order, keeping only those with results), else all ordered."""
+    if requested:
+        return [dataset for dataset in requested if dataset in available]
+    return order_datasets(available)
+
+
 def discover_results(results_dir: Path, protocol: str) -> dict[tuple[str, str], Path]:
     discovered: dict[tuple[str, str], Path] = {}
     for metrics_path in sorted(results_dir.glob("*/per_sample_metrics.csv")):
@@ -176,14 +190,16 @@ def compare_models(
     model_a: str,
     model_b: str,
     metrics: tuple[str, ...],
+    requested_datasets: tuple[str, ...] | None = None,
 ) -> list[dict[str, Any]]:
     discovered = discover_results(results_dir, protocol)
-    datasets = order_datasets(
+    datasets = select_datasets(
         {
             dataset
             for result_model, dataset in discovered
             if result_model == model_a and (model_b, dataset) in discovered
-        }
+        },
+        requested_datasets,
     )
 
     rows: list[dict[str, Any]] = []
@@ -227,17 +243,19 @@ def compare_model_set(
     protocol: str,
     models: tuple[str, ...],
     metrics: tuple[str, ...],
+    requested_datasets: tuple[str, ...] | None = None,
 ) -> list[dict[str, Any]]:
     discovered = discover_results(results_dir, protocol)
     # Include any dataset that at least one selected model has results for. Models
     # missing a dataset are simply left out of that dataset's row (no bar plotted),
     # rather than dropping the whole dataset.
-    candidate_datasets = order_datasets(
+    candidate_datasets = select_datasets(
         {
             dataset
             for result_model, dataset in discovered
             if result_model in models
-        }
+        },
+        requested_datasets,
     )
 
     rows: list[dict[str, Any]] = []
@@ -631,6 +649,11 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--datasets",
+        default="",
+        help="Optional comma-separated dataset list (in plot order). Defaults to all discovered.",
+    )
+    parser.add_argument(
         "--metrics",
         default="all",
         help=(
@@ -687,6 +710,7 @@ def main() -> None:
     )
     args = parser.parse_args()
     metrics = parse_metrics_arg(args.metrics)
+    requested_datasets = parse_datasets_arg(args.datasets)
 
     if args.models is None:
         models = (
@@ -699,6 +723,7 @@ def main() -> None:
             model_a=models[0],
             model_b=models[1],
             metrics=metrics,
+            requested_datasets=requested_datasets,
         )
         columns = column_names(models[0], models[1], metrics)
     else:
@@ -708,6 +733,7 @@ def main() -> None:
             protocol=args.protocol,
             models=models,
             metrics=metrics,
+            requested_datasets=requested_datasets,
         )
         columns = model_set_column_names(models, metrics)
 

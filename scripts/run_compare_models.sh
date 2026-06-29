@@ -7,6 +7,10 @@ source .venv/bin/activate
 models="medsam,samus,ultrasam"
 protocol="gt_bbox"
 
+# Datasets to compare (in plot order). Defaults to all in datasets.json; override as needed.
+datasets=$(python -c "import json; print(','.join(json.load(open('datasets/datasets.json'))['labels']))")
+echo $datasets
+
 # Metrics to compare and plot (comma-separated, or 'all').
 metrics="dice,assd" #,relative_area_error,hd95_norm,assd_norm"
 
@@ -27,7 +31,7 @@ output_csv="analysis/figures/compare_models_same_dataset_${protocol}_${models//,
 echo "Comparing models (${models}) on ${protocol}..."
 for plot_type in ${plot_types}; do
   python analysis/compare_models_same_dataset.py \
-    --protocol "${protocol}" --models "${models}" \
+    --protocol "${protocol}" --models "${models}" --datasets "${datasets}" \
     --metrics "${metrics}" --plot-type "${plot_type}" \
     --plot-format "${plot_format}" --show-outliers "${show_outliers}" \
     --orientation "${orientation}" \
