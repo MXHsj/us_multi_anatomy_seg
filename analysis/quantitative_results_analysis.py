@@ -17,8 +17,8 @@ if str(ROOT_DIR) not in sys.path:
 from benchmarks.metrics import METRIC_NAMES
 
 
-# Result metrics are the y-axis columns read straight from per_sample_metrics.csv.
-# x-axis metrics are read from the EDA sample_stats.csv columns at run time.
+# Result metrics are the y-axis columns read from per_box_metrics.json boxes.
+# x-axis metrics are read from the EDA sample_stats.json box keys at run time.
 RESULT_METRICS = (*METRIC_NAMES, "infer_ms")
 
 CORRELATION_METHODS = ("pearson", "log_pearson", "spearman")
@@ -85,16 +85,26 @@ def discover_datasets(results_dir: Path, model: str, protocol: str) -> list[str]
     return sorted(path.name[len(prefix) :] for path in results_dir.glob(f"{prefix}*") if path.is_dir())
 
 
+AGGREGATION_WEIGHT = "target_area_pixels"  # per-box weight for per-image aggregation
+
+
+def explode_boxes(json_path: Path) -> pd.DataFrame:
+    """Flatten a per-sample JSON ({sample_id, ..., boxes:[...]}) into one row per box."""
+    records = json.loads(json_path.read_text())
+    return pd.json_normalize(records, record_path="boxes", meta=["sample_id"])
+
+
 def discover_eda_metrics(eda_dir: Path, datasets: list[str]) -> tuple[str, ...]:
-    """Read available x-axis metrics from the EDA sample_stats.csv column headers."""
+    """Read available x-axis metrics from the EDA sample_stats.json box keys."""
     metrics: list[str] = []
     seen: set[str] = set()
     for dataset in datasets:
-        stats_path = eda_dir / dataset / "sample_stats.csv"
+        stats_path = eda_dir / dataset / "sample_stats.json"
         if not stats_path.exists():
             continue
-        for column in pd.read_csv(stats_path, nrows=0).columns:
-            if column != "sample_id" and column not in seen:
+        boxes = explode_boxes(stats_path)
+        for column in boxes.columns:
+            if column not in ("sample_id", "box_index") and column not in seen:
                 seen.add(column)
                 metrics.append(column)
     return tuple(metrics)
@@ -109,24 +119,41 @@ def load_dataset_points(
     eda_metrics: tuple[str, ...],
     derived_metrics: tuple[str, ...],
 ) -> pd.DataFrame:
-    metrics_path = result_dir(results_dir, model, dataset, protocol) / "per_sample_metrics.csv"
+    """One row per bounding box: result metrics joined with EDA metrics on (sample_id, box_index)."""
+    metrics_path = result_dir(results_dir, model, dataset, protocol) / "per_box_metrics.json"
     if not metrics_path.exists():
         raise FileNotFoundError(metrics_path)
 
-    stats_path = eda_dir / dataset / "sample_stats.csv"
+    stats_path = eda_dir / dataset / "sample_stats.json"
     if not stats_path.exists():
         raise FileNotFoundError(stats_path)
 
-    wanted = {"sample_id", *eda_metrics}
-    results = pd.read_csv(metrics_path)
-    stats = pd.read_csv(stats_path, usecols=lambda column: column in wanted)
+    results = explode_boxes(metrics_path)
+    stats = explode_boxes(stats_path)
     for metric in eda_metrics:
         if metric not in stats.columns:
             stats[metric] = math.nan
-    merged = results.merge(stats, on="sample_id", how="left")
+    stats = stats[["sample_id", "box_index", AGGREGATION_WEIGHT, *eda_metrics]]
+    merged = results.merge(stats, on=["sample_id", "box_index"], how="inner")
     if derived_metrics:
         merged = compute_derived_metrics(merged, derived_metrics)
     return merged
+
+
+def aggregate_per_image(df: pd.DataFrame, value_cols: tuple[str, ...]) -> pd.DataFrame:
+    """Collapse boxes to one row per image via a target-area-weighted mean of each value column."""
+    weight = pd.to_numeric(df[AGGREGATION_WEIGHT], errors="coerce")
+
+    def weighted_mean(group: pd.DataFrame) -> pd.Series:
+        w = weight.loc[group.index]
+        result = {}
+        for column in value_cols:
+            v = pd.to_numeric(group[column], errors="coerce")
+            mask = v.notna() & w.notna() & (w > 0)
+            result[column] = (v[mask] * w[mask]).sum() / w[mask].sum() if mask.any() else math.nan
+        return pd.Series(result)
+
+    return df.groupby("sample_id", sort=False).apply(weighted_mean, include_groups=False).reset_index()
 
 
 def plot_label(metric: str, labels: dict[str, str] | None = None) -> str:
@@ -350,10 +377,16 @@ def parse_args() -> argparse.Namespace:
         default="target_bbox_area_ratio",
         help=(
             "Comma-separated EDA (x-axis) metrics or 'all'. "
-            "Available metrics are read from the EDA sample_stats.csv column headers."
+            "Available metrics are read from the EDA sample_stats.json box keys."
         ),
     )
     parser.add_argument("--eda-labels", default="", help="Comma-separated axis labels for --eda-metrics.")
+    parser.add_argument(
+        "--per-image",
+        type=str2bool,
+        default=True,
+        help="false: one point per bounding box. true: target-area-weighted mean per image.",
+    )
     parser.add_argument(
         "--per-dataset",
         type=str2bool,
@@ -395,7 +428,7 @@ def main() -> None:
 
     available_eda_metrics = discover_eda_metrics(args.eda_dir, datasets)
     if not available_eda_metrics:
-        raise SystemExit(f"No EDA sample_stats.csv columns found under {args.eda_dir}.")
+        raise SystemExit(f"No EDA sample_stats.json box metrics found under {args.eda_dir}.")
     eda_metrics = parse_csv_arg(args.eda_metrics, available_eda_metrics, "EDA metric")
     plot_labels = {
         **labels_for(result_metrics, args.result_labels),
@@ -419,17 +452,23 @@ def main() -> None:
             print(f"Skipping {dataset}: {error}", file=sys.stderr)
 
     if not data_by_dataset:
-        raise SystemExit("No datasets had both result metrics and EDA sample_stats.csv files.")
+        raise SystemExit("No datasets had both per_box_metrics.json and EDA sample_stats.json files.")
 
     correlations = parse_csv_arg(args.correlations, CORRELATION_METHODS, "correlation method")
 
-    # Prepare the data: one pooled DataFrame, or one per dataset. The plotters below are
-    # oblivious to which — they just plot whatever DataFrame they are handed.
+    # Prepare the data. per_image collapses boxes to one weighted point per image; per_dataset
+    # groups into pooled vs one-per-dataset. The plotters below just plot whatever they are handed.
+    if args.per_image:
+        data_by_dataset = {
+            dataset: aggregate_per_image(df, (*eda_metrics, *y_metrics))
+            for dataset, df in data_by_dataset.items()
+        }
     groups = build_groups(data_by_dataset, args.per_dataset)
+    granularity = "image" if args.per_image else "box"
     suffix = "_logx" if args.log_x else ""
 
-    # One name for the whole grouping: the single group's name when pooled, else "by_dataset".
-    scope = next(iter(groups)) if len(groups) == 1 else "by_dataset"
+    # Name for the whole figure set: granularity + the grouping (pooled group name, else by_dataset).
+    scope = f"{granularity}_{next(iter(groups)) if len(groups) == 1 else 'by_dataset'}"
 
     total = (len(y_metrics) if args.scatter else 0) + len(groups) * (len(correlations) if args.heatmap else 0)
     index = 0
@@ -447,8 +486,8 @@ def main() -> None:
         for group, df in groups.items():
             for method in correlations:
                 index += 1
-                title = f"{args.model} ({args.protocol}) - {group} - {plot_label(method)} (n={len(df):,})"
-                path = args.output_dir / f"results_vs_eda_heatmap_{args.protocol}_{args.model}_{group}_{method}.{args.plot_format}"
+                title = f"{args.model} ({args.protocol}) - {granularity} {group} - {plot_label(method)} (n={len(df):,})"
+                path = args.output_dir / f"results_vs_eda_heatmap_{args.protocol}_{args.model}_{granularity}_{group}_{method}.{args.plot_format}"
                 plot_heatmap(df, path, y_metrics, eda_metrics, method, title, plot_labels)
                 print(f"[{index}/{total}] wrote {path}", flush=True)
     print("")
