@@ -24,7 +24,6 @@ datasets=(
   ultrabones100k
   umud
   uns
-  ussc
 )
 
 # The wrappers default the source tree + checkpoint to work_dir/UltraSam (the devcontainer

@@ -15,7 +15,6 @@ datasets=(
   ultrabones100k
   umud
   uns
-  ussc
 )
 
 for dataset in "${datasets[@]}"; do
