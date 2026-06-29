@@ -23,6 +23,9 @@ RESULT_METRICS = (*METRIC_NAMES, "infer_ms")
 
 CORRELATION_METHODS = ("pearson", "log_pearson", "spearman")
 
+# Font size (points) for the correlation values printed inside heatmap cells.
+HEATMAP_CELL_FONTSIZE = 5
+
 DATASET_LABELS = json.loads((ROOT_DIR / "datasets" / "datasets.json").read_text())["labels"]
 
 
@@ -150,11 +153,12 @@ def setup_matplotlib() -> Any:
             "font.family": "serif",
             "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
             "font.size": 8,
-            "axes.labelsize": 8,
-            "axes.titlesize": 8,
-            "xtick.labelsize": 7,
-            "ytick.labelsize": 7,
-            "legend.fontsize": 7,
+            "axes.labelsize": 6,
+            "axes.titlesize": 6,
+            "figure.titlesize": 7,
+            "xtick.labelsize": 6,
+            "ytick.labelsize": 6,
+            "legend.fontsize": 6,
             "axes.spines.top": False,
             "axes.spines.right": False,
             "axes.grid": True,
@@ -245,7 +249,7 @@ def plot_per_dataset(
         axis.scatter(points[x_metric], points[y_metric], s=14, alpha=0.5, edgecolor="none", color=color)
         apply_x_axis_limits(axis, log_x, x_min, x_max)
         label = DATASET_LABELS.get(dataset, dataset.upper())
-        axis.set_title(f"{label} (n={len(points)}, {corr_label(points, x_metric, y_metric, log_x)})")
+        axis.set_title(f"{label} (n={len(points):,}, {corr_label(points, x_metric, y_metric, log_x)})")
         axis.set_xlabel(plot_label(x_metric, plot_labels))
         apply_y_axis_limits(axis, y_metric)
         axis.grid(True, alpha=0.3)
@@ -291,7 +295,7 @@ def plot_overlay(
             alpha=0.5,
             edgecolor="none",
             color=cmap(index % 20),
-            label=f"{label} (n={len(points)})",
+            label=f"{label} (n={len(points):,})",
         )
 
     # Pooled correlation across all images (every dataset combined into one cloud).
@@ -303,7 +307,7 @@ def plot_overlay(
     apply_y_axis_limits(axis, y_metric)
     axis.set_title(
         f"{model} ({protocol}) - {plot_label(y_metric, plot_labels)} vs {plot_label(x_metric, plot_labels)} "
-        f"(all images, n={len(pooled)}, {corr_label(pooled, x_metric, y_metric, log_x)})"
+        f"(n={len(pooled):,}, {corr_label(pooled, x_metric, y_metric, log_x)})"
     )
     axis.legend(fontsize=7, markerscale=1.5, loc="best")
     axis.grid(True, alpha=0.3)
@@ -374,7 +378,7 @@ def plot_correlation_heatmaps(
             for col in range(len(datasets)):
                 value = matrix[row][col]
                 if not math.isnan(value):
-                    axis.text(col, row, f"{value:.2f}", ha="center", va="center", fontsize=6, color=text_color(value, cmap, vmin, vmax))
+                    axis.text(col, row, f"{value:.2f}", ha="center", va="center", fontsize=HEATMAP_CELL_FONTSIZE, color=text_color(value, cmap, vmin, vmax))
         return image
 
     # Top panel: EDA metric medians per dataset, normalized — context for the correlations below.
@@ -427,10 +431,10 @@ def plot_correlation_heatmap_pooled(
     pooled = pd.concat(list(data_by_dataset.values()), ignore_index=True)
     n_images = len(pooled)
 
-    fig, axis = plt.subplots(
-        figsize=(0.9 * len(y_metrics) + 3, 0.5 * len(eda_metrics) + 2),
-        constrained_layout=True,
-    )
+    # Square figure matching the compare-models plot height (3 in, horizontal orientation).
+    height = 2
+    width = 3.0
+    fig, axis = plt.subplots(figsize=(width, height), constrained_layout=True)
 
     def text_color(value: float) -> str:
         red, green, blue, _ = plt.get_cmap("RdBu_r")((value + 1.0) / 2.0)
@@ -459,10 +463,10 @@ def plot_correlation_heatmap_pooled(
         for col in range(len(y_metrics)):
             value = matrix[row][col]
             if not math.isnan(value):
-                axis.text(col, row, f"{value:.2f}", ha="center", va="center", fontsize=6, color=text_color(value))
+                axis.text(col, row, f"{value:.2f}", ha="center", va="center", fontsize=HEATMAP_CELL_FONTSIZE, color=text_color(value))
 
     fig.colorbar(image, ax=axis, label=f"{plot_label(method)} r", shrink=0.8)
-    fig.suptitle(f"{model} ({protocol.replace('_', ' ')}) - all images (n={n_images})")
+    fig.suptitle(f"{model} ({protocol.replace('_', ' ')}) - n={n_images:,}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
