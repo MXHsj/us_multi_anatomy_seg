@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import math
 import os
@@ -41,15 +40,6 @@ STAT_COLUMNS = (
     "bbox_area_pixels",
     "bbox_area_fraction",
     "target_bbox_area_ratio",
-    "component_count",
-    "largest_component_area_pixels",
-    "shape_component_count",
-    "shape_component_area_pixels",
-    "component_weighted_bbox_width",
-    "component_weighted_bbox_height",
-    "component_weighted_bbox_area_pixels",
-    "component_weighted_bbox_area_fraction",
-    "component_weighted_target_bbox_area_ratio",
     "aspect_ratio_feret",
     "circularity",
     "convexity",
@@ -108,30 +98,6 @@ def infer_target_label(dataset_key: str, metadata: dict[str, object]) -> str:
         return concept_for(dataset_key)
     except (KeyError, ValueError):
         return dataset_key
-
-
-def component_stats(mask: np.ndarray) -> tuple[int, int]:
-    mask_bool = np.asarray(mask) > 0
-    if not mask_bool.any():
-        return 0, 0
-
-    labels = measure.label(mask_bool, connectivity=1)
-    areas = np.bincount(labels.ravel())[1:]
-    if areas.size == 0:
-        return 0, 0
-    return int(areas.size), int(areas.max())
-
-
-def weighted_mean(values: list[float], weights: list[int]) -> float:
-    finite_pairs = [
-        (float(value), int(weight))
-        for value, weight in zip(values, weights)
-        if math.isfinite(float(value)) and int(weight) > 0
-    ]
-    if not finite_pairs:
-        return float("nan")
-    total_weight = sum(weight for _, weight in finite_pairs)
-    return sum(value * weight for value, weight in finite_pairs) / total_weight
 
 
 def _convex_hull_points(component: np.ndarray) -> np.ndarray:
@@ -208,94 +174,44 @@ def component_shape_descriptors(component: np.ndarray) -> dict[str, float]:
     }
 
 
-def component_bbox_descriptors(component: np.ndarray, image_area: int) -> dict[str, float]:
+def box_descriptors(component: np.ndarray, image_area: int) -> dict[str, float | int]:
+    """Per-bounding-box metrics for one connected component (keys == STAT_COLUMNS)."""
+    component_area = int(component.sum())
     bbox = bbox_from_mask(component)
     if bbox is None:
-        return {
-            "component_weighted_bbox_width": float("nan"),
-            "component_weighted_bbox_height": float("nan"),
-            "component_weighted_bbox_area_pixels": float("nan"),
-            "component_weighted_bbox_area_fraction": float("nan"),
-            "component_weighted_target_bbox_area_ratio": float("nan"),
-        }
-
-    x_min, y_min, x_max, y_max = [int(value) for value in bbox]
-    bbox_width = x_max - x_min + 1
-    bbox_height = y_max - y_min + 1
-    bbox_area = bbox_width * bbox_height
-    component_area = int(component.sum())
-    return {
-        "component_weighted_bbox_width": float(bbox_width),
-        "component_weighted_bbox_height": float(bbox_height),
-        "component_weighted_bbox_area_pixels": float(bbox_area),
-        "component_weighted_bbox_area_fraction": bbox_area / image_area,
-        "component_weighted_target_bbox_area_ratio": component_area / bbox_area if bbox_area > 0 else float("nan"),
-    }
-
-
-def shape_stats(mask: np.ndarray, image_area: int) -> dict[str, float | int]:
-    components = connected_component_masks(mask, min_area=SHAPE_MIN_AREA)
-    if not components:
-        return {
-            "shape_component_count": 0,
-            "shape_component_area_pixels": 0,
-            "component_weighted_bbox_width": float("nan"),
-            "component_weighted_bbox_height": float("nan"),
-            "component_weighted_bbox_area_pixels": float("nan"),
-            "component_weighted_bbox_area_fraction": float("nan"),
-            "component_weighted_target_bbox_area_ratio": float("nan"),
-            "aspect_ratio_feret": float("nan"),
-            "circularity": float("nan"),
-            "convexity": float("nan"),
-            "solidity": float("nan"),
-        }
-
-    weights = [int(component.sum()) for component in components]
-    descriptors = [
-        {
-            **component_bbox_descriptors(component, image_area),
-            **component_shape_descriptors(component),
-        }
-        for component in components
-    ]
-    return {
-        "shape_component_count": len(components),
-        "shape_component_area_pixels": sum(weights),
-        "component_weighted_bbox_width": weighted_mean([d["component_weighted_bbox_width"] for d in descriptors], weights),
-        "component_weighted_bbox_height": weighted_mean([d["component_weighted_bbox_height"] for d in descriptors], weights),
-        "component_weighted_bbox_area_pixels": weighted_mean([d["component_weighted_bbox_area_pixels"] for d in descriptors], weights),
-        "component_weighted_bbox_area_fraction": weighted_mean([d["component_weighted_bbox_area_fraction"] for d in descriptors], weights),
-        "component_weighted_target_bbox_area_ratio": weighted_mean([d["component_weighted_target_bbox_area_ratio"] for d in descriptors], weights),
-        "aspect_ratio_feret": weighted_mean([d["aspect_ratio_feret"] for d in descriptors], weights),
-        "circularity": weighted_mean([d["circularity"] for d in descriptors], weights),
-        "convexity": weighted_mean([d["convexity"] for d in descriptors], weights),
-        "solidity": weighted_mean([d["solidity"] for d in descriptors], weights),
-    }
-
-
-def sample_row(dataset_key: str, sample: Any) -> dict[str, Any]:
-    mask = (np.asarray(sample.mask) > 0).astype(np.uint8)
-    height, width = mask.shape[:2]
-    image_height, image_width = np.asarray(sample.image).shape[:2]
-    image_area = max(height * width, 1)
-
-    target_area = int(mask.sum())
-    bbox = bbox_from_mask(mask)
-    if bbox is None:
-        bbox_width = 0
-        bbox_height = 0
-        bbox_area = 0
+        bbox_width = bbox_height = bbox_area = 0
     else:
         x_min, y_min, x_max, y_max = [int(value) for value in bbox]
         bbox_width = x_max - x_min + 1
         bbox_height = y_max - y_min + 1
         bbox_area = bbox_width * bbox_height
+    return {
+        "target_area_pixels": component_area,
+        "target_area_fraction": component_area / image_area,
+        "bbox_width": bbox_width,
+        "bbox_height": bbox_height,
+        "bbox_area_pixels": bbox_area,
+        "bbox_area_fraction": bbox_area / image_area,
+        "target_bbox_area_ratio": component_area / bbox_area if bbox_area > 0 else float("nan"),
+        **component_shape_descriptors(component),
+    }
 
-    component_count, largest_component_area = component_stats(mask)
-    shape_metrics = shape_stats(mask, image_area)
+
+def sample_record(dataset_key: str, sample: Any) -> dict[str, Any]:
+    """One image record: shared image-level fields plus a `boxes` list (one per bounding box)."""
+    mask = (np.asarray(sample.mask) > 0).astype(np.uint8)
+    height, width = mask.shape[:2]
+    image_height, image_width = np.asarray(sample.image).shape[:2]
+    image_area = max(height * width, 1)
     metadata = dict(sample.metadata or {})
 
-    row: dict[str, Any] = {
+    components = connected_component_masks(mask, min_area=SHAPE_MIN_AREA)
+    boxes = [
+        {"box_index": index, **box_descriptors(component, image_area)}
+        for index, component in enumerate(components)
+    ]
+
+    record: dict[str, Any] = {
         "dataset": dataset_key,
         "sample_id": sample.sample_id,
         "image_height": int(image_height),
@@ -303,26 +219,15 @@ def sample_row(dataset_key: str, sample: Any) -> dict[str, Any]:
         "mask_height": int(height),
         "mask_width": int(width),
         "target_label": infer_target_label(dataset_key, metadata),
-        "has_target": bool(target_area > 0),
-        "target_area_pixels": target_area,
-        "target_area_fraction": target_area / image_area,
-        "bbox_width": bbox_width,
-        "bbox_height": bbox_height,
-        "bbox_area_pixels": bbox_area,
-        "bbox_area_fraction": bbox_area / image_area,
-        "target_bbox_area_ratio": target_area / bbox_area if bbox_area > 0 else 0.0,
-        "component_count": component_count,
-        "largest_component_area_pixels": largest_component_area,
-        **shape_metrics,
+        "has_target": bool(boxes),
     }
-
     for key in GROUP_KEYS:
-        row[key] = metadata_value(metadata.get(key))
+        record[key] = metadata_value(metadata.get(key))
+    record["boxes"] = boxes
+    return record
 
-    return row
 
-
-def collect_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
+def collect_records(args: argparse.Namespace) -> list[dict[str, Any]]:
     decoder = build_decoder_from_args(args)
     dataset_key = args.dataset.lower()
     total: int | None = None
@@ -332,23 +237,28 @@ def collect_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
         except Exception:
             total = None
 
-    rows: list[dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
     for idx, sample in enumerate(decoder.iter_samples(max_samples=args.max_samples), start=1):
-        rows.append(sample_row(dataset_key, sample))
+        records.append(sample_record(dataset_key, sample))
         if idx == 1 or idx % 1000 == 0 or (total is not None and idx == total):
             if total is None:
                 print(f"Decoded {idx} samples...", flush=True)
             else:
                 pct = 100.0 * idx / max(total, 1)
                 print(f"Decoded {idx}/{total} samples ({pct:.1f}%)...", flush=True)
-    return rows
+    return records
 
 
-def finite_values(rows: list[dict[str, Any]], column: str) -> list[float]:
+def all_boxes(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Flatten every image record's boxes into a single list of box dicts."""
+    return [box for record in records for box in record["boxes"]]
+
+
+def finite_values(boxes: list[dict[str, Any]], column: str) -> list[float]:
     values: list[float] = []
-    for row in rows:
+    for box in boxes:
         try:
-            value = float(row[column])
+            value = float(box[column])
         except (KeyError, TypeError, ValueError):
             continue
         if math.isfinite(value):
@@ -372,76 +282,38 @@ def count_non_empty(rows: list[dict[str, Any]], column: str) -> dict[str, int]:
     return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
 
 
-def build_summary(dataset_key: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+def build_summary(dataset_key: str, records: list[dict[str, Any]]) -> dict[str, Any]:
     image_sizes = Counter(
-        f"{row['image_width']}x{row['image_height']}" for row in rows
+        f"{record['image_width']}x{record['image_height']}" for record in records
     )
     metadata_group_counts = {
-        key: count_non_empty(rows, key)
+        key: count_non_empty(records, key)
         for key in GROUP_KEYS
-        if count_non_empty(rows, key)
+        if count_non_empty(records, key)
     }
+    boxes = all_boxes(records)
 
     return {
         "dataset": dataset_key,
-        "num_samples": len(rows),
-        "num_targets": sum(1 for row in rows if row["has_target"]),
-        "num_empty_masks": sum(1 for row in rows if not row["has_target"]),
-        "target_class_counts": count_non_empty(rows, "target_label"),
-        "target_class_count": len(count_non_empty(rows, "target_label")),
+        "num_images": len(records),
+        "num_boxes": len(boxes),
+        "num_empty_masks": sum(1 for record in records if not record["has_target"]),
+        "target_class_counts": count_non_empty(records, "target_label"),
+        "target_class_count": len(count_non_empty(records, "target_label")),
         "metadata_group_counts": metadata_group_counts,
         "image_size_counts": dict(
             sorted(image_sizes.items(), key=lambda item: (-item[1], item[0]))
         ),
         "stats": {
-            column: summarize_values(finite_values(rows, column))
+            column: summarize_values(finite_values(boxes, column))
             for column in STAT_COLUMNS
         },
     }
 
 
-def write_csv(rows: list[dict[str, Any]], output_path: Path) -> None:
+def write_json(data: Any, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = [
-        "dataset",
-        "sample_id",
-        "image_height",
-        "image_width",
-        "mask_height",
-        "mask_width",
-        "target_label",
-        "has_target",
-        "target_area_pixels",
-        "target_area_fraction",
-        "bbox_width",
-        "bbox_height",
-        "bbox_area_pixels",
-        "bbox_area_fraction",
-        "target_bbox_area_ratio",
-        "component_count",
-        "largest_component_area_pixels",
-        "shape_component_count",
-        "shape_component_area_pixels",
-        "component_weighted_bbox_width",
-        "component_weighted_bbox_height",
-        "component_weighted_bbox_area_pixels",
-        "component_weighted_bbox_area_fraction",
-        "component_weighted_target_bbox_area_ratio",
-        "aspect_ratio_feret",
-        "circularity",
-        "convexity",
-        "solidity",
-        *GROUP_KEYS,
-    ]
-    with output_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows({key: row.get(key, "") for key in fieldnames} for row in rows)
-
-
-def write_json(summary: dict[str, Any], output_path: Path) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    output_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def setup_matplotlib_cache() -> None:
@@ -468,8 +340,9 @@ def format_stat(value: float | None, precision: int = 4) -> str:
     return f"{value:.{precision}f}"
 
 
-def plot_dashboard(rows: list[dict[str, Any]], summary: dict[str, Any], output_path: Path) -> None:
+def plot_dashboard(records: list[dict[str, Any]], summary: dict[str, Any], output_path: Path) -> None:
     setup_matplotlib_cache()
+    boxes = all_boxes(records)
 
     import matplotlib.pyplot as plt
 
@@ -504,19 +377,19 @@ def plot_dashboard(rows: list[dict[str, Any]], summary: dict[str, Any], output_p
     ax_table = fig.add_subplot(grid[2, :])
 
     dataset_label = summary["dataset"].upper()
-    widths = [int(row["image_width"]) for row in rows]
-    heights = [int(row["image_height"]) for row in rows]
+    widths = [int(record["image_width"]) for record in records]
+    heights = [int(record["image_height"]) for record in records]
     image_size_range = (
         f"W {min(widths)}-{max(widths)}, H {min(heights)}-{max(heights)}"
-        if rows
+        if records
         else "n/a"
     )
 
     ax_headline.axis("off")
     headline = (
         f"{dataset_label} EDA\n\n"
-        f"Samples: {summary['num_samples']}\n"
-        f"Targets present: {summary['num_targets']}\n"
+        f"Images: {summary['num_images']}\n"
+        f"Boxes: {summary['num_boxes']}\n"
         f"Empty masks: {summary['num_empty_masks']}\n"
         f"Image size range: {image_size_range}\n"
         f"Target classes: {summary['target_class_count']}"
@@ -537,7 +410,7 @@ def plot_dashboard(rows: list[dict[str, Any]], summary: dict[str, Any], output_p
     values = [counts[label] for label in labels]
     ax_counts.bar(labels, values, color="#4C72B0", alpha=0.75)
     ax_counts.set_title(counts_title)
-    ax_counts.set_ylabel("Samples")
+    ax_counts.set_ylabel("Images")
     ax_counts.tick_params(axis="x", rotation=30)
 
     ax_sizes.scatter(widths, heights, s=18, alpha=0.45, color="#55A868", edgecolors="none")
@@ -545,25 +418,25 @@ def plot_dashboard(rows: list[dict[str, Any]], summary: dict[str, Any], output_p
     ax_sizes.set_xlabel("Width")
     ax_sizes.set_ylabel("Height")
 
-    target_area_fraction = finite_values(rows, "target_area_fraction")
-    bbox_area_fraction = finite_values(rows, "bbox_area_fraction")
-    target_bbox_ratio = finite_values(rows, "target_bbox_area_ratio")
-    hist_bins = min(30, max(8, int(math.sqrt(max(len(rows), 1)))))
+    target_area_fraction = finite_values(boxes, "target_area_fraction")
+    bbox_area_fraction = finite_values(boxes, "bbox_area_fraction")
+    target_bbox_ratio = finite_values(boxes, "target_bbox_area_ratio")
+    hist_bins = min(30, max(8, int(math.sqrt(max(len(boxes), 1)))))
 
     ax_area.hist(target_area_fraction, bins=hist_bins, color="#C44E52", alpha=0.75)
     ax_area.set_title("Target area fraction")
-    ax_area.set_xlabel("Mask area / image area")
-    ax_area.set_ylabel("Samples")
+    ax_area.set_xlabel("Box area / image area")
+    ax_area.set_ylabel("Boxes")
 
     ax_bbox.hist(bbox_area_fraction, bins=hist_bins, color="#8172B3", alpha=0.75)
     ax_bbox.set_title("BBox area fraction")
     ax_bbox.set_xlabel("BBox area / image area")
-    ax_bbox.set_ylabel("Samples")
+    ax_bbox.set_ylabel("Boxes")
 
     ax_ratio.hist(target_bbox_ratio, bins=hist_bins, color="#CCB974", alpha=0.82)
     ax_ratio.set_title("Target coverage within bbox")
-    ax_ratio.set_xlabel("Target area / bbox area")
-    ax_ratio.set_ylabel("Samples")
+    ax_ratio.set_xlabel("Box area / bbox area")
+    ax_ratio.set_ylabel("Boxes")
 
     ax_table.axis("off")
     stat_rows = []
@@ -571,7 +444,7 @@ def plot_dashboard(rows: list[dict[str, Any]], summary: dict[str, Any], output_p
         ("Target frac", "target_area_fraction"),
         ("BBox frac", "bbox_area_fraction"),
         ("Target/BBox", "target_bbox_area_ratio"),
-        ("Components", "component_count"),
+        ("Solidity", "solidity"),
     ):
         stats = summary["stats"][column]
         stat_rows.append(
@@ -612,16 +485,16 @@ def main() -> None:
     )
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    rows = collect_rows(args)
-    if not rows:
+    records = collect_records(args)
+    if not records:
         raise SystemExit(f"No samples decoded for dataset '{args.dataset}'.")
 
-    summary = build_summary(args.dataset.lower(), rows)
-    write_csv(rows, output_dir / "sample_stats.csv")
+    summary = build_summary(args.dataset.lower(), records)
+    write_json(records, output_dir / "sample_stats.json")
     write_json(summary, output_dir / "dataset_summary.json")
-    plot_dashboard(rows, summary, output_dir / "eda_summary.png")
+    plot_dashboard(records, summary, output_dir / "eda_summary.png")
 
-    print(f"Wrote {len(rows)} sample rows to {output_dir / 'sample_stats.csv'}")
+    print(f"Wrote {len(records)} image records to {output_dir / 'sample_stats.json'}")
     print(f"Wrote summary to {output_dir / 'dataset_summary.json'}")
     print(f"Wrote dashboard to {output_dir / 'eda_summary.png'}")
 
