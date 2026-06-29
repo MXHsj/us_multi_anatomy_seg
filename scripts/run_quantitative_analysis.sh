@@ -24,10 +24,15 @@ echo $datasets
 # What to generate, and which correlation coefficients the heatmaps use.
 make_scatter="true"
 make_heatmap="false"
-correlations="log_pearson" #,pearson,spearman"
+correlations="pearson" #spearman"
 
 # Figure file format: png, svg, or pdf.
 plot_format="png"
+
+# Data granularity before plotting:
+#   false -> plots each bounding box separately.
+#   true  -> aggregates results metrics per image using a target-area-weighted mean.
+per_image="false"
 
 # How to prepare the data before plotting:
 #   false -> combine all images into one figure (scatter and heatmap).
@@ -35,7 +40,7 @@ plot_format="png"
 per_dataset="true"
 
 # Use a log-scaled x-axis (true/false).
-log_x="true"
+log_x="false"
 
 # Generate the results-vs-EDA figures.
 echo "Generating results-vs-EDA figures..."
@@ -44,6 +49,6 @@ python analysis/quantitative_results_analysis.py \
   --result-metrics "${result_metrics}" --result-labels "${results_plot_labels}" \
   --derived-metrics "${derived_metrics}" --derived-labels "${derived_plot_labels}" \
   --eda-metrics "${eda_metrics}" --eda-labels "${eda_plot_labels}" \
-  --per-dataset "${per_dataset}" --plot-format "${plot_format}" \
+  --per-image "${per_image}" --per-dataset "${per_dataset}" --plot-format "${plot_format}" \
   --scatter "${make_scatter}" --heatmap "${make_heatmap}" --correlations "${correlations}" \
   --log-x "${log_x}"

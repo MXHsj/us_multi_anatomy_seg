@@ -485,10 +485,13 @@ def main() -> None:
     if args.heatmap:
         for group, df in groups.items():
             for method in correlations:
+                # log-x measures correlation on log10(x): promote pearson -> log_pearson (matching the
+                # scatter). spearman is rank-based (log-invariant) and explicit log_pearson are left as-is.
+                effective_method = "log_pearson" if args.log_x and method == "pearson" else method
                 index += 1
-                title = f"{args.model} ({args.protocol}) - {granularity} {group} - {plot_label(method)} (n={len(df):,})"
-                path = args.output_dir / f"results_vs_eda_heatmap_{args.protocol}_{args.model}_{granularity}_{group}_{method}.{args.plot_format}"
-                plot_heatmap(df, path, y_metrics, eda_metrics, method, title, plot_labels)
+                title = f"{args.model} ({args.protocol}) - {granularity} {group} - {plot_label(effective_method)} (n={len(df):,})"
+                path = args.output_dir / f"results_vs_eda_heatmap_{args.protocol}_{args.model}_{granularity}_{group}_{effective_method}.{args.plot_format}"
+                plot_heatmap(df, path, y_metrics, eda_metrics, effective_method, title, plot_labels)
                 print(f"[{index}/{total}] wrote {path}", flush=True)
     print("")
 
