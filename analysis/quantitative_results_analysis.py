@@ -217,7 +217,7 @@ def heat_text_color(plt: Any, value: float) -> str:
 
 
 def plot_scatter(
-    df: pd.DataFrame,
+    groups: dict[str, pd.DataFrame],
     output_path: Path,
     y_metric: str,
     eda_metrics: tuple[str, ...],
@@ -225,39 +225,47 @@ def plot_scatter(
     log_x: bool,
     plot_labels: dict[str, str],
 ) -> None:
-    """Scatter the given data: one subplot per EDA metric (x) against the result metric (y).
+    """Scatter each group as its own row: columns = EDA metrics (x), y = the result metric.
 
-    Spans a US-Letter-width page (8.5 in). Each subplot autoscales its own x-axis since EDA
-    metrics differ in range; the result metric on the y-axis is shared across subplots.
+    Spans a US-Letter-width page (8.5 in); every group adds one row of fixed height, so a single
+    pooled group is one row and the per-dataset case stacks all datasets in one figure.
     """
     plt = setup_matplotlib()
     import seaborn as sns
 
-    fig, axes = plt.subplots(1, len(eda_metrics), figsize=(8.5, 2), sharey=True, squeeze=False, constrained_layout=True)
-    for axis, x_metric in zip(axes.ravel(), eda_metrics):
-        points = finite_points(df, x_metric, y_metric, log_x)
-        sns.regplot(
-            data=points,
-            x=x_metric,
-            y=y_metric,
-            ax=axis,
-            logx=log_x,
-            ci=None,
-            truncate=True,
-            scatter_kws={"s": 2, "alpha": 0.5, "edgecolor": "none", "color": "#1f77b4"},
-            line_kws={"color": "#d62728", "linewidth": 0.6},
-        )
-        if log_x:
-            axis.set_xscale("log")
-        axis.set_title(corr_label(points, x_metric, y_metric, log_x))
-        axis.set_xlabel(plot_label(x_metric, plot_labels))
-        axis.set_ylabel("")
-        axis.grid(True, alpha=0.3)
-    # Keep the fit line from pushing the shared y-axis past the observed data (e.g. negative Dice).
-    observed = pd.to_numeric(df[y_metric], errors="coerce").replace([float("inf"), float("-inf")], pd.NA).dropna()
-    if not observed.empty:
-        axes[0, 0].set_ylim(observed.min(), observed.max())
-    axes[0, 0].set_ylabel(plot_label(y_metric, plot_labels))
+    nrows, ncols = len(groups), len(eda_metrics)
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=(8.5, 1.5 * nrows),
+        sharey=True, squeeze=False, constrained_layout=True,
+    )
+    for row, (group, df) in enumerate(groups.items()):
+        bottom_row = row == nrows - 1
+        for axis, x_metric in zip(axes[row], eda_metrics):
+            points = finite_points(df, x_metric, y_metric, log_x)
+            sns.regplot(
+                data=points,
+                x=x_metric,
+                y=y_metric,
+                ax=axis,
+                logx=log_x,
+                ci=None,
+                truncate=True,
+                scatter_kws={"s": 2, "alpha": 0.5, "edgecolor": "none", "color": "#1f77b4"},
+                line_kws={"color": "#d62728", "linewidth": 0.6},
+            )
+            if log_x:
+                # Log x can't include 0; span the observed positive range instead of a fixed [0, 1].
+                axis.set_xscale("log")
+            else:
+                # Both Dice and the EDA metrics live on a 0-1 scale: share it so plots are comparable.
+                axis.set_xlim(0, 1)
+            axis.set_ylim(0, 1)
+            axis.set_title(corr_label(points, x_metric, y_metric, log_x))
+            axis.set_xlabel(plot_label(x_metric, plot_labels) if bottom_row else "")
+            axis.set_ylabel("")
+            axis.grid(True, alpha=0.3)
+        axes[row, 0].set_ylabel(f"{group}\n(n={len(df):,})")
 
     fig.suptitle(title)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -420,21 +428,23 @@ def main() -> None:
     groups = build_groups(data_by_dataset, args.per_dataset)
     suffix = "_logx" if args.log_x else ""
 
-    scatter_total = len(y_metrics) if args.scatter else 0
-    heatmap_total = len(correlations) if args.heatmap else 0
-    total = len(groups) * (scatter_total + heatmap_total)
+    # One name for the whole grouping: the single group's name when pooled, else "by_dataset".
+    scope = next(iter(groups)) if len(groups) == 1 else "by_dataset"
+
+    total = (len(y_metrics) if args.scatter else 0) + len(groups) * (len(correlations) if args.heatmap else 0)
     index = 0
 
-    for group, df in groups.items():
-        if args.scatter:
-            for y_metric in y_metrics:
-                index += 1
-                title = f"{args.model} ({args.protocol}) - {group} - {plot_label(y_metric, plot_labels)} (n={len(df):,})"
-                path = args.output_dir / f"results_vs_eda_scatter_{args.protocol}_{args.model}_{group}_{y_metric}{suffix}.{args.plot_format}"
-                plot_scatter(df, path, y_metric, eda_metrics, title, args.log_x, plot_labels)
-                print(f"[{index}/{total}] wrote {path}", flush=True)
+    if args.scatter:
+        # All groups go into one figure (one row per group).
+        for y_metric in y_metrics:
+            index += 1
+            title = f"{args.model} ({args.protocol}) - {scope} - {plot_label(y_metric, plot_labels)}"
+            path = args.output_dir / f"results_vs_eda_scatter_{args.protocol}_{args.model}_{scope}_{y_metric}{suffix}.{args.plot_format}"
+            plot_scatter(groups, path, y_metric, eda_metrics, title, args.log_x, plot_labels)
+            print(f"[{index}/{total}] wrote {path}", flush=True)
 
-        if args.heatmap:
+    if args.heatmap:
+        for group, df in groups.items():
             for method in correlations:
                 index += 1
                 title = f"{args.model} ({args.protocol}) - {group} - {plot_label(method)} (n={len(df):,})"
