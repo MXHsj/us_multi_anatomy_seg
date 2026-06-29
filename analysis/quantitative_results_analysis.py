@@ -199,255 +199,74 @@ def corr_label(points: pd.DataFrame, x_metric: str, y_metric: str, log_x: bool) 
     return "r=NA" if math.isnan(value) else f"r={value:.2f}"
 
 
-def apply_x_axis_limits(axis: Any, log_x: bool, x_min: float, x_max: float) -> None:
-    if log_x:
-        axis.set_xscale("log")
-        axis.set_xlim(right=x_max)
-    else:
-        axis.set_xlim(x_min, x_max)
+def build_groups(data_by_dataset: dict[str, pd.DataFrame], per_dataset: bool) -> dict[str, pd.DataFrame]:
+    """Prepare data for plotting: combine all images, or keep one DataFrame per dataset.
+
+    This is the only place ``per_dataset`` is used. Everything downstream just plots whatever
+    DataFrame it is handed, oblivious to whether it is pooled or a single dataset.
+    """
+    if per_dataset:
+        return {DATASET_LABELS.get(dataset, dataset.upper()): df for dataset, df in data_by_dataset.items()}
+    return {"pooled": pd.concat(data_by_dataset.values(), ignore_index=True)}
 
 
-def apply_y_axis_limits(axis: Any, y_metric: str) -> None:
-    # Temporarily let fp/fn auto-scale per subplot instead of a fixed y-range.
-    return
-    if y_metric == "fp_per_gt":
-        axis.set_ylim(0.0, 6.0)
+def heat_text_color(plt: Any, value: float) -> str:
+    """Black or white annotation text for an RdBu_r cell in the [-1, 1] correlation range."""
+    red, green, blue, _ = plt.get_cmap("RdBu_r")((value + 1.0) / 2.0)
+    return "white" if 0.299 * red + 0.587 * green + 0.114 * blue < 0.5 else "black"
 
 
-def plot_per_dataset(
-    data_by_dataset: dict[str, pd.DataFrame],
+def plot_scatter(
+    df: pd.DataFrame,
     output_path: Path,
-    x_metric: str,
     y_metric: str,
-    model: str,
-    protocol: str,
+    eda_metrics: tuple[str, ...],
+    title: str,
     log_x: bool,
-    ncols: int,
-    x_min: float,
-    x_max: float,
     plot_labels: dict[str, str],
 ) -> None:
-    plt = setup_matplotlib()
+    """Scatter the given data: one subplot per EDA metric (x) against the result metric (y).
 
-    datasets = list(data_by_dataset)
-    nrows = math.ceil(len(datasets) / ncols)
-    # Temporarily let fp/fn scale per-subplot instead of sharing one y-axis.
-    sharey = y_metric not in ("fp_per_gt", "fn_per_gt")
-    fig, axes = plt.subplots(
-        nrows,
-        ncols,
-        figsize=(4 * ncols, 3.2 * nrows),
-        sharey=sharey,
-        squeeze=False,
-        constrained_layout=True,
-    )
-    cmap = plt.get_cmap("tab20")
-
-    for axis, dataset in zip(axes.ravel(), datasets):
-        points = finite_points(data_by_dataset[dataset], x_metric, y_metric, log_x)
-        color = cmap(datasets.index(dataset) % 20)
-        axis.scatter(points[x_metric], points[y_metric], s=14, alpha=0.5, edgecolor="none", color=color)
-        apply_x_axis_limits(axis, log_x, x_min, x_max)
-        label = DATASET_LABELS.get(dataset, dataset.upper())
-        axis.set_title(f"{label} (n={len(points):,}, {corr_label(points, x_metric, y_metric, log_x)})")
-        axis.set_xlabel(plot_label(x_metric, plot_labels))
-        apply_y_axis_limits(axis, y_metric)
-        axis.grid(True, alpha=0.3)
-
-    for axis in axes.ravel()[len(datasets) :]:
-        axis.set_visible(False)
-    for axis in axes[:, 0]:
-        axis.set_ylabel(plot_label(y_metric, plot_labels))
-
-    fig.suptitle(
-        f"{model} ({protocol}) - {plot_label(y_metric, plot_labels)} vs {plot_label(x_metric, plot_labels)}"
-    )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, bbox_inches="tight")
-    plt.close(fig)
-
-
-def plot_overlay(
-    data_by_dataset: dict[str, pd.DataFrame],
-    output_path: Path,
-    x_metric: str,
-    y_metric: str,
-    model: str,
-    protocol: str,
-    log_x: bool,
-    x_min: float,
-    x_max: float,
-    plot_labels: dict[str, str],
-) -> None:
-    plt = setup_matplotlib()
-
-    fig, axis = plt.subplots(figsize=(8, 6), constrained_layout=True)
-    cmap = plt.get_cmap("tab20")
-    pooled_parts = []
-    for index, (dataset, data) in enumerate(data_by_dataset.items()):
-        points = finite_points(data, x_metric, y_metric, log_x)
-        pooled_parts.append(points)
-        label = DATASET_LABELS.get(dataset, dataset.upper())
-        axis.scatter(
-            points[x_metric],
-            points[y_metric],
-            s=14,
-            alpha=0.5,
-            edgecolor="none",
-            color=cmap(index % 20),
-            label=f"{label} (n={len(points):,})",
-        )
-
-    # Pooled correlation across all images (every dataset combined into one cloud).
-    pooled = pd.concat(pooled_parts, ignore_index=True) if pooled_parts else pd.DataFrame(columns=[x_metric, y_metric])
-
-    apply_x_axis_limits(axis, log_x, x_min, x_max)
-    axis.set_xlabel(plot_label(x_metric, plot_labels))
-    axis.set_ylabel(plot_label(y_metric, plot_labels))
-    apply_y_axis_limits(axis, y_metric)
-    axis.set_title(
-        f"{model} ({protocol}) - {plot_label(y_metric, plot_labels)} vs {plot_label(x_metric, plot_labels)} "
-        f"(n={len(pooled):,}, {corr_label(pooled, x_metric, y_metric, log_x)})"
-    )
-    axis.legend(fontsize=7, markerscale=1.5, loc="best")
-    axis.grid(True, alpha=0.3)
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, bbox_inches="tight")
-    plt.close(fig)
-
-
-def eda_context_matrix(
-    data_by_dataset: dict[str, pd.DataFrame],
-    eda_metrics: tuple[str, ...],
-) -> list[list[float]]:
-    """Per-dataset median of each EDA metric, normalized across datasets to [0, 1]."""
-    datasets = list(data_by_dataset)
-    matrix = []
-    for x_metric in eda_metrics:
-        medians = pd.Series(
-            [pd.to_numeric(data_by_dataset[dataset][x_metric], errors="coerce").median() for dataset in datasets]
-        )
-        low, high = medians.min(), medians.max()
-        normalized = (medians - low) / (high - low) if high > low else medians * 0.0
-        matrix.append(normalized.tolist())
-    return matrix
-
-
-def plot_correlation_heatmaps(
-    data_by_dataset: dict[str, pd.DataFrame],
-    output_path: Path,
-    y_metrics: tuple[str, ...],
-    eda_metrics: tuple[str, ...],
-    method: str,
-    model: str,
-    protocol: str,
-    plot_labels: dict[str, str],
-) -> None:
-    plt = setup_matplotlib()
-
-    datasets = list(data_by_dataset)
-    nrows = len(y_metrics) + 1  # extra top panel = EDA context
-    fig, axes = plt.subplots(
-        nrows,
-        1,
-        figsize=(0.6 * len(datasets) + 3, 2.4 * nrows + 1),
-        squeeze=False,
-        constrained_layout=True,
-    )
-    axes = axes.ravel()
-
-    def text_color(value: float, cmap: str, vmin: float, vmax: float) -> str:
-        red, green, blue, _ = plt.get_cmap(cmap)((value - vmin) / (vmax - vmin))
-        return "white" if 0.299 * red + 0.587 * green + 0.114 * blue < 0.5 else "black"
-
-    def draw(axis: Any, matrix: list[list[float]], title: str, cmap: str, vmin: float, vmax: float) -> Any:
-        image = axis.imshow(matrix, cmap=cmap, vmin=vmin, vmax=vmax, aspect="auto")
-        axis.set_yticks(range(len(eda_metrics)), [plot_label(metric, plot_labels) for metric in eda_metrics])
-        axis.set_xticks(
-            range(len(datasets)),
-            [DATASET_LABELS.get(dataset, dataset.upper()) for dataset in datasets],
-            rotation=45,
-            ha="right",
-            rotation_mode="anchor",
-        )
-        axis.tick_params(axis="x", bottom=False)
-        axis.set_title(title)
-        axis.grid(False)
-        for row in range(len(eda_metrics)):
-            for col in range(len(datasets)):
-                value = matrix[row][col]
-                if not math.isnan(value):
-                    axis.text(col, row, f"{value:.2f}", ha="center", va="center", fontsize=HEATMAP_CELL_FONTSIZE, color=text_color(value, cmap, vmin, vmax))
-        return image
-
-    # Top panel: EDA metric medians per dataset, normalized — context for the correlations below.
-    # Its own sequential colorbar, since these are normalized values, not correlations.
-    eda_image = draw(
-        axes[0],
-        eda_context_matrix(data_by_dataset, eda_metrics),
-        "EDA metrics (per-dataset median, normalized)",
-        "cividis",
-        0.0,
-        1.0,
-    )
-    fig.colorbar(eda_image, ax=axes[0], label="Median (normalized)", shrink=0.8)
-
-    image = None
-    for axis, y_metric in zip(axes[1:], y_metrics):
-        matrix = [
-            [
-                corr_value(finite_points(data_by_dataset[dataset], x_metric, y_metric, False), x_metric, y_metric, method)
-                for dataset in datasets
-            ]
-            for x_metric in eda_metrics
-        ]
-        image = draw(axis, matrix, plot_label(y_metric, plot_labels), "RdBu_r", -1.0, 1.0)
-
-    fig.colorbar(image, ax=axes[1:].tolist(), label=f"{plot_label(method)} r", shrink=0.6)
-    fig.suptitle(f"{model} ({protocol.replace('_', ' ')})")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, bbox_inches="tight")
-    plt.close(fig)
-
-
-def plot_correlation_heatmap_pooled(
-    data_by_dataset: dict[str, pd.DataFrame],
-    output_path: Path,
-    y_metrics: tuple[str, ...],
-    eda_metrics: tuple[str, ...],
-    method: str,
-    model: str,
-    protocol: str,
-    plot_labels: dict[str, str],
-) -> None:
-    """Single heatmap of correlations computed across all images pooled together.
-
-    Rows = EDA (x-axis) metrics, columns = result/derived (y-axis) metrics.
-    Every dataset's samples are concatenated into one cloud before correlating.
+    Spans a US-Letter-width page (8.5 in). Each subplot autoscales its own x-axis since EDA
+    metrics differ in range; the result metric on the y-axis is shared across subplots.
     """
     plt = setup_matplotlib()
 
-    pooled = pd.concat(list(data_by_dataset.values()), ignore_index=True)
-    n_images = len(pooled)
+    fig, axes = plt.subplots(1, len(eda_metrics), figsize=(8.5, 2), sharey=True, squeeze=False, constrained_layout=True)
+    for axis, x_metric in zip(axes.ravel(), eda_metrics):
+        points = finite_points(df, x_metric, y_metric, log_x)
+        axis.scatter(points[x_metric], points[y_metric], s=2, alpha=0.5, edgecolor="none", color="#1f77b4")
+        if log_x:
+            axis.set_xscale("log")
+        axis.set_title(corr_label(points, x_metric, y_metric, log_x))
+        axis.set_xlabel(plot_label(x_metric, plot_labels))
+        axis.grid(True, alpha=0.3)
+    axes[0, 0].set_ylabel(plot_label(y_metric, plot_labels))
 
-    # Square figure matching the compare-models plot height (3 in, horizontal orientation).
-    height = 2
-    width = 3.0
-    fig, axis = plt.subplots(figsize=(width, height), constrained_layout=True)
+    fig.suptitle(title)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, bbox_inches="tight")
+    plt.close(fig)
 
-    def text_color(value: float) -> str:
-        red, green, blue, _ = plt.get_cmap("RdBu_r")((value + 1.0) / 2.0)
-        return "white" if 0.299 * red + 0.587 * green + 0.114 * blue < 0.5 else "black"
+
+def plot_heatmap(
+    df: pd.DataFrame,
+    output_path: Path,
+    y_metrics: tuple[str, ...],
+    eda_metrics: tuple[str, ...],
+    method: str,
+    title: str,
+    plot_labels: dict[str, str],
+) -> None:
+    """Correlation heatmap of the given data: rows = EDA metrics, columns = result metrics."""
+    plt = setup_matplotlib()
 
     matrix = [
-        [
-            corr_value(finite_points(pooled, x_metric, y_metric, False), x_metric, y_metric, method)
-            for y_metric in y_metrics
-        ]
+        [corr_value(finite_points(df, x_metric, y_metric, False), x_metric, y_metric, method) for y_metric in y_metrics]
         for x_metric in eda_metrics
     ]
 
+    fig, axis = plt.subplots(figsize=(3.0, 2.0), constrained_layout=True)
     image = axis.imshow(matrix, cmap="RdBu_r", vmin=-1.0, vmax=1.0, aspect="auto")
     axis.set_yticks(range(len(eda_metrics)), [plot_label(metric, plot_labels) for metric in eda_metrics])
     axis.set_xticks(
@@ -463,26 +282,13 @@ def plot_correlation_heatmap_pooled(
         for col in range(len(y_metrics)):
             value = matrix[row][col]
             if not math.isnan(value):
-                axis.text(col, row, f"{value:.2f}", ha="center", va="center", fontsize=HEATMAP_CELL_FONTSIZE, color=text_color(value))
+                axis.text(col, row, f"{value:.2f}", ha="center", va="center", fontsize=HEATMAP_CELL_FONTSIZE, color=heat_text_color(plt, value))
 
     fig.colorbar(image, ax=axis, label=f"{plot_label(method)} r", shrink=0.8)
-    fig.suptitle(f"{model} ({protocol.replace('_', ' ')}) - n={n_images:,}")
+    fig.suptitle(title)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
-
-
-def output_name(
-    model: str,
-    protocol: str,
-    y_metric: str,
-    x_metric: str,
-    plot_kind: str,
-    log_x: bool,
-    plot_format: str,
-) -> str:
-    suffix = "_logx" if log_x else ""
-    return f"results_vs_eda_{plot_kind}_{protocol}_{model}_{y_metric}_vs_{x_metric}{suffix}.{plot_format}"
 
 
 def parse_args() -> argparse.Namespace:
@@ -525,19 +331,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--eda-labels", default="", help="Comma-separated axis labels for --eda-metrics.")
     parser.add_argument(
-        "--plot-kind",
-        choices=["per_dataset", "overlay", "both"],
-        default="per_dataset",
-    )
-    parser.add_argument(
         "--per-dataset",
         type=str2bool,
-        default=None,
-        help=(
-            "If false, pool every dataset's images into one cloud: scatter becomes a single "
-            "overlay and the heatmap correlations are computed across all combined images. "
-            "Overrides --plot-kind for scatters when set."
-        ),
+        default=False,
+        help="false: combine all images into one figure. true: one figure per dataset.",
     )
     parser.add_argument(
         "--plot-format",
@@ -552,9 +349,6 @@ def parse_args() -> argparse.Namespace:
         default="log_pearson",
         help=f"Comma-separated heatmap correlation coefficients. Available: {', '.join(CORRELATION_METHODS)}.",
     )
-    parser.add_argument("--ncols", type=int, default=5)
-    parser.add_argument("--x-min", type=float, default=0.0)
-    parser.add_argument("--x-max", type=float, default=1.0)
     parser.add_argument(
         "--log-x",
         action="store_true",
@@ -604,90 +398,32 @@ def main() -> None:
 
     correlations = parse_csv_arg(args.correlations, CORRELATION_METHODS, "correlation method")
 
-    # --per-dataset, when given, overrides --plot-kind for scatters and selects the
-    # pooled (across-all-images) heatmap instead of the per-dataset-column heatmap.
-    pool_all = args.per_dataset is False
-    if args.per_dataset is not None:
-        plot_kind = "per_dataset" if args.per_dataset else "overlay"
-    else:
-        plot_kind = args.plot_kind
-    plot_kinds = ("per_dataset", "overlay") if plot_kind == "both" else (plot_kind,)
-    scatter_total = len(y_metrics) * len(eda_metrics) * len(plot_kinds) if args.scatter else 0
+    # Prepare the data: one pooled DataFrame, or one per dataset. The plotters below are
+    # oblivious to which — they just plot whatever DataFrame they are handed.
+    groups = build_groups(data_by_dataset, args.per_dataset)
+    suffix = "_logx" if args.log_x else ""
+
+    scatter_total = len(y_metrics) if args.scatter else 0
     heatmap_total = len(correlations) if args.heatmap else 0
-    total = scatter_total + heatmap_total
+    total = len(groups) * (scatter_total + heatmap_total)
     index = 0
 
-    if args.scatter:
-        for y_metric in y_metrics:
-            for x_metric in eda_metrics:
-                for plot_kind in plot_kinds:
-                    index += 1
-                    path = args.output_dir / output_name(
-                        args.model,
-                        args.protocol,
-                        y_metric,
-                        x_metric,
-                        plot_kind,
-                        args.log_x,
-                        args.plot_format,
-                    )
-                    if plot_kind == "per_dataset":
-                        plot_per_dataset(
-                            data_by_dataset,
-                            path,
-                            x_metric,
-                            y_metric,
-                            args.model,
-                            args.protocol,
-                            args.log_x,
-                            args.ncols,
-                            args.x_min,
-                            args.x_max,
-                            plot_labels,
-                        )
-                    else:
-                        plot_overlay(
-                            data_by_dataset,
-                            path,
-                            x_metric,
-                            y_metric,
-                            args.model,
-                            args.protocol,
-                            args.log_x,
-                            args.x_min,
-                            args.x_max,
-                            plot_labels,
-                        )
-                    print(f"[{index}/{total}] wrote {path}", flush=True)
+    for group, df in groups.items():
+        if args.scatter:
+            for y_metric in y_metrics:
+                index += 1
+                title = f"{args.model} ({args.protocol}) - {group} - {plot_label(y_metric, plot_labels)} (n={len(df):,})"
+                path = args.output_dir / f"results_vs_eda_scatter_{args.protocol}_{args.model}_{group}_{y_metric}{suffix}.{args.plot_format}"
+                plot_scatter(df, path, y_metric, eda_metrics, title, args.log_x, plot_labels)
+                print(f"[{index}/{total}] wrote {path}", flush=True)
 
-    if args.heatmap:
-        for method in correlations:
-            index += 1
-            scope = "pooled" if pool_all else "per_dataset"
-            path = args.output_dir / f"results_vs_eda_heatmap_{scope}_{args.protocol}_{args.model}_{method}.{args.plot_format}"
-            if pool_all:
-                plot_correlation_heatmap_pooled(
-                    data_by_dataset,
-                    path,
-                    y_metrics,
-                    eda_metrics,
-                    method,
-                    args.model,
-                    args.protocol,
-                    plot_labels,
-                )
-            else:
-                plot_correlation_heatmaps(
-                    data_by_dataset,
-                    path,
-                    y_metrics,
-                    eda_metrics,
-                    method,
-                    args.model,
-                    args.protocol,
-                    plot_labels,
-                )
-            print(f"[{index}/{total}] wrote {path}", flush=True)
+        if args.heatmap:
+            for method in correlations:
+                index += 1
+                title = f"{args.model} ({args.protocol}) - {group} - {plot_label(method)} (n={len(df):,})"
+                path = args.output_dir / f"results_vs_eda_heatmap_{args.protocol}_{args.model}_{group}_{method}.{args.plot_format}"
+                plot_heatmap(df, path, y_metrics, eda_metrics, method, title, plot_labels)
+                print(f"[{index}/{total}] wrote {path}", flush=True)
     print("")
 
 
