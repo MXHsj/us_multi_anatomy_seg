@@ -103,6 +103,32 @@ def build_metric_row(
     return row
 
 
+def build_box_metric_record(
+    sample: Any,
+    height: int,
+    width: int,
+    infer_ms: float,
+    boxes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """One per-sample record holding metrics for each bounding box (for JSON output).
+
+    `boxes` is a list of per-box dicts (e.g. ``{"box_index", "bbox", **METRIC_NAMES}``), one per
+    prompt box, in prompt order.
+    """
+    metadata = _metadata(sample)
+    record = {
+        "sample_id": sample.sample_id,
+        "height": height,
+        "width": width,
+        "infer_ms": infer_ms,
+        "num_boxes": len(boxes),
+    }
+    for column in TARGET_METADATA_COLUMNS:
+        record[column] = metadata.get(column, "")
+    record["boxes"] = boxes
+    return record
+
+
 def count_source_iterations(decoder: Any, max_samples: int | None) -> int | None:
     count_fn = getattr(decoder, "count_source_samples", None)
     if callable(count_fn):

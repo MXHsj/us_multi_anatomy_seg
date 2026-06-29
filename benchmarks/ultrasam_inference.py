@@ -24,6 +24,7 @@ from benchmarks.eval_utils import (
     InferenceResult,
     METRIC_FIELDNAMES,
     TargetVisualizationCollector,
+    build_box_metric_record,
     build_metric_row,
     count_source_iterations,
     count_unique_source_samples,
@@ -33,7 +34,7 @@ from benchmarks.eval_utils import (
     summarize_metric_rows,
     summarize_target_class_metrics,
 )
-from benchmarks.metrics import SegmentationMetrics
+from benchmarks.metrics import METRIC_NAMES, SegmentationMetrics
 from datasets.common import (
     bbox_from_binary_mask,
     bbox_masks_from_mask,
@@ -271,6 +272,7 @@ def export_decoder_to_coco(
                 "image": image_uint8,
                 "mask": mask,
                 "bbox": record_bbox,
+                "gt_components": [np.asarray(c).astype(np.uint8) for c in component_masks],
             }
         )
 
@@ -358,6 +360,7 @@ def load_existing_coco_export_records(
                 "image": ensure_three_channels(normalize_to_uint8(sample.image)),
                 "mask": mask,
                 "bbox": record_bbox,
+                "gt_components": [np.asarray(c).astype(np.uint8) for c in component_masks],
             }
         )
 
@@ -482,14 +485,16 @@ def iter_ultrasam_predictions(model: Any, dataloader: Any, records_by_image_id: 
             image_id = int(getattr(data_sample, "img_id", data_sample.metainfo["img_id"]))
             record = records_by_image_id[image_id]
             pred_instances = data_sample.pred_instances
-            if len(pred_instances) == 0:
-                pred_mask = np.zeros_like(record["mask"], dtype=np.uint8)
-            else:
-                masks = pred_instances.masks
-                pred_mask = np.zeros_like(record["mask"], dtype=np.uint8)
-                for mask_idx in range(len(masks)):
-                    pred_mask |= tensor_mask_to_numpy(masks[mask_idx], record["mask"].shape)
-            yield record, pred_mask, infer_ms
+            # One predicted mask per prompt box, in prompt order (see SAM mask decoder split
+            # by len(gt_instances)); per_box_masks[i] aligns with record["gt_components"][i].
+            per_box_masks = [
+                tensor_mask_to_numpy(pred_instances.masks[mask_idx], record["mask"].shape)
+                for mask_idx in range(len(pred_instances))
+            ]
+            pred_mask = np.zeros_like(record["mask"], dtype=np.uint8)
+            for box_mask in per_box_masks:
+                pred_mask |= box_mask
+            yield record, pred_mask, per_box_masks, infer_ms
 
 
 class _SampleListDecoder:
@@ -568,7 +573,7 @@ def run_ultrasam_on_samples(
         records_by_image_id = {int(record["image_id"]): record for record in records}
         metrics_calculator = SegmentationMetrics()
         results: list[InferenceResult] = []
-        for record, pred_mask, infer_ms in iter_ultrasam_predictions(
+        for record, pred_mask, _per_box_masks, infer_ms in iter_ultrasam_predictions(
             model,
             dataloader,
             records_by_image_id,
@@ -717,6 +722,7 @@ def main() -> None:
     records_by_image_id = {int(record["image_id"]): record for record in records}
     metrics_calc = SegmentationMetrics()
     rows: list[dict[str, Any]] = []
+    box_records: list[dict[str, Any]] = []
     total = len(records)
     start_time = time.time()
 
@@ -731,7 +737,7 @@ def main() -> None:
         )
 
     print(f"Running UltraSAM benchmark for dataset '{args.dataset}' on {total} samples...")
-    for idx, (record, pred_mask, infer_ms) in enumerate(
+    for idx, (record, pred_mask, per_box_masks, infer_ms) in enumerate(
         iter_ultrasam_predictions(model, dataloader, records_by_image_id),
         start=1,
     ):
@@ -748,6 +754,36 @@ def main() -> None:
                 bbox=bbox,
                 metrics=metrics,
                 infer_ms=infer_ms,
+            )
+        )
+
+        # Per-bounding-box metrics: score each prompt box's prediction against its own GT
+        # component (aligned by prompt order). Empty case: predicted mask of zeros.
+        prompt_boxes = np.atleast_2d(np.asarray(bbox))
+        boxes_payload: list[dict[str, Any]] = []
+        for box_index, gt_component in enumerate(record["gt_components"]):
+            box_pred = (
+                per_box_masks[box_index]
+                if box_index < len(per_box_masks)
+                else np.zeros_like(mask, dtype=np.uint8)
+            )
+            box_metrics = metrics_calc.compute(gt_component, box_pred)
+            boxes_payload.append(
+                {
+                    "box_index": box_index,
+                    "bbox": prompt_boxes[box_index].tolist()
+                    if box_index < len(prompt_boxes)
+                    else None,
+                    **{name: float(box_metrics[name]) for name in METRIC_NAMES},
+                }
+            )
+        box_records.append(
+            build_box_metric_record(
+                sample=sample,
+                height=height,
+                width=width,
+                infer_ms=infer_ms,
+                boxes=boxes_payload,
             )
         )
 
@@ -781,6 +817,10 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(rows)
 
+    box_metrics_path = output_dir / "per_box_metrics.json"
+    with box_metrics_path.open("w", encoding="utf-8") as handle:
+        json.dump(box_records, handle, indent=2)
+
     target_class_summary = summarize_target_class_metrics(rows)
     summary = {
         "model": "ultrasam",
@@ -808,6 +848,7 @@ def main() -> None:
 
     print(json.dumps(summary, indent=2))
     print(f"Wrote metrics to {metrics_path}")
+    print(f"Wrote per-box metrics to {box_metrics_path}")
 
 
 if __name__ == "__main__":
