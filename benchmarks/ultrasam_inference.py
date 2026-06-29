@@ -474,12 +474,23 @@ def tensor_mask_to_numpy(mask: Any, shape: tuple[int, int]) -> np.ndarray:
     return arr.astype(np.uint8)
 
 
-def read_done_sample_ids(csv_path: Path) -> set[str]:
-    """Sample ids already written to per_sample_metrics.csv (for resuming a crashed run)."""
-    if not csv_path.exists():
-        return set()
-    with csv_path.open(newline="", encoding="utf-8") as handle:
-        return {row["sample_id"] for row in csv.DictReader(handle) if row.get("sample_id")}
+def read_box_records(jsonl_path: Path) -> list[dict[str, Any]]:
+    """Read the crash-safe per-box JSONL stream (one record per finished image).
+
+    This per-box JSONL is the source of truth for resuming. Unparseable trailing lines (from a crash
+    mid-write) are skipped.
+    """
+    if not jsonl_path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in jsonl_path.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return records
 
 
 def read_metric_rows(csv_path: Path) -> list[dict[str, Any]]:
@@ -508,18 +519,9 @@ def write_pending_annotations(ann_path: Path, keep_image_ids: set[int], out_path
     return out_path
 
 
-def consolidate_box_metrics(jsonl_path: Path, json_path: Path) -> None:
-    """Merge the crash-safe JSONL stream into the per_box_metrics.json list (dedup by sample_id)."""
-    by_sample: dict[str, Any] = {}
-    if json_path.exists():
-        for record in json.loads(json_path.read_text()):
-            by_sample[record["sample_id"]] = record
-    if jsonl_path.exists():
-        for line in jsonl_path.read_text().splitlines():
-            if line.strip():
-                record = json.loads(line)
-                by_sample[record["sample_id"]] = record
-    json_path.write_text(json.dumps(list(by_sample.values()), indent=2))
+def dedup_by_sample_id(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep one record per sample_id (last wins), preserving order."""
+    return list({record["sample_id"]: record for record in records}.values())
 
 
 @torch.no_grad()
@@ -767,11 +769,22 @@ def main() -> None:
     box_jsonl_path = output_dir / "per_box_metrics.jsonl"
     box_metrics_path = output_dir / "per_box_metrics.json"
 
-    # Resume only when the on-disk export was reused (consistent with the current args) and prior
-    # rows exist; otherwise start fresh and overwrite any stale partial results.
-    resume = existing_export is not None and metrics_path.exists()
-    done = read_done_sample_ids(metrics_path) if resume else set()
-    rows: list[dict[str, Any]] = read_metric_rows(metrics_path) if resume else []
+    # Resume when the export was reused (consistent with the current args) and prior per-box results
+    # exist. The streaming JSONL only exists while a run is in progress; a finished run removes it and
+    # leaves a single per_box_metrics.json. So prefer the JSONL (interrupted run); otherwise fall back
+    # to the finished .json. A bare .json with no .jsonl means the run already completed.
+    resume = existing_export is not None and (box_jsonl_path.exists() or box_metrics_path.exists())
+    if not resume:
+        prior_box_records: list[dict[str, Any]] = []
+    elif box_jsonl_path.exists():
+        prior_box_records = dedup_by_sample_id(read_box_records(box_jsonl_path))
+    else:
+        prior_box_records = dedup_by_sample_id(json.loads(box_metrics_path.read_text()))
+    done = {record["sample_id"] for record in prior_box_records}
+    # Prior per-sample rows from the CSV, restricted to ids confirmed done by the JSONL (drop any
+    # CSV row left orphaned by a crash between the CSV and JSONL writes; that sample is re-run).
+    rows: list[dict[str, Any]] = [row for row in read_metric_rows(metrics_path) if row["sample_id"] in done]
+    box_records: list[dict[str, Any]] = prior_box_records
     pending = [record for record in records if record["sample"].sample_id not in done]
     if done:
         print(f"Resuming: {len(done)} samples already done, {len(pending)} remaining.", flush=True)
@@ -817,13 +830,13 @@ def main() -> None:
                 model_label="UltraSAM",
             )
 
-        # Stream per-image results so a crash keeps the finished samples. Write the JSONL box line
-        # before the CSV row, so a CSV row (the resume marker) always implies its JSONL entry.
+        # Stream per-image results so a crash keeps the finished samples. Write the CSV row before
+        # the per-box JSONL line, so a JSONL entry (the resume marker) always implies its CSV row.
         csv_handle = metrics_path.open("a" if resume else "w", newline="", encoding="utf-8")
         writer = csv.DictWriter(csv_handle, fieldnames=METRIC_FIELDNAMES)
         if not resume:
             writer.writeheader()
-        jsonl_handle = box_jsonl_path.open("a" if resume else "w", encoding="utf-8")
+        jsonl_handle = box_jsonl_path.open("a" if box_jsonl_path.exists() else "w", encoding="utf-8")
 
         print(f"Running UltraSAM benchmark for dataset '{args.dataset}' on {len(pending)} samples...")
         try:
@@ -873,11 +886,12 @@ def main() -> None:
                     boxes=boxes_payload,
                 )
 
-                jsonl_handle.write(json.dumps(box_record) + "\n")
-                jsonl_handle.flush()
                 writer.writerow(row)
                 csv_handle.flush()
+                jsonl_handle.write(json.dumps(box_record) + "\n")
+                jsonl_handle.flush()
                 rows.append(row)
+                box_records.append(box_record)
 
                 if vis_collector is not None:
                     vis_collector.add_if_selected(
@@ -908,8 +922,17 @@ def main() -> None:
     else:
         print(f"All {len(records)} samples already evaluated; finalizing outputs.", flush=True)
 
-    # Consolidate the crash-safe JSONL stream into the per_box_metrics.json list contract.
-    consolidate_box_metrics(box_jsonl_path, box_metrics_path)
+    # Finalize: dedup by sample_id (a crash-orphan sample may have been re-run), then rewrite the
+    # derived CSV and per-box JSON cleanly from the in-memory results. The streaming JSONL is then
+    # removed, so a finished run leaves a single per_box_metrics.json (its presence == run finished).
+    rows = dedup_by_sample_id(rows)
+    box_records = dedup_by_sample_id(box_records)
+    with metrics_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=METRIC_FIELDNAMES)
+        writer.writeheader()
+        writer.writerows(rows)
+    box_metrics_path.write_text(json.dumps(box_records, indent=2))
+    box_jsonl_path.unlink(missing_ok=True)
 
     target_class_summary = summarize_target_class_metrics(rows)
     summary = {
