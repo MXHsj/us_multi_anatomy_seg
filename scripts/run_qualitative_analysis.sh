@@ -8,15 +8,15 @@ protocol="gt_bbox"
 gpu_id="1"
 
 # Datasets in the order they appear in datasets.json.
-datasets=$(python -c "import json; print(','.join(json.load(open('datasets/datasets.json'))['labels']))")
-# datasets="gist514"
+# datasets=$(python -c "import json; print(','.join(json.load(open('datasets/datasets.json'))['labels']))")
+datasets=(mmotu,busbra,gist514,tnsc2020,ultrabones100k,umud)
 echo $datasets
 
 result_metric="dice"
-lower_threshold="0.85"
-upper_threshold="1.00"
+lower_threshold="0.84"
+upper_threshold="0.86"
 
-# Number of samples plotted as columns in each dataset figure.
+# Number of cross-dataset figures to save.
 samples_per_dataset="5"
 
 # Leave empty to generate a new random seed each run; set to reproduce a prior run.

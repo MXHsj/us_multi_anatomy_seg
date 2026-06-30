@@ -67,6 +67,11 @@ def load_default_datasets() -> str:
     return ",".join(json.loads(labels_path.read_text())["labels"])
 
 
+def load_dataset_labels() -> dict[str, str]:
+    labels_path = ROOT / "datasets" / "datasets.json"
+    return json.loads(labels_path.read_text())["labels"]
+
+
 def result_dir(model: str, dataset: str, protocol: str, results_dir: Path) -> Path:
     return results_dir / f"{model}_{protocol}_{dataset}"
 
@@ -326,111 +331,145 @@ def _draw_roblus_inset(
         spine.set_linestyle("dotted")
 
 
-def plot_samples(
-    results: list[Any],
-    csv_metrics: dict[str, dict[str, Any]],
-    save_path: Path,
+def _plot_result_pair(
+    image_ax,
+    overlay_ax,
+    result: Any,
+    sample_metrics: dict[str, Any],
     *,
-    result_metric: str,
+    dataset: str,
     pred_color: str,
     pred_alpha: float,
     show_image_background: bool,
     gt_outline_color: str,
     bbox_color: str,
 ) -> None:
-    if not results:
+    image_ax.axis("off")
+    overlay_ax.axis("off")
+
+    image = ensure_three_channels(normalize_to_uint8(result.image))
+    pred_rgb = np.array(to_rgb(pred_color))
+    is_roblus = str(getattr(result.sample, "dataset", "")).lower() == "roblus"
+
+    image_ax.imshow(image, cmap="gray", aspect="auto")
+    _draw_bboxes(image_ax, result.bbox, bbox_color, 0.8)
+    image_ax.text(
+        0.02,
+        0.96,
+        dataset,
+        transform=image_ax.transAxes,
+        ha="left",
+        va="top",
+        color="white",
+        fontsize=8,
+        bbox={"facecolor": "black", "edgecolor": "none", "alpha": 0.55, "pad": 1.5},
+    )
+
+    if is_roblus:
+        _draw_roblus_inset(
+            image_ax,
+            image,
+            result.bbox,
+            draw_annotations=True,
+            draw_bbox=True,
+            pred_color=pred_color,
+            pred_alpha=pred_alpha,
+            show_image_background=True,
+            gt_outline_color=gt_outline_color,
+            gt_outline_width=0.9,
+            bbox_color=bbox_color,
+            bbox_linewidth=0.8,
+        )
+
+    if show_image_background:
+        overlay_ax.imshow(image, cmap="gray", aspect="auto")
+        overlay = np.zeros((*result.pred_mask.shape, 4), dtype=float)
+        overlay[..., :3] = pred_rgb
+        overlay[..., 3] = (result.pred_mask > 0) * pred_alpha
+    else:
+        overlay_ax.add_patch(
+            Rectangle(
+                (0, 0),
+                1,
+                1,
+                transform=overlay_ax.transAxes,
+                facecolor="black",
+                edgecolor="none",
+                zorder=-10,
+            )
+        )
+        overlay = np.zeros((*result.pred_mask.shape, 3), dtype=float)
+        overlay[result.pred_mask > 0] = pred_rgb
+    overlay_ax.imshow(overlay, zorder=0, aspect="auto")
+    _draw_gt_outline(overlay_ax, result.gt_mask, gt_outline_color, 0.9)
+
+    if is_roblus:
+        _draw_roblus_inset(
+            overlay_ax,
+            image,
+            result.bbox,
+            gt_mask=result.gt_mask,
+            pred_mask=result.pred_mask,
+            draw_annotations=True,
+            draw_bbox=False,
+            pred_color=pred_color,
+            pred_alpha=pred_alpha,
+            show_image_background=show_image_background,
+            gt_outline_color=gt_outline_color,
+            gt_outline_width=0.9,
+            bbox_color=bbox_color,
+            bbox_linewidth=0.8,
+        )
+
+    csv_dice = sample_metrics.get("dice", math.nan)
+    csv_assd = sample_metrics.get("assd", math.nan)
+    overlay_ax.text(
+        0.02,
+        0.96,
+        f"Dice: {csv_dice * 100:.2f}%\nASSD: {csv_assd:.2f}",
+        transform=overlay_ax.transAxes,
+        ha="left",
+        va="top",
+        color="white",
+        fontsize=8,
+        bbox={"facecolor": "black", "edgecolor": "none", "alpha": 0.55, "pad": 1.5},
+    )
+
+
+def plot_dataset_example(
+    columns: list[tuple[str, Any, dict[str, Any]]],
+    save_path: Path,
+    *,
+    pred_color: str,
+    pred_alpha: float,
+    show_image_background: bool,
+    gt_outline_color: str,
+    bbox_color: str,
+) -> None:
+    if not columns:
         return
 
+    ncols = len(columns)
     fig, axes = plt.subplots(
         2,
-        len(results),
-        figsize=(3.6 * len(results), 6.0),
+        ncols,
+        figsize=(3.6 * ncols, 6.0),
         gridspec_kw={"height_ratios": [2.85, 3.15]},
         squeeze=False,
     )
-    pred_rgb = np.array(to_rgb(pred_color))
 
-    for col, result in enumerate(results):
-        image_ax = axes[0, col]
-        overlay_ax = axes[1, col]
-        image_ax.axis("off")
-        overlay_ax.axis("off")
-
-        image = ensure_three_channels(normalize_to_uint8(result.image))
-        is_roblus = str(getattr(result.sample, "dataset", "")).lower() == "roblus"
-
-        image_ax.imshow(image, cmap="gray", aspect="auto")
-        _draw_bboxes(image_ax, result.bbox, bbox_color, 0.8)
-
-        if is_roblus:
-            _draw_roblus_inset(
-                image_ax,
-                image,
-                result.bbox,
-                draw_annotations=True,
-                draw_bbox=True,
-                pred_color=pred_color,
-                pred_alpha=pred_alpha,
-                show_image_background=True,
-                gt_outline_color=gt_outline_color,
-                gt_outline_width=0.9,
-                bbox_color=bbox_color,
-                bbox_linewidth=0.8,
-            )
-
-        if show_image_background:
-            overlay_ax.imshow(image, cmap="gray", aspect="auto")
-            overlay = np.zeros((*result.pred_mask.shape, 4), dtype=float)
-            overlay[..., :3] = pred_rgb
-            overlay[..., 3] = (result.pred_mask > 0) * pred_alpha
-        else:
-            overlay_ax.add_patch(
-                Rectangle(
-                    (0, 0),
-                    1,
-                    1,
-                    transform=overlay_ax.transAxes,
-                    facecolor="black",
-                    edgecolor="none",
-                    zorder=-10,
-                )
-            )
-            overlay = np.zeros((*result.pred_mask.shape, 3), dtype=float)
-            overlay[result.pred_mask > 0] = pred_rgb
-        overlay_ax.imshow(overlay, zorder=0, aspect="auto")
-        _draw_gt_outline(overlay_ax, result.gt_mask, gt_outline_color, 0.9)
-
-        if is_roblus:
-            _draw_roblus_inset(
-                overlay_ax,
-                image,
-                result.bbox,
-                gt_mask=result.gt_mask,
-                pred_mask=result.pred_mask,
-                draw_annotations=True,
-                draw_bbox=False,
-                pred_color=pred_color,
-                pred_alpha=pred_alpha,
-                show_image_background=show_image_background,
-                gt_outline_color=gt_outline_color,
-                gt_outline_width=0.9,
-                bbox_color=bbox_color,
-                bbox_linewidth=0.8,
-            )
-
-        sample_metrics = csv_metrics.get(str(result.sample.sample_id), {})
-        csv_dice = sample_metrics.get("dice", math.nan)
-        csv_assd = sample_metrics.get("assd", math.nan)
-        overlay_ax.text(
-            0.02,
-            0.96,
-            f"Dice: {csv_dice * 100:.2f}%\nASSD: {csv_assd:.2f}",
-            transform=overlay_ax.transAxes,
-            ha="left",
-            va="top",
-            color="white",
-            fontsize=8,
-            bbox={"facecolor": "black", "edgecolor": "none", "alpha": 0.55, "pad": 1.5},
+    for col, (dataset, result, sample_metrics) in enumerate(columns):
+        _plot_result_pair(
+            axes[0, col],
+            axes[1, col],
+            result,
+            sample_metrics,
+            dataset=dataset,
+            pred_color=pred_color,
+            pred_alpha=pred_alpha,
+            show_image_background=show_image_background,
+            gt_outline_color=gt_outline_color,
+            bbox_color=bbox_color,
         )
 
     save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -472,6 +511,7 @@ def main() -> None:
     seed = args.seed if args.seed is not None else secrets.randbelow(2**32)
     rng = np.random.default_rng(seed)
     datasets = split_csv(args.datasets)
+    dataset_labels = load_dataset_labels()
     threshold_folder = (
         args.output_dir
         / f"{args.result_metric}_{folder_text(args.lower_threshold)}_{folder_text(args.upper_threshold)}"
@@ -484,8 +524,7 @@ def main() -> None:
         "result_metric": args.result_metric,
         "lower_threshold": lower_threshold,
         "upper_threshold": upper_threshold,
-        "samples_per_dataset": args.samples_per_dataset,
-        "seed": seed,
+        "num_examples": args.samples_per_dataset,
         "device": args.device,
         "gpu_id": args.gpu_id,
         "datasets": datasets,
@@ -493,6 +532,8 @@ def main() -> None:
         "figures": {},
         "skipped": {},
     }
+
+    examples_by_dataset: dict[str, list[tuple[Any, dict[str, Any]]]] = {}
 
     for dataset in datasets:
         print(f"Dataset: {dataset}")
@@ -535,19 +576,36 @@ def main() -> None:
             run_config["skipped"][dataset] = "inference returned no results"
             continue
 
-        save_path = threshold_folder / f"{args.model}_{args.protocol}_{dataset}.png"
-        plot_samples(
-            results,
-            csv_metrics,
+        examples_by_dataset[dataset] = [
+            (result, csv_metrics.get(str(result.sample.sample_id), {})) for result in results
+        ]
+
+    num_figures = args.samples_per_dataset if examples_by_dataset else 0
+
+    for index in range(num_figures):
+        columns = [
+            (dataset_labels.get(dataset, dataset.upper()), examples[index][0], examples[index][1])
+            for dataset, examples in examples_by_dataset.items()
+            if index < len(examples)
+        ]
+        if not columns:
+            continue
+
+        save_path = threshold_folder / (
+            f"{args.model}_{args.protocol}_{args.result_metric}_"
+            f"{folder_text(args.lower_threshold)}_{folder_text(args.upper_threshold)}_"
+            f"seed{seed}_example{index + 1}.png"
+        )
+        plot_dataset_example(
+            columns,
             save_path,
-            result_metric=args.result_metric,
             pred_color=args.pred_color,
             pred_alpha=args.pred_alpha,
             show_image_background=args.show_image_background,
             gt_outline_color="white",
             bbox_color="yellow",
         )
-        run_config["figures"][dataset] = str(save_path)
+        run_config["figures"][f"example_{index + 1}"] = str(save_path)
         print(f"  Saved: {save_path}")
 
     threshold_folder.mkdir(parents=True, exist_ok=True)
