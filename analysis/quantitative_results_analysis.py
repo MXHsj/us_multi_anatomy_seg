@@ -63,6 +63,12 @@ def str2bool(value: str) -> bool:
     return value.strip().lower() == "true"
 
 
+def optional_float(value: str) -> float | None:
+    if not value.strip():
+        return None
+    return float(value)
+
+
 def compute_derived_metrics(df: pd.DataFrame, derived_metrics: tuple[str, ...]) -> pd.DataFrame:
     """Compute each requested derived metric from the result columns."""
     df = df.copy()
@@ -117,6 +123,7 @@ def load_dataset_points(
     dataset: str,
     protocol: str,
     eda_metrics: tuple[str, ...],
+    extra_eda_metrics: tuple[str, ...],
     derived_metrics: tuple[str, ...],
 ) -> pd.DataFrame:
     """One row per bounding box: result metrics joined with EDA metrics on (sample_id, box_index)."""
@@ -130,14 +137,100 @@ def load_dataset_points(
 
     results = explode_boxes(metrics_path)
     stats = explode_boxes(stats_path)
-    for metric in eda_metrics:
+    stats_metrics = tuple(dict.fromkeys((*eda_metrics, *extra_eda_metrics)))
+    for metric in stats_metrics:
         if metric not in stats.columns:
             stats[metric] = math.nan
-    stats = stats[["sample_id", "box_index", AGGREGATION_WEIGHT, *eda_metrics]]
+    stats = stats[["sample_id", "box_index", AGGREGATION_WEIGHT, *stats_metrics]]
     merged = results.merge(stats, on=["sample_id", "box_index"], how="inner")
     if derived_metrics:
         merged = compute_derived_metrics(merged, derived_metrics)
     return merged
+
+
+def filter_ultrabones_solidity(
+    data_by_dataset: dict[str, pd.DataFrame],
+    threshold: float | None,
+) -> dict[str, pd.DataFrame]:
+    if threshold is None or "ultrabones100k" not in data_by_dataset:
+        return data_by_dataset
+
+    filtered = dict(data_by_dataset)
+    df = filtered["ultrabones100k"]
+    keep = pd.to_numeric(df["solidity"], errors="coerce") >= threshold
+    dataset_df = df[keep].copy()
+    removed = len(df) - len(dataset_df)
+    if dataset_df.empty:
+        print(f"Skipping ultrabones100k: no boxes with solidity >= {threshold:g}", file=sys.stderr)
+        del filtered["ultrabones100k"]
+    else:
+        print(f"ultrabones100k: filtered {removed:,} boxes with solidity < {threshold:g}", file=sys.stderr)
+        filtered["ultrabones100k"] = dataset_df
+    return filtered
+
+
+def filter_tnsc2020_full_target_bbox(
+    data_by_dataset: dict[str, pd.DataFrame],
+    enabled: bool,
+) -> dict[str, pd.DataFrame]:
+    if not enabled or "tnsc2020" not in data_by_dataset:
+        return data_by_dataset
+
+    filtered = dict(data_by_dataset)
+    df = filtered["tnsc2020"]
+    values = pd.to_numeric(df["target_bbox_area_ratio"], errors="coerce")
+    keep = values != 1.0
+    dataset_df = df[keep].copy()
+    removed = len(df) - len(dataset_df)
+    if dataset_df.empty:
+        print("Skipping tnsc2020: no boxes with target_bbox_area_ratio != 1", file=sys.stderr)
+        del filtered["tnsc2020"]
+    else:
+        print(f"tnsc2020: filtered {removed:,} boxes with target_bbox_area_ratio == 1", file=sys.stderr)
+        filtered["tnsc2020"] = dataset_df
+    return filtered
+
+
+def filter_tnsc2020_aspect_ratio(
+    data_by_dataset: dict[str, pd.DataFrame],
+    threshold: float | None,
+) -> dict[str, pd.DataFrame]:
+    if threshold is None or "tnsc2020" not in data_by_dataset:
+        return data_by_dataset
+
+    filtered = dict(data_by_dataset)
+    df = filtered["tnsc2020"]
+    values = pd.to_numeric(df["aspect_ratio_feret"], errors="coerce")
+    keep = values >= threshold
+    dataset_df = df[keep].copy()
+    removed = len(df) - len(dataset_df)
+    if dataset_df.empty:
+        print(f"Skipping tnsc2020: no boxes with aspect_ratio_feret >= {threshold:g}", file=sys.stderr)
+        del filtered["tnsc2020"]
+    else:
+        print(f"tnsc2020: filtered {removed:,} boxes with aspect_ratio_feret < {threshold:g}", file=sys.stderr)
+        filtered["tnsc2020"] = dataset_df
+    return filtered
+
+
+def filter_by_dice_threshold(
+    data_by_dataset: dict[str, pd.DataFrame],
+    threshold: float | None,
+    *,
+    enabled: bool,
+) -> dict[str, pd.DataFrame]:
+    if threshold is None or not enabled:
+        return data_by_dataset
+
+    filtered = {}
+    for dataset, df in data_by_dataset.items():
+        keep = pd.to_numeric(df["dice"], errors="coerce") < threshold
+        dataset_df = df[keep].copy()
+        if dataset_df.empty:
+            print(f"Skipping {dataset}: no rows with dice < {threshold:g}", file=sys.stderr)
+            continue
+        filtered[dataset] = dataset_df
+    return filtered
 
 
 def aggregate_per_image(df: pd.DataFrame, value_cols: tuple[str, ...]) -> pd.DataFrame:
@@ -412,6 +505,30 @@ def parse_args() -> argparse.Namespace:
         default=False,
         help="Use a log-scaled x-axis and append _logx to output filenames.",
     )
+    parser.add_argument(
+        "--thres",
+        type=optional_float,
+        default=None,
+        help="If dice is in --result-metrics, keep only boxes with dice below this threshold.",
+    )
+    parser.add_argument(
+        "--ultrabones-min-solidity",
+        type=optional_float,
+        default=None,
+        help="For ultrabones100k only, keep boxes with solidity >= this value before any per-image aggregation.",
+    )
+    parser.add_argument(
+        "--filter-tnsc2020-target-bbox-one",
+        type=str2bool,
+        default=False,
+        help="For tnsc2020 only, remove boxes with target_bbox_area_ratio == 1 before any per-image aggregation.",
+    )
+    parser.add_argument(
+        "--tnsc2020-min-aspect-ratio",
+        type=optional_float,
+        default=None,
+        help="For tnsc2020 only, keep boxes with aspect_ratio_feret >= this value before any per-image aggregation.",
+    )
     return parser.parse_args()
 
 
@@ -446,6 +563,15 @@ def main() -> None:
                 dataset,
                 args.protocol,
                 eda_metrics,
+                tuple(
+                    metric
+                    for condition, metric in (
+                        (dataset == "ultrabones100k" and args.ultrabones_min_solidity is not None, "solidity"),
+                        (dataset == "tnsc2020" and args.filter_tnsc2020_target_bbox_one, "target_bbox_area_ratio"),
+                        (dataset == "tnsc2020" and args.tnsc2020_min_aspect_ratio is not None, "aspect_ratio_feret"),
+                    )
+                    if condition
+                ),
                 derived_metrics,
             )
         except FileNotFoundError as error:
@@ -456,6 +582,12 @@ def main() -> None:
 
     correlations = parse_csv_arg(args.correlations, CORRELATION_METHODS, "correlation method")
 
+    data_by_dataset = filter_ultrabones_solidity(data_by_dataset, args.ultrabones_min_solidity)
+    data_by_dataset = filter_tnsc2020_full_target_bbox(data_by_dataset, args.filter_tnsc2020_target_bbox_one)
+    data_by_dataset = filter_tnsc2020_aspect_ratio(data_by_dataset, args.tnsc2020_min_aspect_ratio)
+    if not data_by_dataset:
+        raise SystemExit("No datasets had rows remaining after per-box EDA filtering.")
+
     # Prepare the data. per_image collapses boxes to one weighted point per image; per_dataset
     # groups into pooled vs one-per-dataset. The plotters below just plot whatever they are handed.
     if args.per_image:
@@ -463,6 +595,14 @@ def main() -> None:
             dataset: aggregate_per_image(df, (*eda_metrics, *y_metrics))
             for dataset, df in data_by_dataset.items()
         }
+    data_by_dataset = filter_by_dice_threshold(
+        data_by_dataset,
+        args.thres,
+        enabled="dice" in result_metrics,
+    )
+    if not data_by_dataset:
+        raise SystemExit("No datasets had rows remaining after filtering.")
+
     groups = build_groups(data_by_dataset, args.per_dataset)
     granularity = "image" if args.per_image else "box"
     suffix = "_logx" if args.log_x else ""

@@ -9,6 +9,10 @@ output_dir="analysis/figures/results_vs_eda"
 # y-axis = result + derived metrics, x-axis = eda metrics.
 result_metrics="dice" #,relative_area_error"
 results_plot_labels="Dice" #,Error"
+thres="1.0"
+ultrabones_min_solidity="0.2"
+filter_tnsc2020_target_bbox_one="true"
+tnsc2020_min_aspect_ratio="0.2"
 
 derived_metrics="" #fn_per_gt,fp_per_gt"
 derived_plot_labels="FN / GT,FP / GT"
@@ -47,6 +51,10 @@ echo "Generating results-vs-EDA figures..."
 python analysis/quantitative_results_analysis.py \
   --output-dir "${output_dir}" --datasets "${datasets}" \
   --result-metrics "${result_metrics}" --result-labels "${results_plot_labels}" \
+  --thres "${thres}" \
+  --ultrabones-min-solidity "${ultrabones_min_solidity}" \
+  --filter-tnsc2020-target-bbox-one "${filter_tnsc2020_target_bbox_one}" \
+  --tnsc2020-min-aspect-ratio "${tnsc2020_min_aspect_ratio}" \
   --derived-metrics "${derived_metrics}" --derived-labels "${derived_plot_labels}" \
   --eda-metrics "${eda_metrics}" --eda-labels "${eda_plot_labels}" \
   --per-image "${per_image}" --per-dataset "${per_dataset}" --plot-format "${plot_format}" \
