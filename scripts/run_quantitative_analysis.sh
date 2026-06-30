@@ -23,13 +23,15 @@ eda_plot_labels="Target/image,Target/bbox,Solidity,Circularity,Aspect ratio"
 # Datasets in the order they appear in datasets.json (columns left-to-right).
 # datasets=$(python -c "import json; print(','.join(json.load(open('datasets/datasets.json'))['labels']))")
 # datasets=(aulid,blusg,busi,camus,oku,uns,busbra,mmotu,gist514,tnsc2020,ultrabones100k) #,umud,roblus)
-datasets=(busbra,mmotu,gist514,tnsc2020,ultrabones100k) #,umud,roblus)
+# datasets=(busbra,mmotu,gist514,tnsc2020,ultrabones100k) #,umud,roblus)
+datasets=(ultrabones100k,gist514,roblus)
 echo $datasets
 
 # What to generate, and which correlation coefficients the heatmaps use.
 make_scatter="true"
 make_heatmap="false"
-correlations="pearson" #spearman"
+color_by_dataset="true"
+correlation="pearson" #spearman"
 
 # Figure file format: png, svg, or pdf.
 plot_format="png"
@@ -42,7 +44,7 @@ per_image="false"
 # How to prepare the data before plotting:
 #   false -> combine all images into one figure (scatter and heatmap).
 #   true  -> one figure per dataset (the same plot, repeated per dataset).
-per_dataset="true"
+per_dataset="false"
 
 # Use a log-scaled x-axis (true/false).
 log_x="false"
@@ -59,5 +61,5 @@ python analysis/quantitative_results_analysis.py \
   --derived-metrics "${derived_metrics}" --derived-labels "${derived_plot_labels}" \
   --eda-metrics "${eda_metrics}" --eda-labels "${eda_plot_labels}" \
   --per-image "${per_image}" --per-dataset "${per_dataset}" --plot-format "${plot_format}" \
-  --scatter "${make_scatter}" --heatmap "${make_heatmap}" --correlations "${correlations}" \
+  --scatter "${make_scatter}" --heatmap "${make_heatmap}" --color-by-dataset "${color_by_dataset}" --correlations "${correlations}" \
   --log-x "${log_x}"

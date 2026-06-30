@@ -143,6 +143,7 @@ def load_dataset_points(
             stats[metric] = math.nan
     stats = stats[["sample_id", "box_index", AGGREGATION_WEIGHT, *stats_metrics]]
     merged = results.merge(stats, on=["sample_id", "box_index"], how="inner")
+    merged["dataset"] = dataset
     if derived_metrics:
         merged = compute_derived_metrics(merged, derived_metrics)
     return merged
@@ -290,11 +291,20 @@ def setup_matplotlib() -> Any:
     return plt
 
 
-def finite_points(df: pd.DataFrame, x_metric: str, y_metric: str, log_x: bool) -> pd.DataFrame:
+def finite_points(
+    df: pd.DataFrame,
+    x_metric: str,
+    y_metric: str,
+    log_x: bool,
+    keep_cols: tuple[str, ...] = (),
+) -> pd.DataFrame:
     points = df[[x_metric, y_metric]].apply(pd.to_numeric, errors="coerce")
     points = points.replace([float("inf"), float("-inf")], pd.NA).dropna()
     if log_x:
         points = points[points[x_metric] > 0]
+    for column in keep_cols:
+        if column in df.columns:
+            points[column] = df.loc[points.index, column]
     return points
 
 
@@ -343,6 +353,7 @@ def plot_scatter(
     eda_metrics: tuple[str, ...],
     title: str,
     log_x: bool,
+    color_by_dataset: bool,
     plot_labels: dict[str, str],
 ) -> None:
     """Scatter each group as its own row: columns = EDA metrics (x), y = the result metric.
@@ -354,26 +365,65 @@ def plot_scatter(
     import seaborn as sns
 
     nrows, ncols = len(groups), len(eda_metrics)
+    is_pooled = len(groups) == 1 and next(iter(groups)) == "pooled"
+    use_dataset_color = color_by_dataset and len(groups) == 1 and "dataset" in next(iter(groups.values())).columns
+    height = 1.5 * nrows + (0.25 if use_dataset_color else 0.0)
     fig, axes = plt.subplots(
         nrows, ncols,
-        figsize=(8.5, 1.5 * nrows),
-        sharey=True, squeeze=False, constrained_layout=True,
+        figsize=(8.5, height),
+        sharey=True, squeeze=False, constrained_layout=not use_dataset_color,
     )
+    legend_handles = None
+    legend_labels = None
     for row, (group, df) in enumerate(groups.items()):
         bottom_row = row == nrows - 1
-        for axis, x_metric in zip(axes[row], eda_metrics):
-            points = finite_points(df, x_metric, y_metric, log_x)
-            sns.regplot(
-                data=points,
-                x=x_metric,
-                y=y_metric,
-                ax=axis,
-                logx=log_x,
-                ci=None,
-                truncate=True,
-                scatter_kws={"s": 2, "alpha": 0.5, "edgecolor": "none", "color": "#1f77b4"},
-                line_kws={"color": "#d62728", "linewidth": 0.6},
-            )
+        for col, (axis, x_metric) in enumerate(zip(axes[row], eda_metrics)):
+            points = finite_points(df, x_metric, y_metric, log_x, ("dataset",) if use_dataset_color else ())
+            if points.empty:
+                axis.text(0.5, 0.5, "no points", ha="center", va="center", transform=axis.transAxes)
+            elif use_dataset_color:
+                sns.scatterplot(
+                    data=points,
+                    x=x_metric,
+                    y=y_metric,
+                    hue="dataset",
+                    ax=axis,
+                    s=5,
+                    alpha=0.35,
+                    edgecolor="none",
+                    linewidth=0,
+                    legend=(legend_handles is None),
+                )
+                handles, labels = axis.get_legend_handles_labels()
+                if handles and labels and legend_handles is None:
+                    legend_handles = handles
+                    legend_labels = labels
+                legend = axis.get_legend()
+                if legend is not None:
+                    legend.remove()
+                sns.regplot(
+                    data=points,
+                    x=x_metric,
+                    y=y_metric,
+                    ax=axis,
+                    logx=log_x,
+                    ci=None,
+                    truncate=True,
+                    scatter=False,
+                    line_kws={"color": "#d62728", "linewidth": 0.6},
+                )
+            else:
+                sns.regplot(
+                    data=points,
+                    x=x_metric,
+                    y=y_metric,
+                    ax=axis,
+                    logx=log_x,
+                    ci=None,
+                    truncate=True,
+                    scatter_kws={"s": 2, "alpha": 0.5, "edgecolor": "none", "color": "#1f77b4"},
+                    line_kws={"color": "#d62728", "linewidth": 0.6},
+                )
             if log_x:
                 # Log x can't include 0; span the observed positive range instead of a fixed [0, 1].
                 axis.set_xscale("log")
@@ -385,9 +435,20 @@ def plot_scatter(
             axis.set_xlabel(plot_label(x_metric, plot_labels) if bottom_row else "")
             axis.set_ylabel("")
             axis.grid(True, alpha=0.3)
-        axes[row, 0].set_ylabel(f"{group}\n(n={len(df):,})")
+        axes[row, 0].set_ylabel(plot_label(y_metric, plot_labels) if is_pooled else f"{group}\n(n={len(df):,})")
 
-    fig.suptitle(title)
+    if not is_pooled:
+        fig.suptitle(title)
+    if legend_handles and legend_labels:
+        fig.legend(
+            legend_handles,
+            legend_labels,
+            loc="lower center",
+            bbox_to_anchor=(0.5, 0.0),
+            ncol=min(len(legend_labels), 6),
+            frameon=False,
+        )
+        fig.tight_layout(rect=(0, 0.08, 1, 1.0 if is_pooled else 0.97))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
@@ -406,7 +467,10 @@ def plot_heatmap(
     plt = setup_matplotlib()
 
     matrix = [
-        [corr_value(finite_points(df, x_metric, y_metric, False), x_metric, y_metric, method) for y_metric in y_metrics]
+        [
+            corr_value(finite_points(df, x_metric, y_metric, False), x_metric, y_metric, method)
+            for y_metric in y_metrics
+        ]
         for x_metric in eda_metrics
     ]
 
@@ -494,6 +558,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--scatter", type=str2bool, default=True, help="Generate scatter figures (true/false).")
     parser.add_argument("--heatmap", type=str2bool, default=True, help="Generate correlation heatmaps (true/false).")
+    parser.add_argument(
+        "--color-by-dataset",
+        type=str2bool,
+        default=False,
+        help="Color scatter points by dataset when a dataset column is available.",
+    )
     parser.add_argument(
         "--correlations",
         default="log_pearson",
@@ -591,8 +661,15 @@ def main() -> None:
     # Prepare the data. per_image collapses boxes to one weighted point per image; per_dataset
     # groups into pooled vs one-per-dataset. The plotters below just plot whatever they are handed.
     if args.per_image:
+        aggregated_by_dataset = {}
+        for dataset, df in data_by_dataset.items():
+            aggregated = aggregate_per_image(df, (*eda_metrics, *y_metrics))
+            aggregated["dataset"] = DATASET_LABELS.get(dataset, dataset.upper())
+            aggregated_by_dataset[dataset] = aggregated
+        data_by_dataset = aggregated_by_dataset
+    else:
         data_by_dataset = {
-            dataset: aggregate_per_image(df, (*eda_metrics, *y_metrics))
+            dataset: df.assign(dataset=DATASET_LABELS.get(dataset, dataset.upper()))
             for dataset, df in data_by_dataset.items()
         }
     data_by_dataset = filter_by_dice_threshold(
@@ -605,7 +682,9 @@ def main() -> None:
 
     groups = build_groups(data_by_dataset, args.per_dataset)
     granularity = "image" if args.per_image else "box"
-    suffix = "_logx" if args.log_x else ""
+    suffix = ""
+    if args.log_x:
+        suffix += "_logx"
 
     # Name for the whole figure set: granularity + the grouping (pooled group name, else by_dataset).
     scope = f"{granularity}_{next(iter(groups)) if len(groups) == 1 else 'by_dataset'}"
@@ -619,7 +698,16 @@ def main() -> None:
             index += 1
             title = f"{args.model} ({args.protocol}) - {scope} - {plot_label(y_metric, plot_labels)}"
             path = args.output_dir / f"results_vs_eda_scatter_{args.protocol}_{args.model}_{scope}_{y_metric}{suffix}.{args.plot_format}"
-            plot_scatter(groups, path, y_metric, eda_metrics, title, args.log_x, plot_labels)
+            plot_scatter(
+                groups,
+                path,
+                y_metric,
+                eda_metrics,
+                title,
+                args.log_x,
+                args.color_by_dataset,
+                plot_labels,
+            )
             print(f"[{index}/{total}] wrote {path}", flush=True)
 
     if args.heatmap:
@@ -630,8 +718,16 @@ def main() -> None:
                 effective_method = "log_pearson" if args.log_x and method == "pearson" else method
                 index += 1
                 title = f"{args.model} ({args.protocol}) - {granularity} {group} - {plot_label(effective_method)} (n={len(df):,})"
-                path = args.output_dir / f"results_vs_eda_heatmap_{args.protocol}_{args.model}_{granularity}_{group}_{effective_method}.{args.plot_format}"
-                plot_heatmap(df, path, y_metrics, eda_metrics, effective_method, title, plot_labels)
+                path = args.output_dir / f"results_vs_eda_heatmap_{args.protocol}_{args.model}_{granularity}_{group}_{effective_method}{suffix}.{args.plot_format}"
+                plot_heatmap(
+                    df,
+                    path,
+                    y_metrics,
+                    eda_metrics,
+                    effective_method,
+                    title,
+                    plot_labels,
+                )
                 print(f"[{index}/{total}] wrote {path}", flush=True)
     print("")
 
