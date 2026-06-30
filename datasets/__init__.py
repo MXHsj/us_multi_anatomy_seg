@@ -11,6 +11,7 @@ from datasets.nerve_UNS import UNSDecoder
 from datasets.lung_RobLUS import RobLUSDecoder
 from datasets.spinal_cord_USSC import SpinalCordUSDecoder
 from datasets.muscle_UMUD import UMUDAponeurosisDecoder
+from datasets.ovary_MMOTU import MMOTU2DDecoder
 
 __all__ = [
     "DecodedSample",
@@ -26,4 +27,5 @@ __all__ = [
     "RobLUSDecoder",
     "SpinalCordUSDecoder",
     "UMUDAponeurosisDecoder",
+    "MMOTU2DDecoder",
 ]

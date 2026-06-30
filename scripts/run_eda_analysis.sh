@@ -9,6 +9,7 @@ datasets=(
   busbra
   busi
   camus
+  mmotu
   oku
   roblus
   tnsc2020

@@ -114,6 +114,14 @@ DATASET_REGISTRY: dict[str, DatasetSpec] = {
         decoder_class="datasets.muscle_UMUD:UMUDAponeurosisDecoder",
         hf_repo_path="zips/Muscle/UMUD.zip",
     ),
+    "mmotu": DatasetSpec(
+        key="mmotu",
+        display_name="MMOTU",
+        anatomy="Ovary",
+        default_root="datasets/MMOTU",
+        decoder_class="datasets.ovary_MMOTU:MMOTU2DDecoder",
+        hf_repo_path="zips/Ovary/MMOTU.zip",
+    ),
 }
 
 

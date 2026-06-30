@@ -19,6 +19,7 @@ datasets=(
   busi
   camus
   oku
+  mmotu
   roblus
   tnsc2020
   ultrabones100k
