@@ -51,7 +51,7 @@ DEFAULT_ULTRASAM_CHECKPOINT_URL = (
 DEFAULT_ULTRASAM_CONFIG = "configs/UltraSAM/UltraSAM_full/UltraSAM_box_refine.py"
 
 # Thin line-like targets where centerline Dice (clDice) replaces overlap Dice (still saved as "dice").
-CENTERLINE_DICE_DATASETS = {"umud"}
+CENTERLINE_DICE_DATASETS = {""}
 
 
 def resolve_torch_device(requested_device: str) -> torch.device:
