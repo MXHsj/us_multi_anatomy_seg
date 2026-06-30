@@ -277,9 +277,9 @@ def setup_matplotlib() -> Any:
             "axes.labelsize": 8,
             "axes.titlesize": 8,
             "figure.titlesize": 12,
-            "xtick.labelsize": 6,
-            "ytick.labelsize": 6,
-            "legend.fontsize": 6,
+            "xtick.labelsize": 7,
+            "ytick.labelsize": 7,
+            "legend.fontsize": 7,
             "axes.spines.top": False,
             "axes.spines.right": False,
             "axes.grid": True,
@@ -332,6 +332,10 @@ def corr_label(points: pd.DataFrame, x_metric: str, y_metric: str, method: str) 
     }
     label = labels.get(method, method)
     return f"{label} = NA" if math.isnan(value) else f"{label} = {value:.2f}"
+
+
+def corr_symbol(method: str) -> str:
+    return "rho" if method == "spearman" else "r"
 
 
 def effective_correlation(correlation: str, log_x: bool) -> str:
@@ -412,37 +416,52 @@ def plot_scatter(
                 legend = axis.get_legend()
                 if legend is not None:
                     legend.remove()
-                sns.regplot(
-                    data=points,
-                    x=x_metric,
-                    y=y_metric,
-                    ax=axis,
-                    logx=log_x,
-                    ci=None,
-                    truncate=True,
-                    scatter=False,
-                    lowess=correlation == "spearman",
-                    line_kws={"color": "#d62728", "linewidth": 0.6},
-                )
-                if axis.lines:
-                    axis.lines[-1].set_label(correlation_label)
-                    axis.legend(handles=[axis.lines[-1]], loc="lower right", frameon=False, fontsize=8)
+                if correlation == "spearman":
+                    axis.text(0.97, 0.05, correlation_label, ha="right", va="bottom", fontsize=8, transform=axis.transAxes)
+                else:
+                    sns.regplot(
+                        data=points,
+                        x=x_metric,
+                        y=y_metric,
+                        ax=axis,
+                        logx=log_x,
+                        ci=None,
+                        truncate=True,
+                        scatter=False,
+                        line_kws={"color": "#d62728", "linewidth": 0.6},
+                    )
+                    if axis.lines:
+                        axis.lines[-1].set_label(correlation_label)
+                        axis.legend(handles=[axis.lines[-1]], loc="lower right", frameon=False, fontsize=8)
             else:
-                sns.regplot(
-                    data=points,
-                    x=x_metric,
-                    y=y_metric,
-                    ax=axis,
-                    logx=log_x,
-                    ci=None,
-                    truncate=True,
-                    lowess=correlation == "spearman",
-                    scatter_kws={"s": 2, "alpha": 0.5, "edgecolor": "none", "color": "#1f77b4"},
-                    line_kws={"color": "#d62728", "linewidth": 0.6},
-                )
-                if axis.lines:
-                    axis.lines[-1].set_label(correlation_label)
-                    axis.legend(handles=[axis.lines[-1]], loc="lower right", frameon=False, fontsize=6)
+                if correlation == "spearman":
+                    sns.scatterplot(
+                        data=points,
+                        x=x_metric,
+                        y=y_metric,
+                        ax=axis,
+                        s=5,
+                        alpha=0.5,
+                        edgecolor="none",
+                        color="#1f77b4",
+                        legend=False,
+                    )
+                    axis.text(0.97, 0.05, correlation_label, ha="right", va="bottom", fontsize=8, transform=axis.transAxes)
+                else:
+                    sns.regplot(
+                        data=points,
+                        x=x_metric,
+                        y=y_metric,
+                        ax=axis,
+                        logx=log_x,
+                        ci=None,
+                        truncate=True,
+                        scatter_kws={"s": 2, "alpha": 0.5, "edgecolor": "none", "color": "#1f77b4"},
+                        line_kws={"color": "#d62728", "linewidth": 0.6},
+                    )
+                    if axis.lines:
+                        axis.lines[-1].set_label(correlation_label)
+                        axis.legend(handles=[axis.lines[-1]], loc="lower right", frameon=False, fontsize=6)
             if log_x:
                 # Log x can't include 0; span the observed positive range instead of a fixed [0, 1].
                 axis.set_xscale("log")
@@ -451,7 +470,8 @@ def plot_scatter(
                 axis.set_xlim(0, 1)
             axis.set_ylim(0, 1)
             axis.set_title("")
-            axis.set_xlabel(plot_label(x_metric, plot_labels) if bottom_row else "")
+            x_label = plot_label(x_metric, plot_labels)
+            axis.set_xlabel(x_label if bottom_row else "")
             axis.set_ylabel("")
             axis.grid(True, alpha=0.3)
         axes[row, 0].set_ylabel(
@@ -484,37 +504,38 @@ def plot_heatmap(
     title: str,
     plot_labels: dict[str, str],
 ) -> None:
-    """Correlation heatmap of the given data: rows = EDA metrics, columns = result metrics."""
+    """Correlation heatmap panels: one horizontal panel per result metric."""
     plt = setup_matplotlib()
 
-    matrix = [
-        [
-            corr_value(finite_points(df, x_metric, y_metric, False), x_metric, y_metric, method)
-            for y_metric in y_metrics
+    fig_width = 8.5
+    fig_height = max(2.0, 0.3 * len(eda_metrics) + 0.8)
+    fig, axes = plt.subplots(1, len(y_metrics), figsize=(fig_width, fig_height), squeeze=False)
+    axes = axes.ravel()
+    image = None
+    for col, (axis, y_metric) in enumerate(zip(axes, y_metrics)):
+        matrix = [
+            [corr_value(finite_points(df, x_metric, y_metric, False), x_metric, y_metric, method)]
+            for x_metric in eda_metrics
         ]
-        for x_metric in eda_metrics
-    ]
-
-    fig, axis = plt.subplots(figsize=(3.0, 2.0), constrained_layout=True)
-    image = axis.imshow(matrix, cmap="RdBu_r", vmin=-1.0, vmax=1.0, aspect="auto")
-    axis.set_yticks(range(len(eda_metrics)), [plot_label(metric, plot_labels) for metric in eda_metrics])
-    axis.set_xticks(
-        range(len(y_metrics)),
-        [plot_label(metric, plot_labels) for metric in y_metrics],
-        rotation=45,
-        ha="right",
-        rotation_mode="anchor",
-    )
-    axis.tick_params(axis="x", bottom=False)
-    axis.grid(False)
-    for row in range(len(eda_metrics)):
-        for col in range(len(y_metrics)):
-            value = matrix[row][col]
+        image = axis.imshow(matrix, cmap="RdBu_r", vmin=-1.0, vmax=1.0, aspect="auto")
+        axis.set_title(plot_label(y_metric, plot_labels), fontsize=6)
+        axis.set_yticks(
+            range(len(eda_metrics)),
+            [plot_label(metric, plot_labels) for metric in eda_metrics] if col == 0 else [],
+        )
+        axis.set_xticks([])
+        axis.tick_params(axis="x", bottom=False)
+        axis.grid(False)
+        for row in range(len(eda_metrics)):
+            value = matrix[row][0]
             if not math.isnan(value):
-                axis.text(col, row, f"{value:.2f}", ha="center", va="center", fontsize=HEATMAP_CELL_FONTSIZE, color=heat_text_color(plt, value))
+                axis.text(0, row, f"{value:.2f}", ha="center", va="center", fontsize=HEATMAP_CELL_FONTSIZE, color=heat_text_color(plt, value))
 
-    fig.colorbar(image, ax=axis, label=f"{plot_label(method)} r", shrink=0.8)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.subplots_adjust(wspace=0.18)
+    fig.tight_layout()
+    if image is not None:
+        fig.colorbar(image, ax=axes.tolist(), label=f"{plot_label(method)} {corr_symbol(method)}", shrink=0.8, pad=0.02)
     fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
 
@@ -528,47 +549,49 @@ def plot_dataset_heatmap(
     title: str,
     plot_labels: dict[str, str],
 ) -> None:
-    """One heatmap with datasets as columns and EDA/result metric pairs as rows."""
+    """One figure with a dataset-column heatmap panel per result metric."""
     plt = setup_matplotlib()
 
     dataset_labels = [DATASET_LABELS.get(dataset, dataset.upper()) for dataset in data_by_dataset]
-    row_pairs = [(x_metric, y_metric) for y_metric in y_metrics for x_metric in eda_metrics]
-    row_labels = [
-        plot_label(x_metric, plot_labels)
-        if len(y_metrics) == 1
-        else f"{plot_label(x_metric, plot_labels)} / {plot_label(y_metric, plot_labels)}"
-        for x_metric, y_metric in row_pairs
-    ]
-    matrix = [
-        [
-            corr_value(finite_points(df, x_metric, y_metric, False), x_metric, y_metric, method)
-            for df in data_by_dataset.values()
+    fig_width = 8.5
+    fig_height = max(2.0, 0.3 * len(eda_metrics) + 1.0)
+    fig, axes = plt.subplots(1, len(y_metrics), figsize=(fig_width, fig_height), squeeze=False)
+    axes = axes.ravel()
+    image = None
+    for panel, (axis, y_metric) in enumerate(zip(axes, y_metrics)):
+        matrix = [
+            [
+                corr_value(finite_points(df, x_metric, y_metric, False), x_metric, y_metric, method)
+                for df in data_by_dataset.values()
+            ]
+            for x_metric in eda_metrics
         ]
-        for x_metric, y_metric in row_pairs
-    ]
+        image = axis.imshow(matrix, cmap="RdBu_r", vmin=-1.0, vmax=1.0, aspect="auto")
+        axis.set_title(plot_label(y_metric, plot_labels), fontsize=8)
+        axis.set_yticks(
+            range(len(eda_metrics)),
+            [plot_label(metric, plot_labels) for metric in eda_metrics] if panel == 0 else [],
+        )
+        axis.set_xticks(
+            range(len(dataset_labels)),
+            dataset_labels,
+            rotation=45,
+            ha="right",
+            rotation_mode="anchor",
+        )
+        axis.tick_params(axis="x", bottom=False)
+        axis.grid(False)
+        for row in range(len(eda_metrics)):
+            for col in range(len(dataset_labels)):
+                value = matrix[row][col]
+                if not math.isnan(value):
+                    axis.text(col, row, f"{value:.2f}", ha="center", va="center", fontsize=HEATMAP_CELL_FONTSIZE, color=heat_text_color(plt, value))
 
-    fig_width = max(3.0, 0.55 * len(dataset_labels) + 1.6)
-    fig_height = max(2.0, 0.28 * len(row_labels) + 0.8)
-    fig, axis = plt.subplots(figsize=(fig_width, fig_height), constrained_layout=True)
-    image = axis.imshow(matrix, cmap="RdBu_r", vmin=-1.0, vmax=1.0, aspect="auto")
-    axis.set_yticks(range(len(row_labels)), row_labels)
-    axis.set_xticks(
-        range(len(dataset_labels)),
-        dataset_labels,
-        rotation=45,
-        ha="right",
-        rotation_mode="anchor",
-    )
-    axis.tick_params(axis="x", bottom=False)
-    axis.grid(False)
-    for row in range(len(row_labels)):
-        for col in range(len(dataset_labels)):
-            value = matrix[row][col]
-            if not math.isnan(value):
-                axis.text(col, row, f"{value:.2f}", ha="center", va="center", fontsize=HEATMAP_CELL_FONTSIZE, color=heat_text_color(plt, value))
-
-    fig.colorbar(image, ax=axis, label=f"{plot_label(method)} r", shrink=0.8)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.subplots_adjust(wspace=0.18)
+    fig.tight_layout()
+    if image is not None:
+        fig.colorbar(image, ax=axes.tolist(), label=f"{plot_label(method)} {corr_symbol(method)}", shrink=0.8, pad=0.02)
     fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
 

@@ -14,7 +14,7 @@ ultrabones_min_solidity="0.2"
 filter_tnsc2020_target_bbox_one="true"
 tnsc2020_min_aspect_ratio="0.2"
 
-derived_metrics="" #fn_per_gt,fp_per_gt"
+derived_metrics="fn_per_gt,fp_per_gt"
 derived_plot_labels="FN / GT,FP / GT"
 
 eda_metrics="target_area_fraction,target_bbox_area_ratio,solidity,circularity,aspect_ratio_feret"
@@ -23,13 +23,15 @@ eda_plot_labels="Target/image,Target/bbox,Solidity,Circularity,Aspect ratio"
 # Datasets in the order they appear in datasets.json (columns left-to-right).
 # datasets=$(python -c "import json; print(','.join(json.load(open('datasets/datasets.json'))['labels']))")
 # datasets=(aulid,blusg,busi,camus,oku,uns,busbra,mmotu,gist514,tnsc2020,ultrabones100k) #,umud,roblus)
-# datasets=(busbra,tnsc2020,mmotu,gist514,ultrabones100k) #,umud,roblus)
+# datasets=(mmotu,busbra,gist514,tnsc2020,ultrabones100k,umud,roblus)
+datasets=(mmotu,busbra,gist514,tnsc2020,ultrabones100k,umud)
+# datasets=(mmotu,busbra,gist514,tnsc2020,ultrabones100k)
 # datasets=(ultrabones100k,gist514,mmotu) #,umud,roblus)
-datasets=(ultrabones100k,gist514)
+# datasets=(ultrabones100k,gist514,tnsc2020)
 echo $datasets
 
 # What to generate, and which correlation coefficient to use.
-make_scatter="true"
+make_scatter="false"
 make_heatmap="true"
 color_by_dataset="true"
 # correlation="pearson"
