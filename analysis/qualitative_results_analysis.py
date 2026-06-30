@@ -292,17 +292,17 @@ def _draw_roblus_inset(
         transform=axis.transData,
     )
     if show_image_background:
-        inset_axis.imshow(image[crop_y0:crop_y1, crop_x0:crop_x1], cmap="gray")
+        inset_axis.imshow(image[crop_y0:crop_y1, crop_x0:crop_x1], cmap="gray", aspect="auto")
     else:
         black = np.zeros((crop_y1 - crop_y0, crop_x1 - crop_x0, 3), dtype=np.uint8)
-        inset_axis.imshow(black, zorder=-5)
+        inset_axis.imshow(black, zorder=-5, aspect="auto")
 
     if pred_mask is not None:
         pred_crop = pred_mask[crop_y0:crop_y1, crop_x0:crop_x1]
         overlay = np.zeros((*pred_crop.shape, 4), dtype=float)
         overlay[..., :3] = np.array(to_rgb(pred_color))
         overlay[..., 3] = (pred_crop > 0) * (pred_alpha if show_image_background else 1.0)
-        inset_axis.imshow(overlay, zorder=0)
+        inset_axis.imshow(overlay, zorder=0, aspect="auto")
 
     if draw_annotations and gt_mask is not None:
         _draw_gt_outline(
@@ -331,7 +331,6 @@ def plot_samples(
     csv_metrics: dict[str, dict[str, Any]],
     save_path: Path,
     *,
-    threshold_label: str,
     result_metric: str,
     pred_color: str,
     pred_alpha: float,
@@ -360,9 +359,8 @@ def plot_samples(
         image = ensure_three_channels(normalize_to_uint8(result.image))
         is_roblus = str(getattr(result.sample, "dataset", "")).lower() == "roblus"
 
-        image_ax.imshow(image, cmap="gray")
+        image_ax.imshow(image, cmap="gray", aspect="auto")
         _draw_bboxes(image_ax, result.bbox, bbox_color, 0.8)
-        image_ax.set_title(str(result.sample.sample_id), fontsize=8)
 
         if is_roblus:
             _draw_roblus_inset(
@@ -381,7 +379,7 @@ def plot_samples(
             )
 
         if show_image_background:
-            overlay_ax.imshow(image, cmap="gray")
+            overlay_ax.imshow(image, cmap="gray", aspect="auto")
             overlay = np.zeros((*result.pred_mask.shape, 4), dtype=float)
             overlay[..., :3] = pred_rgb
             overlay[..., 3] = (result.pred_mask > 0) * pred_alpha
@@ -399,7 +397,7 @@ def plot_samples(
             )
             overlay = np.zeros((*result.pred_mask.shape, 3), dtype=float)
             overlay[result.pred_mask > 0] = pred_rgb
-        overlay_ax.imshow(overlay, zorder=0)
+        overlay_ax.imshow(overlay, zorder=0, aspect="auto")
         _draw_gt_outline(overlay_ax, result.gt_mask, gt_outline_color, 0.9)
 
         if is_roblus:
@@ -421,35 +419,23 @@ def plot_samples(
             )
 
         sample_metrics = csv_metrics.get(str(result.sample.sample_id), {})
-        csv_value = sample_metrics.get(result_metric, math.nan)
-        rerun_value = result.metrics.get(result_metric, math.nan)
-        overlay_ax.set_title(
-            f"CSV {result_metric} {csv_value:.3f} | rerun {rerun_value:.3f}",
+        csv_dice = sample_metrics.get("dice", math.nan)
+        csv_assd = sample_metrics.get("assd", math.nan)
+        overlay_ax.text(
+            0.02,
+            0.96,
+            f"Dice: {csv_dice * 100:.2f}%\nASSD: {csv_assd:.2f}",
+            transform=overlay_ax.transAxes,
+            ha="left",
+            va="top",
+            color="white",
             fontsize=8,
+            bbox={"facecolor": "black", "edgecolor": "none", "alpha": 0.55, "pad": 1.5},
         )
 
-    axes[0, 0].text(
-        -0.02,
-        0.5,
-        f"{threshold_label}\n(n={len(results)})",
-        transform=axes[0, 0].transAxes,
-        ha="right",
-        va="center",
-        fontsize=9,
-        fontweight="bold",
-    )
-    axes[1, 0].text(
-        -0.02,
-        0.5,
-        "overlay",
-        transform=axes[1, 0].transAxes,
-        ha="right",
-        va="center",
-        fontsize=8,
-    )
-
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout()
+    plt.tight_layout()
+    fig.subplots_adjust(wspace=0.02, hspace=0.02)
     fig.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
@@ -486,7 +472,6 @@ def main() -> None:
     seed = args.seed if args.seed is not None else secrets.randbelow(2**32)
     rng = np.random.default_rng(seed)
     datasets = split_csv(args.datasets)
-    threshold_label = f"{args.result_metric}: {lower_threshold:g}-{upper_threshold:g}"
     threshold_folder = (
         args.output_dir
         / f"{args.result_metric}_{folder_text(args.lower_threshold)}_{folder_text(args.upper_threshold)}"
@@ -555,7 +540,6 @@ def main() -> None:
             results,
             csv_metrics,
             save_path,
-            threshold_label=threshold_label,
             result_metric=args.result_metric,
             pred_color=args.pred_color,
             pred_alpha=args.pred_alpha,
