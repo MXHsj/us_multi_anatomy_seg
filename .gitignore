@@ -22,6 +22,7 @@ datasets/RobLUS/
 datasets/USSC/
 datasets/UMUD/
 datasets/MMOTU/
+datasets/GIST514/
 .cache/
 data_cache/
 

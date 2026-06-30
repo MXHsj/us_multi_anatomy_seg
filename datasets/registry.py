@@ -122,6 +122,14 @@ DATASET_REGISTRY: dict[str, DatasetSpec] = {
         decoder_class="datasets.ovary_MMOTU:MMOTU2DDecoder",
         hf_repo_path="zips/Ovary/MMOTU.zip",
     ),
+    "gist514": DatasetSpec(
+        key="gist514",
+        display_name="GIST514-DB",
+        anatomy="Gastrointestinal",
+        default_root="datasets/GIST514",
+        decoder_class="datasets.gastrointestinal_GIST514:GIST514Decoder",
+        hf_repo_path="zips/Gastrointestinal/GIST514.zip",
+    ),
 }
 
 

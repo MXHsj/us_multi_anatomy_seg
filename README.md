@@ -83,6 +83,7 @@ Available Hugging Face zips scanned from the dataset repo:
 | Breast | BrEaST Lesions USG | `zips/Breast/BrEaST-Lesions_USG.zip` | `blusg` |
 | Breast | BUS-BRA | `zips/Breast/BUSBRA.zip` | `busbra` |
 | Breast | BUSI | `zips/Breast/BUSI.zip` | `busi` |
+| Gastrointestinal | GIST514-DB | `zips/Gastrointestinal/GIST514.zip` | `gist514` |
 | Heart | CAMUS | `zips/Heart/CAMUS.zip` | `camus` |
 | Kidney | OKU | `zips/kidney/OKU.zip` | `oku` |
 | Liver | AULID | `zips/Liver/AULID.zip` | `aulid` |
@@ -103,6 +104,7 @@ Each decoder normalizes its source dataset into the shared `DecodedSample` schem
 | `blusg` | `datasets/BLUSG` | Flat `case*.png` images; masks are sibling `case*_tumor.png` plus optional `case*_other*.png`. | One breast image with tumor mask, optionally merged with other lesion masks unless `--blusg-only-tumor` is used. |
 | `busbra` | `datasets/BUSBRA` | `Images/bus_*.png` paired with `Masks/mask_*.png` by shared suffix; `bus_data.csv` provides per-sample BI-RADS, pathology, side, device, histology, and CSV-recorded bounding box. | One breast image/tumor-mask pair per `bus_<id>` stem (1,875 total). Optional `--busbra-pathology` and `--busbra-birads` filters narrow the iteration; CSV metadata is surfaced through `DecodedSample.metadata`. |
 | `busi` | `datasets/BUSI` | Category subfolders `benign/`, `malignant/`, `normal/`, each containing `<cat> (N).png` images paired with `<cat> (N)_mask.png`. A handful of cases (mostly benign) also have `<cat> (N)_mask_<k>.png` extra masks that are OR-merged into a single binary mask. | One image per case with merged tumor mask. Default `--busi-categories benign,malignant` excludes `normal` (empty masks unusable for GT-box). `normal` can be added for sensitivity/empty-mask checks. |
+| `gist514` | `datasets/GIST514` | Raw `usd514_jpeg_roi` zip, either with nested `usd514_jpeg_roi/` or direct `images/` and `annotations/`. `all_anno_crop.json` is COCO-style and pairs each JPEG with one polygon ROI; five train/val split JSONs remain metadata/provenance and are not decoded to avoid duplicate benchmark targets. | One binary gastrointestinal submucosal tumor ROI per EUS image. The `GIST` / `lmym` category is preserved as metadata, not emitted as separate segmentation classes. Source: https://github.com/howardchina/query2 |
 | `oku` | `datasets/OKU` | Flat kidney PNG images plus `reviewed_labels_1.csv` / `reviewed_labels_2.csv` polygon annotations. | One image with polygons rasterized for selected anatomy; default benchmark anatomy is `Capsule`. |
 | `ultrabones100k` | `datasets/UltraBones100k` | Nested `specimen*/<anatomy>/record*/UltrasoundImages/*.png` paired with `<label-folder>/<timestamp>_label.png`, plus optional `tracking.csv`. | One ultrasound frame and filled bone-shadow mask per paired timestamp. Source labels often trace only the visible bone surface; filling is kept explicitly because line-based segmentation is difficult for region-prompted foundation models, and the filled region has clinical meaning as the acoustic bone shadow. Use decoder option `--no-fill-mask` only for thin-label sensitivity checks. |
 | `camus` | `datasets/CAMUS` | `patient*/patient*_2CH|4CH_ED|ES|half_sequence.nii.gz` paired with `_gt.nii.gz`; per-view `Info_*.cfg` files may also be present. | By default, ED/ES only: 500 patients x 2 views x 2 phases = 2000 samples. `--include-half-sequence` also expands cine volumes into frame-level samples. |
@@ -129,6 +131,7 @@ us_multi_anatomy_seg/
 |   |-- spinal_cord_USSC.py        # USSC semantic spinal cord decoder
 |   |-- muscle_UMUD.py             # UMUD aponeurosis decoder
 |   |-- ovary_MMOTU.py             # MMOTU 2D ovarian tumor decoder
+|   |-- gastrointestinal_GIST514.py # GIST514-DB EUS ROI decoder
 |   `-- <dataset cache dirs>/      # ignored local materializations
 |-- benchmarks/
 |   |-- medsam_inference.py        # GT-box prompted MedSAM benchmark engine
@@ -223,7 +226,7 @@ per class and scored independently; empty-GT frames are skipped, matching the bo
 
 ### Dataset-Specific Options
 
-- `--dataset`: any key from `python -m datasets.registry`, such as `tnsc2020`, `blusg`, `busbra`, `busi`, `oku`, `aulid`, `roblus`, `uns`, `ussc`, `umud`, `mmotu`, or `ultrabones100k`.
+- `--dataset`: any key from `python -m datasets.registry`, such as `tnsc2020`, `blusg`, `busbra`, `busi`, `gist514`, `oku`, `aulid`, `roblus`, `uns`, `ussc`, `umud`, `mmotu`, or `ultrabones100k`.
 - `--no-auto-download`: require an existing local dataset cache.
 - `--hf-revision`: pin a Hugging Face dataset revision for reproducibility.
 - `--oku-anatomy Capsule`: choose OKU annotation anatomy.
@@ -263,6 +266,7 @@ The wrapper scripts under `benchmarks/test_*_gt_bbox_*.py` are the current repro
 | `test_medsam_gt_bbox_blusg.py` | MedSAM | `blusg` | all | 0 | `mps` | 20 | `results/medsam_gt_bbox_blusg` |
 | `test_medsam_gt_bbox_busbra.py` | MedSAM | `busbra` | all | 0 | `mps` | 20 | `results/medsam_gt_bbox_busbra` |
 | `test_medsam_gt_bbox_busi.py` | MedSAM | `busi` (`benign,malignant`) | all | 0 | `mps` | 20 | `results/medsam_gt_bbox_busi` |
+| `test_medsam_gt_bbox_gist514.py` | MedSAM | `gist514` (`gastrointestinal_submucosal_tumor`) | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_gist514` |
 | `test_medsam_gt_bbox_oku.py` | MedSAM | `oku` | all | 0 | `mps` | 20 | `results/medsam_gt_bbox_oku` |
 | `test_medsam_gt_bbox_ultrabones100k.py` | MedSAM | `ultrabones100k` | all | 10 | `cuda:0` | 20 | `results/medsam_gt_bbox_ultrabones100k` |
 | `test_medsam_gt_bbox_camus.py` | MedSAM | `camus` | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_camus` |
@@ -276,6 +280,7 @@ The wrapper scripts under `benchmarks/test_*_gt_bbox_*.py` are the current repro
 | `test_samus_gt_bbox_blusg.py` | SAMUS | `blusg` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_blusg` |
 | `test_samus_gt_bbox_busbra.py` | SAMUS | `busbra` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_busbra` |
 | `test_samus_gt_bbox_busi.py` | SAMUS | `busi` (`benign,malignant`) | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_busi` |
+| `test_samus_gt_bbox_gist514.py` | SAMUS | `gist514` (`gastrointestinal_submucosal_tumor`) | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_gist514` |
 | `test_samus_gt_bbox_oku.py` | SAMUS | `oku` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_oku` |
 | `test_samus_gt_bbox_ultrabones100k.py` | SAMUS | `ultrabones100k` | all | 10 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_ultrabones100k` |
 | `test_samus_gt_bbox_camus.py` | SAMUS | `camus` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_camus` |
@@ -289,6 +294,7 @@ The wrapper scripts under `benchmarks/test_*_gt_bbox_*.py` are the current repro
 | `test_ultrasam_gt_bbox_blusg.py` | UltraSAM | `blusg` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_blusg` |
 | `test_ultrasam_gt_bbox_busbra.py` | UltraSAM | `busbra` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_busbra` |
 | `test_ultrasam_gt_bbox_busi.py` | UltraSAM | `busi` (`benign,malignant`) | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_busi` |
+| `test_ultrasam_gt_bbox_gist514.py` | UltraSAM | `gist514` (`gastrointestinal_submucosal_tumor`) | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_gist514` |
 | `test_ultrasam_gt_bbox_oku.py` | UltraSAM | `oku` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_oku` |
 | `test_ultrasam_gt_bbox_ultrabones100k.py` | UltraSAM | `ultrabones100k` | all | 10 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_ultrabones100k` |
 | `test_ultrasam_gt_bbox_camus.py` | UltraSAM | `camus` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_camus` |
