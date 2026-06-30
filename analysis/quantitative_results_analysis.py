@@ -270,13 +270,13 @@ def setup_matplotlib() -> Any:
     plt.rcParams.update(
         {
             "figure.dpi": 150,
-            "savefig.dpi": 300,
+            "savefig.dpi": 500,
             "font.family": "serif",
             "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
-            "font.size": 8,
-            "axes.labelsize": 6,
-            "axes.titlesize": 6,
-            "figure.titlesize": 7,
+            "font.size": 12,
+            "axes.labelsize": 8,
+            "axes.titlesize": 8,
+            "figure.titlesize": 12,
             "xtick.labelsize": 6,
             "ytick.labelsize": 6,
             "legend.fontsize": 6,
@@ -323,10 +323,19 @@ def corr_value(points: pd.DataFrame, x_metric: str, y_metric: str, method: str) 
     raise NotImplementedError(f"Correlation method not implemented: {method}")
 
 
-def corr_label(points: pd.DataFrame, x_metric: str, y_metric: str, log_x: bool) -> str:
-    method = "log_pearson" if log_x else "pearson"
+def corr_label(points: pd.DataFrame, x_metric: str, y_metric: str, method: str) -> str:
     value = corr_value(points, x_metric, y_metric, method)
-    return "r=NA" if math.isnan(value) else f"r={value:.2f}"
+    labels = {
+        "pearson": "Pearson r",
+        "log_pearson": "Log Pearson r",
+        "spearman": "Spearman rho",
+    }
+    label = labels.get(method, method)
+    return f"{label} = NA" if math.isnan(value) else f"{label} = {value:.2f}"
+
+
+def effective_correlation(correlation: str, log_x: bool) -> str:
+    return "log_pearson" if log_x and correlation == "pearson" else correlation
 
 
 def build_groups(data_by_dataset: dict[str, pd.DataFrame], per_dataset: bool) -> dict[str, pd.DataFrame]:
@@ -353,6 +362,7 @@ def plot_scatter(
     eda_metrics: tuple[str, ...],
     title: str,
     log_x: bool,
+    correlation: str,
     color_by_dataset: bool,
     plot_labels: dict[str, str],
 ) -> None:
@@ -367,7 +377,7 @@ def plot_scatter(
     nrows, ncols = len(groups), len(eda_metrics)
     is_pooled = len(groups) == 1 and next(iter(groups)) == "pooled"
     use_dataset_color = color_by_dataset and len(groups) == 1 and "dataset" in next(iter(groups.values())).columns
-    height = 1.5 * nrows + (0.25 if use_dataset_color else 0.0)
+    height = 1.35 * nrows + (0.25 if use_dataset_color else 0.0)
     fig, axes = plt.subplots(
         nrows, ncols,
         figsize=(8.5, height),
@@ -379,6 +389,7 @@ def plot_scatter(
         bottom_row = row == nrows - 1
         for col, (axis, x_metric) in enumerate(zip(axes[row], eda_metrics)):
             points = finite_points(df, x_metric, y_metric, log_x, ("dataset",) if use_dataset_color else ())
+            correlation_label = corr_label(points, x_metric, y_metric, correlation)
             if points.empty:
                 axis.text(0.5, 0.5, "no points", ha="center", va="center", transform=axis.transAxes)
             elif use_dataset_color:
@@ -410,8 +421,12 @@ def plot_scatter(
                     ci=None,
                     truncate=True,
                     scatter=False,
+                    lowess=correlation == "spearman",
                     line_kws={"color": "#d62728", "linewidth": 0.6},
                 )
+                if axis.lines:
+                    axis.lines[-1].set_label(correlation_label)
+                    axis.legend(handles=[axis.lines[-1]], loc="lower right", frameon=False, fontsize=8)
             else:
                 sns.regplot(
                     data=points,
@@ -421,9 +436,13 @@ def plot_scatter(
                     logx=log_x,
                     ci=None,
                     truncate=True,
+                    lowess=correlation == "spearman",
                     scatter_kws={"s": 2, "alpha": 0.5, "edgecolor": "none", "color": "#1f77b4"},
                     line_kws={"color": "#d62728", "linewidth": 0.6},
                 )
+                if axis.lines:
+                    axis.lines[-1].set_label(correlation_label)
+                    axis.legend(handles=[axis.lines[-1]], loc="lower right", frameon=False, fontsize=6)
             if log_x:
                 # Log x can't include 0; span the observed positive range instead of a fixed [0, 1].
                 axis.set_xscale("log")
@@ -431,14 +450,16 @@ def plot_scatter(
                 # Both Dice and the EDA metrics live on a 0-1 scale: share it so plots are comparable.
                 axis.set_xlim(0, 1)
             axis.set_ylim(0, 1)
-            axis.set_title(corr_label(points, x_metric, y_metric, log_x))
+            axis.set_title("")
             axis.set_xlabel(plot_label(x_metric, plot_labels) if bottom_row else "")
             axis.set_ylabel("")
             axis.grid(True, alpha=0.3)
-        axes[row, 0].set_ylabel(plot_label(y_metric, plot_labels) if is_pooled else f"{group}\n(n={len(df):,})")
+        axes[row, 0].set_ylabel(
+            plot_label(y_metric, plot_labels)
+            if is_pooled
+            else f"{group}\n{plot_label(y_metric, plot_labels)}"
+        )
 
-    if not is_pooled:
-        fig.suptitle(title)
     if legend_handles and legend_labels:
         fig.legend(
             legend_handles,
@@ -493,7 +514,60 @@ def plot_heatmap(
                 axis.text(col, row, f"{value:.2f}", ha="center", va="center", fontsize=HEATMAP_CELL_FONTSIZE, color=heat_text_color(plt, value))
 
     fig.colorbar(image, ax=axis, label=f"{plot_label(method)} r", shrink=0.8)
-    fig.suptitle(title)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_dataset_heatmap(
+    data_by_dataset: dict[str, pd.DataFrame],
+    output_path: Path,
+    y_metrics: tuple[str, ...],
+    eda_metrics: tuple[str, ...],
+    method: str,
+    title: str,
+    plot_labels: dict[str, str],
+) -> None:
+    """One heatmap with datasets as columns and EDA/result metric pairs as rows."""
+    plt = setup_matplotlib()
+
+    dataset_labels = [DATASET_LABELS.get(dataset, dataset.upper()) for dataset in data_by_dataset]
+    row_pairs = [(x_metric, y_metric) for y_metric in y_metrics for x_metric in eda_metrics]
+    row_labels = [
+        plot_label(x_metric, plot_labels)
+        if len(y_metrics) == 1
+        else f"{plot_label(x_metric, plot_labels)} / {plot_label(y_metric, plot_labels)}"
+        for x_metric, y_metric in row_pairs
+    ]
+    matrix = [
+        [
+            corr_value(finite_points(df, x_metric, y_metric, False), x_metric, y_metric, method)
+            for df in data_by_dataset.values()
+        ]
+        for x_metric, y_metric in row_pairs
+    ]
+
+    fig_width = max(3.0, 0.55 * len(dataset_labels) + 1.6)
+    fig_height = max(2.0, 0.28 * len(row_labels) + 0.8)
+    fig, axis = plt.subplots(figsize=(fig_width, fig_height), constrained_layout=True)
+    image = axis.imshow(matrix, cmap="RdBu_r", vmin=-1.0, vmax=1.0, aspect="auto")
+    axis.set_yticks(range(len(row_labels)), row_labels)
+    axis.set_xticks(
+        range(len(dataset_labels)),
+        dataset_labels,
+        rotation=45,
+        ha="right",
+        rotation_mode="anchor",
+    )
+    axis.tick_params(axis="x", bottom=False)
+    axis.grid(False)
+    for row in range(len(row_labels)):
+        for col in range(len(dataset_labels)):
+            value = matrix[row][col]
+            if not math.isnan(value):
+                axis.text(col, row, f"{value:.2f}", ha="center", va="center", fontsize=HEATMAP_CELL_FONTSIZE, color=heat_text_color(plt, value))
+
+    fig.colorbar(image, ax=axis, label=f"{plot_label(method)} r", shrink=0.8)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
@@ -565,9 +639,10 @@ def parse_args() -> argparse.Namespace:
         help="Color scatter points by dataset when a dataset column is available.",
     )
     parser.add_argument(
-        "--correlations",
-        default="log_pearson",
-        help=f"Comma-separated heatmap correlation coefficients. Available: {', '.join(CORRELATION_METHODS)}.",
+        "--correlation",
+        default="pearson",
+        choices=CORRELATION_METHODS,
+        help="Correlation coefficient used in scatter titles and heatmaps.",
     )
     parser.add_argument(
         "--log-x",
@@ -650,7 +725,7 @@ def main() -> None:
     if not data_by_dataset:
         raise SystemExit("No datasets had both per_box_metrics.json and EDA sample_stats.json files.")
 
-    correlations = parse_csv_arg(args.correlations, CORRELATION_METHODS, "correlation method")
+    correlation = effective_correlation(args.correlation, args.log_x)
 
     data_by_dataset = filter_ultrabones_solidity(data_by_dataset, args.ultrabones_min_solidity)
     data_by_dataset = filter_tnsc2020_full_target_bbox(data_by_dataset, args.filter_tnsc2020_target_bbox_one)
@@ -689,7 +764,7 @@ def main() -> None:
     # Name for the whole figure set: granularity + the grouping (pooled group name, else by_dataset).
     scope = f"{granularity}_{next(iter(groups)) if len(groups) == 1 else 'by_dataset'}"
 
-    total = (len(y_metrics) if args.scatter else 0) + len(groups) * (len(correlations) if args.heatmap else 0)
+    total = (len(y_metrics) if args.scatter else 0) + (1 if args.heatmap else 0)
     index = 0
 
     if args.scatter:
@@ -705,30 +780,40 @@ def main() -> None:
                 eda_metrics,
                 title,
                 args.log_x,
+                correlation,
                 args.color_by_dataset,
                 plot_labels,
             )
             print(f"[{index}/{total}] wrote {path}", flush=True)
 
     if args.heatmap:
-        for group, df in groups.items():
-            for method in correlations:
-                # log-x measures correlation on log10(x): promote pearson -> log_pearson (matching the
-                # scatter). spearman is rank-based (log-invariant) and explicit log_pearson are left as-is.
-                effective_method = "log_pearson" if args.log_x and method == "pearson" else method
-                index += 1
-                title = f"{args.model} ({args.protocol}) - {granularity} {group} - {plot_label(effective_method)} (n={len(df):,})"
-                path = args.output_dir / f"results_vs_eda_heatmap_{args.protocol}_{args.model}_{granularity}_{group}_{effective_method}{suffix}.{args.plot_format}"
-                plot_heatmap(
-                    df,
-                    path,
-                    y_metrics,
-                    eda_metrics,
-                    effective_method,
-                    title,
-                    plot_labels,
-                )
-                print(f"[{index}/{total}] wrote {path}", flush=True)
+        index += 1
+        if args.per_dataset:
+            title = f"{args.model} ({args.protocol}) - {granularity} by dataset - {plot_label(correlation)}"
+            path = args.output_dir / f"results_vs_eda_heatmap_{args.protocol}_{args.model}_{granularity}_by_dataset_{correlation}{suffix}.{args.plot_format}"
+            plot_dataset_heatmap(
+                data_by_dataset,
+                path,
+                y_metrics,
+                eda_metrics,
+                correlation,
+                title,
+                plot_labels,
+            )
+        else:
+            group, df = next(iter(groups.items()))
+            title = f"{args.model} ({args.protocol}) - {granularity} {group} - {plot_label(correlation)} (n={len(df):,})"
+            path = args.output_dir / f"results_vs_eda_heatmap_{args.protocol}_{args.model}_{granularity}_{group}_{correlation}{suffix}.{args.plot_format}"
+            plot_heatmap(
+                df,
+                path,
+                y_metrics,
+                eda_metrics,
+                correlation,
+                title,
+                plot_labels,
+            )
+        print(f"[{index}/{total}] wrote {path}", flush=True)
     print("")
 
 
