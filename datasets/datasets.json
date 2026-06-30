@@ -2,16 +2,16 @@
   "labels": {
     "aulid": "AULID",
     "blusg": "BLUSG",
-    "busbra": "BUS-BRA",
     "busi": "BUSI",
     "camus": "CAMUS",
     "oku": "OKU",
     "uns": "UNS",
+    "busbra": "BUS-BRA",
+    "mmotu": "MMOTU",
     "tnsc2020": "TNSC2020",
     "ultrabones100k": "UltraBones",
     "ussc": "USSC",
     "umud": "UMUD",
-    "mmotu": "MMOTU",
     "roblus": "RobLUS"
   }
 }
