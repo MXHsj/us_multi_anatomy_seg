@@ -21,8 +21,9 @@ eda_metrics="target_area_fraction,target_bbox_area_ratio,solidity,circularity,as
 eda_plot_labels="Target/image,Target/bbox,Solidity,Circularity,Aspect ratio"
 
 # Datasets in the order they appear in datasets.json (columns left-to-right).
-datasets=$(python -c "import json; print(','.join(json.load(open('datasets/datasets.json'))['labels']))")
-# datasets="busbra"
+# datasets=$(python -c "import json; print(','.join(json.load(open('datasets/datasets.json'))['labels']))")
+# datasets=(aulid,blusg,busi,camus,oku,uns,busbra,mmotu,gist514,tnsc2020,ultrabones100k) #,umud,roblus)
+datasets=(busbra,mmotu,gist514,tnsc2020,ultrabones100k) #,umud,roblus)
 echo $datasets
 
 # What to generate, and which correlation coefficients the heatmaps use.
