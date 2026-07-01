@@ -94,19 +94,28 @@ def load_results(
 def sample_threshold_rows(
     df: pd.DataFrame,
     metric: str,
-    lower: float,
-    upper: float,
+    lower_percentile: float,
+    upper_percentile: float,
     count: int,
     rng: np.random.Generator,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, float, float]:
     if metric not in df.columns:
         raise KeyError(f"Metric '{metric}' not found in results.")
     values = pd.to_numeric(df[metric], errors="coerce")
-    rows = df.loc[(values >= lower) & (values < upper)].copy()
+    finite_values = values.dropna()
+    if finite_values.empty:
+        return df.iloc[0:0].copy(), math.nan, math.nan
+
+    lower = float(finite_values.quantile(lower_percentile / 100.0))
+    upper = float(finite_values.quantile(upper_percentile / 100.0))
+    if upper_percentile >= 100:
+        rows = df.loc[(values >= lower) & (values <= upper)].copy()
+    else:
+        rows = df.loc[(values >= lower) & (values < upper)].copy()
     if len(rows) > count:
         positions = rng.choice(len(rows), size=count, replace=False)
         rows = rows.iloc[positions].copy()
-    return rows.reset_index(drop=True)
+    return rows.reset_index(drop=True), lower, upper
 
 
 def repo_path(path: str | Path | None) -> str:
@@ -361,7 +370,7 @@ def _plot_result_pair(
         ha="left",
         va="top",
         color="white",
-        fontsize=8,
+        fontsize=16,
         bbox={"facecolor": "black", "edgecolor": "none", "alpha": 0.55, "pad": 1.5},
     )
 
@@ -425,13 +434,13 @@ def _plot_result_pair(
     csv_assd = sample_metrics.get("assd", math.nan)
     overlay_ax.text(
         0.02,
-        0.96,
+        0.04,
         f"Dice: {csv_dice * 100:.2f}%\nASSD: {csv_assd:.2f}",
         transform=overlay_ax.transAxes,
         ha="left",
-        va="top",
+        va="bottom",
         color="white",
-        fontsize=8,
+        fontsize=16,
         bbox={"facecolor": "black", "edgecolor": "none", "alpha": 0.55, "pad": 1.5},
     )
 
@@ -501,11 +510,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    lower_threshold = float(args.lower_threshold)
-    upper_threshold = float(args.upper_threshold)
+    lower_percentile = float(args.lower_threshold)
+    upper_percentile = float(args.upper_threshold)
     if args.samples_per_dataset <= 0:
         raise SystemExit("--samples-per-dataset must be positive.")
-    if lower_threshold >= upper_threshold:
+    if not (0 <= lower_percentile <= 100 and 0 <= upper_percentile <= 100):
+        raise SystemExit("--lower-threshold and --upper-threshold must be percentiles from 0 to 100.")
+    if lower_percentile >= upper_percentile:
         raise SystemExit("--lower-threshold must be smaller than --upper-threshold.")
 
     seed = args.seed if args.seed is not None else secrets.randbelow(2**32)
@@ -522,12 +533,13 @@ def main() -> None:
         "model": args.model,
         "protocol": args.protocol,
         "result_metric": args.result_metric,
-        "lower_threshold": lower_threshold,
-        "upper_threshold": upper_threshold,
+        "lower_percentile": lower_percentile,
+        "upper_percentile": upper_percentile,
         "num_examples": args.samples_per_dataset,
         "device": args.device,
         "gpu_id": args.gpu_id,
         "datasets": datasets,
+        "metric_bounds": {},
         "selected_sample_ids": {},
         "figures": {},
         "skipped": {},
@@ -539,11 +551,11 @@ def main() -> None:
         print(f"Dataset: {dataset}")
         try:
             df, summary = load_results(args.model, dataset, args.protocol, args.results_dir)
-            rows = sample_threshold_rows(
+            rows, lower_value, upper_value = sample_threshold_rows(
                 df,
                 args.result_metric,
-                lower_threshold,
-                upper_threshold,
+                lower_percentile,
+                upper_percentile,
                 args.samples_per_dataset,
                 rng,
             )
@@ -557,6 +569,14 @@ def main() -> None:
             run_config["skipped"][dataset] = "no matching samples"
             continue
 
+        print(
+            f"  {args.result_metric}: {lower_percentile:g}%-{upper_percentile:g}% "
+            f"= [{lower_value:.4g}, {upper_value:.4g}]"
+        )
+        run_config["metric_bounds"][dataset] = {
+            "lower": lower_value,
+            "upper": upper_value,
+        }
         sample_ids = rows["sample_id"].astype(str).tolist()
         run_config["selected_sample_ids"][dataset] = sample_ids
         csv_metrics = rows.assign(sample_id=sample_ids).set_index("sample_id").to_dict("index")
