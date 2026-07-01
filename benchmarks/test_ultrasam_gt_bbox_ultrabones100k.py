@@ -19,7 +19,7 @@ DEFAULT_ARGS = [
     "--max-samples",
     "all",
     "--box-padding",
-    "10",
+    "0",
     "--device",
     DEVICE,
     "--save-vis",
