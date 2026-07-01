@@ -1,0 +1,98 @@
+{
+  "sample_id": "case027",
+  "dataset": "BLUSG",
+  "raw_data_source": "datasets/BLUSG",
+  "tile_size_width_height": [
+    433,
+    469
+  ],
+  "color_palette": {
+    "gt_mask_overlay": "#00B050",
+    "pred_mask_overlay": "#D62728",
+    "gt_bbox": "#FFD400",
+    "jittered_or_alternative_bbox": "#FF7A00",
+    "point_prompt": "#00E5FF",
+    "error_true_positive": "#1F9E44",
+    "error_false_positive": "#D62728",
+    "error_false_negative": "#2664EB"
+  },
+  "element_pngs": {
+    "bbox_01_raw_bmode.png": "paper_figures/prompt_protocol_examples/elements/bbox_01_raw_bmode.png",
+    "bbox_02_raw_gt_mask.png": "paper_figures/prompt_protocol_examples/elements/bbox_02_raw_gt_mask.png",
+    "bbox_03_gt_mask_with_gt_bbox.png": "paper_figures/prompt_protocol_examples/elements/bbox_03_gt_mask_with_gt_bbox.png",
+    "bbox_04_gt_overlay_with_gt_bbox.png": "paper_figures/prompt_protocol_examples/elements/bbox_04_gt_overlay_with_gt_bbox.png",
+    "bbox_05_bbox_jitter_example.png": "paper_figures/prompt_protocol_examples/elements/bbox_05_bbox_jitter_example.png",
+    "bbox_06_medsam_pred_overlay.png": "paper_figures/prompt_protocol_examples/elements/bbox_06_medsam_pred_overlay.png",
+    "bbox_07_error_map.png": "paper_figures/prompt_protocol_examples/elements/bbox_07_error_map.png",
+    "point_01_raw_bmode.png": "paper_figures/prompt_protocol_examples/elements/point_01_raw_bmode.png",
+    "point_02_raw_gt_mask.png": "paper_figures/prompt_protocol_examples/elements/point_02_raw_gt_mask.png",
+    "point_03_gt_overlay_with_point.png": "paper_figures/prompt_protocol_examples/elements/point_03_gt_overlay_with_point.png",
+    "point_04_samus_pred_overlay.png": "paper_figures/prompt_protocol_examples/elements/point_04_samus_pred_overlay.png",
+    "point_05_error_map.png": "paper_figures/prompt_protocol_examples/elements/point_05_error_map.png",
+    "text_01_raw_bmode.png": "paper_figures/prompt_protocol_examples/elements/text_01_raw_bmode.png",
+    "text_02_raw_gt_mask.png": "paper_figures/prompt_protocol_examples/elements/text_02_raw_gt_mask.png",
+    "text_03_gt_overlay_for_text_prompt.png": "paper_figures/prompt_protocol_examples/elements/text_03_gt_overlay_for_text_prompt.png",
+    "text_04_text_prompt_pred_overlay.png": "paper_figures/prompt_protocol_examples/elements/text_04_text_prompt_pred_overlay.png",
+    "text_05_text_prompt_pred_with_gt_bbox_constraint.png": "paper_figures/prompt_protocol_examples/elements/text_05_text_prompt_pred_with_gt_bbox_constraint.png",
+    "text_06_error_map.png": "paper_figures/prompt_protocol_examples/elements/text_06_error_map.png",
+    "text_07_constrained_error_map.png": "paper_figures/prompt_protocol_examples/elements/text_07_constrained_error_map.png"
+  },
+  "medsam_exact_single_sample_inference": {
+    "checkpoint": "work_dir/MedSAM/medsam_vit_b.pth",
+    "metrics": {
+      "dice": 0.9442513089005236,
+      "iou": 0.8943902245497104,
+      "precision": 0.9657299520219328,
+      "recall": 0.9237072850938294,
+      "specificity": 0.9955224966558647,
+      "balanced_accuracy": 0.959614890874847,
+      "hd95": 12.649110640673518,
+      "assd": 4.269565022477521,
+      "relative_area_error": -0.04351389002704253
+    }
+  },
+  "samus_exact_single_sample_inference": {
+    "checkpoint": "work_dir/SAMUS/ckp/SAMUS.pth",
+    "metrics": {
+      "dice": 0.9058120160737038,
+      "iou": 0.8278394840558939,
+      "precision": 0.8683152316885264,
+      "recall": 0.946693436040318,
+      "specificity": 0.9803885353526873,
+      "balanced_accuracy": 0.9635409856965027,
+      "hd95": 14.774947628941902,
+      "assd": 7.417756087349735,
+      "relative_area_error": 0.09026468901089896
+    },
+    "click_xy": [
+      234,
+      106
+    ]
+  },
+  "text_prompt_output": {
+    "text_model": "medsam3",
+    "visualization_source": "results/medsam3_text_prompt_blusg/visualizations/case027.png",
+    "benchmark_metrics_source": "results/medsam3_text_prompt_blusg/per_sample_metrics.csv",
+    "benchmark_dice": 0.935957035810567,
+    "benchmark_iou": 0.8796233491601165,
+    "extracted_mask_metrics": {
+      "dice": 0.9075325672131846,
+      "iou": 0.8307181889149102,
+      "precision": 0.9460372494110326,
+      "recall": 0.8720396623781037,
+      "specificity": 0.9932053886752746,
+      "balanced_accuracy": 0.9326225255266891,
+      "hd95": 20.155573030952727,
+      "assd": 6.970678728943124,
+      "relative_area_error": -0.07821847086781938
+    },
+    "concept": "breast tumor",
+    "note": "Raw text-prompt prediction masks are not stored in results. The text-prompt tile/error map is recovered from the saved benchmark visualization's red prediction overlay."
+  },
+  "error_map_legend": {
+    "green": "true positive",
+    "red": "false positive",
+    "blue": "false negative",
+    "white": "true negative/background"
+  }
+}

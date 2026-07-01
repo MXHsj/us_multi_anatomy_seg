@@ -50,6 +50,46 @@ def _archive_payload_root(extracted_dir: Path) -> Path:
     return extracted_dir
 
 
+def _install_zip(local_zip: Path, output_path: Path, key: str) -> Path:
+    """Extract a dataset zip into output_path, flattening a single payload root and
+    dropping __MACOSX/.DS_Store noise. Shared by the HF-download and local-zip paths."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix=f"{key}_", dir=str(output_path.parent)) as tmp:
+        extracted_dir = Path(tmp) / "extracted"
+        extracted_dir.mkdir(parents=True, exist_ok=True)
+        _safe_extract_zip(local_zip, extracted_dir)
+        payload_root = _archive_payload_root(extracted_dir)
+
+        staging_dir = Path(tmp) / "staging"
+        shutil.copytree(payload_root, staging_dir, ignore=shutil.ignore_patterns("__MACOSX", ".DS_Store"))
+        if output_path.exists():
+            shutil.rmtree(output_path)
+        shutil.move(str(staging_dir), output_path)
+    return output_path
+
+
+def materialize_from_zip(
+    dataset_name: str,
+    zip_path: str | Path,
+    output_dir: str | Path | None = None,
+    force: bool = False,
+) -> Path:
+    """Install a registered dataset from an already-downloaded local zip (e.g. fetched
+    with `wget -c` for resumable large downloads), bypassing hf_hub_download."""
+    key = dataset_name.lower()
+    if key not in DATASET_REGISTRY:
+        raise KeyError(f"Unknown dataset '{dataset_name}'.")
+
+    output_path = Path(output_dir or DATASET_REGISTRY[key].default_root)
+    if not force and output_path.exists() and any(output_path.iterdir()):
+        return output_path
+
+    zip_path = Path(zip_path)
+    if not zip_path.exists():
+        raise FileNotFoundError(f"Local zip not found: {zip_path}")
+    return _install_zip(zip_path, output_path, key)
+
+
 def materialize_dataset(
     dataset_name: str,
     output_dir: str | Path | None = None,
@@ -84,20 +124,7 @@ def materialize_dataset(
         )
     )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with TemporaryDirectory(prefix=f"{key}_", dir=str(output_path.parent)) as tmp:
-        extracted_dir = Path(tmp) / "extracted"
-        extracted_dir.mkdir(parents=True, exist_ok=True)
-        _safe_extract_zip(local_zip, extracted_dir)
-        payload_root = _archive_payload_root(extracted_dir)
-
-        staging_dir = Path(tmp) / "staging"
-        shutil.copytree(payload_root, staging_dir, ignore=shutil.ignore_patterns("__MACOSX", ".DS_Store"))
-        if output_path.exists():
-            shutil.rmtree(output_path)
-        shutil.move(str(staging_dir), output_path)
-
-    return output_path
+    return _install_zip(local_zip, output_path, key)
 
 
 def ensure_dataset_available(
@@ -135,17 +162,31 @@ def main() -> None:
     parser.add_argument("--repo-id", default=DEFAULT_HF_REPO_ID)
     parser.add_argument("--repo-path", default="")
     parser.add_argument("--revision", default="main")
+    parser.add_argument(
+        "--zip-file",
+        default="",
+        help="Install from this already-downloaded local zip instead of fetching from HF "
+        "(useful for resumable wget downloads of large datasets).",
+    )
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
-    path = materialize_dataset(
-        dataset_name=args.dataset,
-        output_dir=args.output_dir or None,
-        repo_id=args.repo_id,
-        repo_path=args.repo_path or None,
-        revision=args.revision,
-        force=args.force,
-    )
+    if args.zip_file:
+        path = materialize_from_zip(
+            dataset_name=args.dataset,
+            zip_path=args.zip_file,
+            output_dir=args.output_dir or None,
+            force=args.force,
+        )
+    else:
+        path = materialize_dataset(
+            dataset_name=args.dataset,
+            output_dir=args.output_dir or None,
+            repo_id=args.repo_id,
+            repo_path=args.repo_path or None,
+            revision=args.revision,
+            force=args.force,
+        )
     print(f"{args.dataset} materialized at: {path}")
 
 
