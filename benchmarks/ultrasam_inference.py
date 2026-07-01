@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import random
 import re
 import shutil
 import tempfile
@@ -52,6 +53,30 @@ DEFAULT_ULTRASAM_CONFIG = "configs/UltraSAM/UltraSAM_full/UltraSAM_box_refine.py
 
 # Thin line-like targets where centerline Dice (clDice) replaces overlap Dice (still saved as "dice").
 CENTERLINE_DICE_DATASETS = {""}
+
+TRANSLATION_DIRECTIONS = np.array(
+    [
+        (-1, 0),
+        (1, 0),
+        (0, -1),
+        (0, 1),
+        (-1, -1),
+        (1, -1),
+        (-1, 1),
+        (1, 1),
+    ],
+    dtype=np.int32,
+)
+
+
+def seed_everything(seed: int | None) -> None:
+    if seed is None:
+        return
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 def resolve_torch_device(requested_device: str) -> torch.device:
@@ -199,12 +224,87 @@ def resolve_coco_image_path(coco_dir: Path, file_name: str) -> Path:
     return coco_dir / path
 
 
+def perturb_bbox(
+    bbox: np.ndarray,
+    *,
+    scale_factor: float,
+    translation_fraction: float,
+    height: int,
+    width: int,
+    rng: np.random.Generator | None,
+) -> np.ndarray:
+    if scale_factor <= 0:
+        raise ValueError("--bbox-scale-factor must be > 0.")
+    if translation_fraction < 0:
+        raise ValueError("--bbox-translation-fraction must be >= 0.")
+
+    bbox_arr = np.asarray(bbox, dtype=np.float64)
+    x0, y0, x1, y1 = np.moveaxis(bbox_arr, -1, 0)
+    box_width = np.maximum(x1 - x0, 1.0)
+    box_height = np.maximum(y1 - y0, 1.0)
+    center_x = (x0 + x1) / 2.0
+    center_y = (y0 + y1) / 2.0
+
+    scaled_width = box_width * scale_factor
+    scaled_height = box_height * scale_factor
+    x0 = center_x - scaled_width / 2.0
+    x1 = center_x + scaled_width / 2.0
+    y0 = center_y - scaled_height / 2.0
+    y1 = center_y + scaled_height / 2.0
+
+    if translation_fraction > 0:
+        active_rng = rng if rng is not None else np.random.default_rng()
+        direction_indices = active_rng.integers(0, len(TRANSLATION_DIRECTIONS), size=np.shape(box_width))
+        directions = TRANSLATION_DIRECTIONS[direction_indices]
+        dx = directions[..., 0] * translation_fraction * scaled_width
+        dy = directions[..., 1] * translation_fraction * scaled_height
+        x0 = x0 + dx
+        x1 = x1 + dx
+        y0 = y0 + dy
+        y1 = y1 + dy
+
+    perturbed = np.stack(
+        [
+            np.clip(np.rint(x0), 0, width - 1),
+            np.clip(np.rint(y0), 0, height - 1),
+            np.clip(np.rint(x1), 0, width - 1),
+            np.clip(np.rint(y1), 0, height - 1),
+        ],
+        axis=-1,
+    ).astype(np.int32)
+    return perturbed
+
+
+def perturb_bboxes(
+    bboxes: list[np.ndarray],
+    *,
+    scale_factor: float,
+    translation_fraction: float,
+    height: int,
+    width: int,
+    rng: np.random.Generator | None,
+) -> list[np.ndarray]:
+    return [
+        perturb_bbox(
+            bbox,
+            scale_factor=scale_factor,
+            translation_fraction=translation_fraction,
+            height=height,
+            width=width,
+            rng=rng,
+        )
+        for bbox in bboxes
+    ]
+
+
 def export_decoder_to_coco(
     decoder: Any,
     max_samples: int | None,
-    box_padding: int,
+    bbox_scale_factor: float,
+    bbox_translation_fraction: float,
     bbox_mode: str,
     export_dir: Path,
+    rng: np.random.Generator | None = None,
 ) -> tuple[Path, list[dict[str, Any]], int]:
     if export_dir.exists():
         shutil.rmtree(export_dir)
@@ -222,7 +322,7 @@ def export_decoder_to_coco(
         bboxes = [
             bbox
             for component_mask in component_masks
-            if (bbox := bbox_from_binary_mask(component_mask, padding=box_padding)) is not None
+            if (bbox := bbox_from_binary_mask(component_mask, padding=0)) is not None
         ]
         if not bboxes:
             skipped += 1
@@ -230,6 +330,14 @@ def export_decoder_to_coco(
 
         image_id = len(images) + 1
         height, width = mask.shape[:2]
+        bboxes = perturb_bboxes(
+            bboxes,
+            scale_factor=bbox_scale_factor,
+            translation_fraction=bbox_translation_fraction,
+            height=height,
+            width=width,
+            rng=rng,
+        )
         image_uint8 = ensure_three_channels(normalize_to_uint8(sample.image))
         raw_image_path = raw_image_path_from_sample(sample)
         if raw_image_path is None:
@@ -294,9 +402,11 @@ def export_decoder_to_coco(
 def load_existing_coco_export_records(
     decoder: Any,
     max_samples: int | None,
-    box_padding: int,
+    bbox_scale_factor: float,
+    bbox_translation_fraction: float,
     bbox_mode: str,
     export_dir: Path,
+    rng: np.random.Generator | None = None,
 ) -> tuple[Path, list[dict[str, Any]], int] | None:
     ann_path = export_dir / "annotations.json"
     if not ann_path.exists():
@@ -320,13 +430,22 @@ def load_existing_coco_export_records(
         bboxes = [
             bbox
             for component_mask in component_masks
-            if (bbox := bbox_from_binary_mask(component_mask, padding=box_padding)) is not None
+            if (bbox := bbox_from_binary_mask(component_mask, padding=0)) is not None
         ]
         if not bboxes:
             skipped += 1
             continue
 
         image_id = len(records) + 1
+        height, width = mask.shape[:2]
+        bboxes = perturb_bboxes(
+            bboxes,
+            scale_factor=bbox_scale_factor,
+            translation_fraction=bbox_translation_fraction,
+            height=height,
+            width=width,
+            rng=rng,
+        )
         if image_id > len(images):
             return None
         image_info = images[image_id - 1]
@@ -570,13 +689,16 @@ def run_ultrasam_on_samples(
     ultrasam_repo: str = DEFAULT_ULTRASAM_REPO,
     auto_clone_source: bool = False,
     config: str | Path = DEFAULT_ULTRASAM_CONFIG,
-    box_padding: int = 0,
+    bbox_scale_factor: float = 1.0,
+    bbox_translation_fraction: float = 0.0,
     bbox_mode: str = "individual",
+    seed: int | None = None,
 ) -> list[InferenceResult]:
     """Run the normal UltraSAM GT-box pipeline on already-decoded samples."""
     sample_list = list(samples)
     if not sample_list:
         return []
+    seed_everything(seed)
 
     resolved_ultrasam_dir = ensure_ultrasam_source(
         resolve_repo_path(ultrasam_dir or default_ultrasam_dir()),
@@ -601,9 +723,11 @@ def run_ultrasam_on_samples(
         ann_path, records, _ = export_decoder_to_coco(
             decoder=_SampleListDecoder(sample_list),
             max_samples=None,
-            box_padding=box_padding,
+            bbox_scale_factor=bbox_scale_factor,
+            bbox_translation_fraction=bbox_translation_fraction,
             bbox_mode=bbox_mode,
             export_dir=coco_dir,
+            rng=np.random.default_rng(seed),
         )
         if not records:
             return []
@@ -691,7 +815,27 @@ def main() -> None:
         metavar="N|all",
         help="Evaluate a positive integer cap or use 'all' for the full dataset. Defaults to 'all'.",
     )
-    parser.add_argument("--box-padding", type=int, default=0)
+    parser.add_argument(
+        "--bbox-scale-factor",
+        type=float,
+        default=1.0,
+        help="Scale each GT bbox around its center before prompting UltraSAM (1.0 = unchanged).",
+    )
+    parser.add_argument(
+        "--bbox-translation-fraction",
+        type=float,
+        default=0.0,
+        help=(
+            "Translate each bbox by this fraction of its scaled size in a random cardinal "
+            "or diagonal direction (0.0 = unchanged)."
+        ),
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Global inference seed for Python, NumPy, PyTorch, CUDA, and bbox translation directions.",
+    )
     parser.add_argument(
         "--centerline-tolerance",
         type=float,
@@ -719,6 +863,7 @@ def main() -> None:
     parser.add_argument("--save-vis", type=int, default=0)
     parser.add_argument("--output-dir", type=str, default="results/ultrasam_test")
     args = parser.parse_args()
+    seed_everything(args.seed)
 
     output_dir = resolve_repo_path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -744,21 +889,27 @@ def main() -> None:
 
     decoder = build_decoder_from_args(args)
     source_total = count_source_iterations(decoder, args.max_samples)
-    existing_export = load_existing_coco_export_records(
-        decoder=decoder,
-        max_samples=args.max_samples,
-        box_padding=args.box_padding,
-        bbox_mode=args.bbox_mode,
-        export_dir=coco_dir,
-    )
+    existing_export = None
+    if args.bbox_translation_fraction == 0.0 or args.seed is not None:
+        existing_export = load_existing_coco_export_records(
+            decoder=decoder,
+            max_samples=args.max_samples,
+            bbox_scale_factor=args.bbox_scale_factor,
+            bbox_translation_fraction=args.bbox_translation_fraction,
+            bbox_mode=args.bbox_mode,
+            export_dir=coco_dir,
+            rng=np.random.default_rng(args.seed),
+        )
     if existing_export is None:
         print("Exporting decoded samples to COCO prompt dataset...", flush=True)
         ann_path, records, export_skipped = export_decoder_to_coco(
             decoder=decoder,
             max_samples=args.max_samples,
-            box_padding=args.box_padding,
+            bbox_scale_factor=args.bbox_scale_factor,
+            bbox_translation_fraction=args.bbox_translation_fraction,
             bbox_mode=args.bbox_mode,
             export_dir=coco_dir,
+            rng=np.random.default_rng(args.seed),
         )
     else:
         ann_path, records, export_skipped = existing_export
@@ -945,7 +1096,9 @@ def main() -> None:
         "config": str(config_path),
         "device": str(device),
         "max_samples": format_max_samples(args.max_samples),
-        "box_padding": args.box_padding,
+        "bbox_scale_factor": args.bbox_scale_factor,
+        "bbox_translation_fraction": args.bbox_translation_fraction,
+        "seed": args.seed,
         "bbox_mode": args.bbox_mode,
         "batch_size": args.batch_size,
         "num_evaluated": len(rows),

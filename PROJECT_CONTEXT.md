@@ -68,7 +68,7 @@ Wrapper defaults are now aligned for comparable default reruns:
 - `--max-samples 4000` for CAMUS ED/ES target rows, corresponding to 2000 source frames x 2 labels.
 - `--max-samples 764` for RobLUS, which yields 615 annotated pleural-line samples and skips 149 empty-mask frames because no GT box can be generated.
 - `--save-vis 20`.
-- `--box-padding 10` only for UltraBones100k and `0` otherwise.
+- UltraSAM GT wrappers use `--bbox-scale-factor 1.0` and `--bbox-translation-fraction 0.0` by default.
 - MedSAM GT wrappers explicitly set `--bbox-jitter-prob 0.0`.
 
 RobLUS benchmark reporting should stay class-specific. Merged pleural-line/rib-shadow runs are not a valid headline protocol because a single combined bbox is not a clean prompt for separate structures.
