@@ -29,8 +29,8 @@ datasets=(
 )
 
 scale_factors=(
-  # 0.75
-  # 1.25
+  0.75
+  1.25
   1.5
   2.0
 )
@@ -56,3 +56,11 @@ for dataset in "${datasets[@]}"; do
       "${extra_args[@]}"
   done
 done
+
+datasets_csv="$(IFS=,; echo "${datasets[*]}")"
+scale_factors_csv="$(IFS=,; echo "${scale_factors[*]}")"
+
+python analysis/analyse_jitter_exp.py \
+  --datasets "${datasets_csv}" \
+  --scales "${scale_factors_csv}" \
+  --metrics "dice"
