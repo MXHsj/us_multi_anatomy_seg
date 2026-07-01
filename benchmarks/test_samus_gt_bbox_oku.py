@@ -20,7 +20,7 @@ DEFAULT_ARGS = [
     "--device",
     DEVICE,
     "--save-vis",
-    "99999999",
+    "20",
     "--output-dir",
     OUTPUT_DIR,
     "--oku-anatomy",

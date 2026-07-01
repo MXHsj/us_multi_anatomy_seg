@@ -32,6 +32,24 @@ class UNSDecoder:
         total = sum(1 for image_path in self._image_paths() if self._mask_path(image_path).exists())
         return min(total, max_samples) if max_samples is not None else total
 
+    def load_sample(self, sample_id: str) -> DecodedSample:
+        image_path = self.train_dir / f"{sample_id}.tif"
+        mask_path = self._mask_path(image_path)
+        if not image_path.exists() or not mask_path.exists():
+            raise KeyError(f"UNS sample '{sample_id}' not found.")
+
+        return DecodedSample(
+            dataset="UNS",
+            sample_id=image_path.stem,
+            image=normalize_to_uint8(io.imread(image_path)),
+            mask=to_binary_mask(io.imread(mask_path)),
+            metadata={
+                "split": "train",
+                "raw_image_path": str(image_path),
+                "raw_mask_path": str(mask_path),
+            },
+        )
+
     def iter_samples(self, max_samples: Optional[int] = None) -> Iterator[DecodedSample]:
         count = 0
         for image_path in self._image_paths():
@@ -39,17 +57,7 @@ class UNSDecoder:
             if not mask_path.exists():
                 continue
 
-            yield DecodedSample(
-                dataset="UNS",
-                sample_id=image_path.stem,
-                image=normalize_to_uint8(io.imread(image_path)),
-                mask=to_binary_mask(io.imread(mask_path)),
-                metadata={
-                    "split": "train",
-                    "raw_image_path": str(image_path),
-                    "raw_mask_path": str(mask_path),
-                },
-            )
+            yield self.load_sample(image_path.stem)
 
             count += 1
             if max_samples is not None and count >= max_samples:

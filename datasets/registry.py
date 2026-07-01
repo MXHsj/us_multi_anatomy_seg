@@ -98,6 +98,38 @@ DATASET_REGISTRY: dict[str, DatasetSpec] = {
         decoder_class="datasets.nerve_UNS:UNSDecoder",
         hf_repo_path="zips/Nerve/UNS.zip",
     ),
+    "ussc": DatasetSpec(
+        key="ussc",
+        display_name="Ultrasound Spinal Cord",
+        anatomy="Spinal Cord",
+        default_root="datasets/USSC",
+        decoder_class="datasets.spinal_cord_USSC:SpinalCordUSDecoder",
+        hf_repo_path="zips/SpinalCord/USSC.zip",
+    ),
+    "umud": DatasetSpec(
+        key="umud",
+        display_name="UMUD Aponeurosis",
+        anatomy="Muscle",
+        default_root="datasets/UMUD",
+        decoder_class="datasets.muscle_UMUD:UMUDAponeurosisDecoder",
+        hf_repo_path="zips/Muscle/UMUD.zip",
+    ),
+    "mmotu": DatasetSpec(
+        key="mmotu",
+        display_name="MMOTU",
+        anatomy="Ovary",
+        default_root="datasets/MMOTU",
+        decoder_class="datasets.ovary_MMOTU:MMOTU2DDecoder",
+        hf_repo_path="zips/Ovary/MMOTU.zip",
+    ),
+    "gist514": DatasetSpec(
+        key="gist514",
+        display_name="GIST514-DB",
+        anatomy="Gastrointestinal",
+        default_root="datasets/GIST514",
+        decoder_class="datasets.gastrointestinal_GIST514:GIST514Decoder",
+        hf_repo_path="zips/Gastrointestinal/GIST514.zip",
+    ),
 }
 
 

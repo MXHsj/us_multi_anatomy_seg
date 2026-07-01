@@ -86,42 +86,47 @@ class BreastBUSBRADecoder:
         total = len(self._sample_ids())
         return min(total, max_samples) if max_samples is not None else total
 
+    def load_sample(self, sample_id: str) -> DecodedSample:
+        if not self._matches_filters(sample_id):
+            raise KeyError(f"BUSBRA sample '{sample_id}' not found.")
+
+        image_path = self.image_dir / f"{sample_id}.png"
+        mask_name = sample_id.replace("bus_", "mask_", 1) + ".png"
+        mask_path = self.mask_dir / mask_name
+        if not image_path.exists() or not mask_path.exists():
+            raise KeyError(f"BUSBRA sample '{sample_id}' not found.")
+
+        image = io.imread(image_path)
+        mask = io.imread(mask_path)
+        row = self.metadata_by_id.get(sample_id, {})
+
+        birads_raw = (row.get("BIRADS") or "").strip()
+        try:
+            birads_value: Optional[int] = int(birads_raw) if birads_raw else None
+        except ValueError:
+            birads_value = None
+
+        return DecodedSample(
+            dataset="BUSBRA",
+            sample_id=sample_id,
+            image=normalize_to_uint8(image),
+            mask=to_binary_mask(mask),
+            metadata={
+                "image_file": image_path.name,
+                "mask_file": mask_path.name,
+                "pathology": (row.get("Pathology") or "").strip() or None,
+                "birads": birads_value,
+                "side": (row.get("Side") or "").strip() or None,
+                "device": (row.get("Device") or "").strip() or None,
+                "histology": (row.get("Histology") or "").strip() or None,
+                "bbox_csv": (row.get("BBOX") or "").strip() or None,
+            },
+        )
+
     def iter_samples(self, max_samples: Optional[int] = None) -> Iterator[DecodedSample]:
         count = 0
         for sample_id in self._sample_ids():
-            image_path = self.image_dir / f"{sample_id}.png"
-            mask_name = sample_id.replace("bus_", "mask_", 1) + ".png"
-            mask_path = self.mask_dir / mask_name
-            if not image_path.exists() or not mask_path.exists():
-                continue
-
-            image = io.imread(image_path)
-            mask = io.imread(mask_path)
-            row = self.metadata_by_id.get(sample_id, {})
-
-            birads_raw = (row.get("BIRADS") or "").strip()
-            try:
-                birads_value: Optional[int] = int(birads_raw) if birads_raw else None
-            except ValueError:
-                birads_value = None
-
-            sample = DecodedSample(
-                dataset="BUSBRA",
-                sample_id=sample_id,
-                image=normalize_to_uint8(image),
-                mask=to_binary_mask(mask),
-                metadata={
-                    "image_file": image_path.name,
-                    "mask_file": mask_path.name,
-                    "pathology": (row.get("Pathology") or "").strip() or None,
-                    "birads": birads_value,
-                    "side": (row.get("Side") or "").strip() or None,
-                    "device": (row.get("Device") or "").strip() or None,
-                    "histology": (row.get("Histology") or "").strip() or None,
-                    "bbox_csv": (row.get("BBOX") or "").strip() or None,
-                },
-            )
-            yield sample
+            yield self.load_sample(sample_id)
 
             count += 1
             if max_samples is not None and count >= max_samples:

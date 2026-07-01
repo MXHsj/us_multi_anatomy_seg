@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+from dataclasses import dataclass
 import multiprocessing
 import os
 from pathlib import Path
@@ -30,6 +31,17 @@ METRIC_FIELDNAMES = [
     *METRIC_NAMES,
     "infer_ms",
 ]
+
+
+@dataclass
+class InferenceResult:
+    sample: Any
+    image: np.ndarray
+    gt_mask: np.ndarray
+    pred_mask: np.ndarray
+    bbox: np.ndarray
+    metrics: dict[str, float]
+    infer_ms: float
 
 
 def parse_max_samples(value: str | int | None) -> int | None:
@@ -89,6 +101,32 @@ def build_metric_row(
     for column in TARGET_METADATA_COLUMNS:
         row[column] = metadata.get(column, "")
     return row
+
+
+def build_box_metric_record(
+    sample: Any,
+    height: int,
+    width: int,
+    infer_ms: float,
+    boxes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """One per-sample record holding metrics for each bounding box (for JSON output).
+
+    `boxes` is a list of per-box dicts (e.g. ``{"box_index", "bbox", **METRIC_NAMES}``), one per
+    prompt box, in prompt order.
+    """
+    metadata = _metadata(sample)
+    record = {
+        "sample_id": sample.sample_id,
+        "height": height,
+        "width": width,
+        "infer_ms": infer_ms,
+        "num_boxes": len(boxes),
+    }
+    for column in TARGET_METADATA_COLUMNS:
+        record[column] = metadata.get(column, "")
+    record["boxes"] = boxes
+    return record
 
 
 def count_source_iterations(decoder: Any, max_samples: int | None) -> int | None:
@@ -301,17 +339,17 @@ def _render_and_save_group(
             color = to_rgb("#d62728")
         _overlay_mask(axes[1], target["gt_mask"], color=color, alpha=0.42)
         _overlay_mask(axes[2], target["pred_mask"], color=color, alpha=0.42)
-        bbox = target["bbox"]
-        axes[1].add_patch(
-            Rectangle(
-                (bbox[0], bbox[1]),
-                max(float(bbox[2] - bbox[0]), 1.0),
-                max(float(bbox[3] - bbox[1]), 1.0),
-                edgecolor=color,
-                facecolor=(0, 0, 0, 0),
-                linewidth=1.8,
+        for bbox in _iter_bboxes(target["bbox"]):
+            axes[1].add_patch(
+                Rectangle(
+                    (bbox[0], bbox[1]),
+                    max(float(bbox[2] - bbox[0]), 1.0),
+                    max(float(bbox[3] - bbox[1]), 1.0),
+                    edgecolor=color,
+                    facecolor=(0, 0, 0, 0),
+                    linewidth=1.8,
+                )
             )
-        )
         label = (
             f"{target['class_name']} "
             f"D={target['dice']:.2f} I={target['iou']:.2f}"
@@ -359,3 +397,7 @@ def _overlay_mask(axis: Any, mask: np.ndarray, color: tuple[float, float, float]
     overlay[mask_bool, :3] = color
     overlay[mask_bool, 3] = alpha
     axis.imshow(overlay)
+
+
+def _iter_bboxes(bbox: np.ndarray) -> np.ndarray:
+    return np.asarray(bbox).reshape(-1, 4)

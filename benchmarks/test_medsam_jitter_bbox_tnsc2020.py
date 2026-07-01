@@ -12,7 +12,7 @@ DEFAULT_ARGS = [
     "--dataset-root",
     "datasets/TNSC2020",
     "--max-samples",
-    "100",
+    "all",
     "--bbox-jitter-prob",
     "1.0",
     "--bbox-jitter-fraction",

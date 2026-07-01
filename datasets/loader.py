@@ -56,6 +56,12 @@ def _decoder_kwargs(dataset_name: str, args: argparse.Namespace) -> dict[str, An
             "labels": labels,
             "subjects": subjects or None,
         }
+    if dataset_name == "ussc":
+        labels = [label.strip() for label in args.ussc_labels.split(",") if label.strip()]
+        splits = [split.strip() for split in args.ussc_splits.split(",") if split.strip()]
+        return {"labels": labels or None, "splits": splits or None}
+    if dataset_name == "ultrabones100k":
+        return {"frame_fraction": args.ultrabones_frame_fraction}
     return {}
 
 
@@ -172,4 +178,31 @@ def add_dataset_args(parser: argparse.ArgumentParser, include_camus: bool = True
         type=str,
         default="",
         help="Optional comma-separated RobLUS subject filter, e.g. AP,BM.",
+    )
+    parser.add_argument(
+        "--ussc-labels",
+        type=str,
+        default="",
+        help=(
+            "Comma-separated USSC semantic labels. Defaults to all non-background "
+            "classes: dura,csf,pia,spinal_cord,dorsal_space,hematoma,"
+            "dura_pia_complex,dura_ventral_complex,ventral_space."
+        ),
+    )
+    parser.add_argument(
+        "--ussc-splits",
+        type=str,
+        default="",
+        help="Comma-separated USSC splits to decode (train,val,test). Defaults to all splits.",
+    )
+    parser.add_argument(
+        "--ultrabones-frame-fraction",
+        type=float,
+        default=1.0,
+        help=(
+            "Fraction of equally-spaced frames to sample within each UltraBones "
+            "record/video (e.g. 0.05 for ~5%, at least one frame per record). "
+            "Defaults to 1.0 (all frames). This stratifies across specimen, "
+            "structure, and record."
+        ),
     )

@@ -36,6 +36,9 @@ LABEL_TEXT: Dict[str, Union[str, Dict]] = {
     "busi": "breast lesion",          # covers benign + malignant
     "ultrabones100k": "bone surface",
     "uns": "brachial plexus",         # brachial plexus nerve
+    "umud": "muscle aponeurosis",
+    "mmotu": "ovarian tumor",
+    "gist514": "gastrointestinal submucosal tumor",
 
     # --- Multi-class dataset: label id -> concept ---
     "camus": {
@@ -46,6 +49,17 @@ LABEL_TEXT: Dict[str, Union[str, Dict]] = {
     "roblus": {
         "pleural_line": "pleural line",
         "rib_shadow": "rib shadow",
+    },
+    "ussc": {
+        "dura": "spinal dura",
+        "csf": "cerebrospinal fluid",
+        "pia": "spinal pia",
+        "spinal_cord": "spinal cord",
+        "dorsal_space": "dorsal space",
+        "hematoma": "hematoma",
+        "dura_pia_complex": "dura pia complex",
+        "dura_ventral_complex": "dura ventral complex",
+        "ventral_space": "ventral space",
     },
 
     # --- Selectable-label datasets: one concept per option ---

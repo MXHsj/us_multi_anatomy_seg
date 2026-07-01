@@ -9,6 +9,10 @@ from datasets.bone_UltraBones100k import UltraBones100kDecoder
 from datasets.liver_AULID import AULIDDecoder
 from datasets.nerve_UNS import UNSDecoder
 from datasets.lung_RobLUS import RobLUSDecoder
+from datasets.spinal_cord_USSC import SpinalCordUSDecoder
+from datasets.muscle_UMUD import UMUDAponeurosisDecoder
+from datasets.ovary_MMOTU import MMOTU2DDecoder
+from datasets.gastrointestinal_GIST514 import GIST514Decoder
 
 __all__ = [
     "DecodedSample",
@@ -22,4 +26,8 @@ __all__ = [
     "AULIDDecoder",
     "UNSDecoder",
     "RobLUSDecoder",
+    "SpinalCordUSDecoder",
+    "UMUDAponeurosisDecoder",
+    "MMOTU2DDecoder",
+    "GIST514Decoder",
 ]
