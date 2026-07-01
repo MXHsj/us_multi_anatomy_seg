@@ -670,7 +670,7 @@ def plot_multi_model_rows(
             markeredgecolor=MODEL_COLORS.get(model, "#666666"),
             alpha=0.85,
             markersize=7,
-            label=spec["label"],
+            label=MODEL_LABELS.get(model, model),
         )
         for model in models
     ]
