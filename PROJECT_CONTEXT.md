@@ -35,16 +35,25 @@ BCU_PD has been removed from the registry and wrapper scripts.
 
 ## Benchmark Harness
 
-Current model engines:
+There are two prompting paradigms, reported in **separate tables that are never cross-compared**: box-prompted (GT-derived box = oracle localization) and text-prompted (concept name only = harder, deployment-realistic). A GT box is a privileged cue, so the two are not comparable by design.
+
+Box-prompted model engines:
 
 - `benchmarks/medsam_inference.py`: GT-box prompted MedSAM benchmark with optional bbox jitter controls, checkpoint auto-download, Dice/IoU/latency reporting, visualization output, and progress reporting.
 - `benchmarks/samus_inference.py`: GT-box prompted SAMUS benchmark with checkpoint auto-download, batching, optional threaded sample loading, Dice/IoU/latency reporting, visualization output, and progress reporting.
+- `benchmarks/ultrasam_inference.py`: GT-box prompted UltraSAM benchmark (COCO export + MMDetection runtime); selects the highest-confidence predicted instance per sample.
 
-Both engines write:
+Text-prompted model engine:
 
-- `per_sample_metrics.csv`
+- `benchmarks/medical_sam3_inference.py`: text-prompted **Medical SAM3** benchmark (model token `medicalsam3`; always spelled "Medical SAM3", never "MedSAM3", to avoid confusion with future Medical SAM3 variants). The prompt is a canonical clinical concept string from `datasets/label_text.py` (`concept_for(dataset, label)`) — derived from the class/label taxonomy, never from the mask. It selects the highest-confidence mask returned for the text query (`argmax(scores)`, matching the paper). Multi-class datasets (e.g. CAMUS LV/LA) are queried per class and scored independently with the existing per-target scoring. Empty-GT frames are skipped, matching the box engines. The fine-tuned `checkpoint_2D.pt` is auto-downloaded from the `Chongcong/Medical-SAM3` HF repo. The `sam3` model package (the Medical-SAM3 repo's own package) must be installed in the environment — see `requirements.txt`; it is imported like `segment_anything`, not referenced as a source clone.
+
+All engines write:
+
+- `per_sample_metrics.csv` (the text engine adds `concept` and `text_score` columns; its `bbox` column is inert)
 - `summary.json`
 - `visualizations/*.png`
+
+Result-directory naming encodes the protocol so the reporting layer keeps tables separate: box runs are `{model}_gt_bbox_{dataset}` / `{model}_jitter_bbox_{dataset}`; text runs are `medicalsam3_text_prompt_{dataset}`. `analysis/model_across_datasets.py --protocol text` reports the text table on its own.
 
 Visualization dumping samples evenly across the evaluated run when `--save-vis N` is used. Existing visualization files are not automatically cleaned when rerunning into an existing result folder, so stale PNGs can remain unless the folder is cleared first.
 

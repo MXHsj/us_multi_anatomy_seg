@@ -26,11 +26,23 @@ MODEL_COLORS = {
     "medsam": "#4C72B0",
     "samus": "#55A868",
     "ultrasam": "#C44E52",
+    "medicalsam3": "#8172B3",
 }
 MODEL_LABELS = {
     "medsam": "MedSAM",
     "samus": "SAMUS",
     "ultrasam": "UltraSAM",
+    "medicalsam3": "Medical SAM3",
+}
+# Fallback colors for the second series when both series share the same model
+# (e.g. comparing Medical SAM3 label vs object), so the two bars stay distinct.
+SECOND_SERIES_COLOR = "#DD8452"
+PROTOCOL_LABELS = {
+    "gt_bbox": "GT box",
+    "jitter_bbox": "jitter box",
+    "text": "text",
+    "label": "label",
+    "object": "object",
 }
 MODEL_ALIASES = {
     "ultrasm": "ultrasam",
@@ -65,10 +77,58 @@ def parse_result_dir_name(name: str) -> tuple[str, str, str] | None:
     elif parts[1:3] == ["jitter", "bbox"]:
         protocol = "jitter_bbox"
         dataset = "_".join(parts[3:])
+    elif parts[1:3] == ["text", "prompt"]:
+        protocol = "text"
+        dataset = "_".join(parts[3:])
     else:
         return None
 
+    if not dataset:
+        return None
+
     return model, protocol, dataset
+
+
+def parse_prompt_family_dir(name: str) -> tuple[str, str] | None:
+    """Decode a nested prompt-family dir name into (model, protocol).
+
+    Medical SAM3's text-prompted runs are grouped one level deeper than the flat
+    box convention: results/<model>_<style>_prompt/<dataset>/ (e.g.
+    medicalsam3_label_prompt -> ('medicalsam3', 'label'), medicalsam3_object_prompt
+    -> ('medicalsam3', 'object')). Returns None for names not ending in '_prompt'.
+    """
+    parts = name.split("_")
+    if len(parts) >= 3 and parts[-1] == "prompt":
+        model = "_".join(parts[:-2])
+        protocol = parts[-2]
+        if model and protocol:
+            return model, protocol
+    return None
+
+
+def iter_run_dirs(results_dir: Path):
+    """Yield (model, protocol, dataset, run_dir) for every discoverable run.
+
+    Supports both layouts:
+      * flat box/text convention: results/<model>_<protocol>_<dataset>/
+      * nested prompt families:   results/<model>_<style>_prompt/<dataset>/
+    """
+    if not results_dir.is_dir():
+        return
+    for child in sorted(results_dir.iterdir()):
+        if not child.is_dir():
+            continue
+        family = parse_prompt_family_dir(child.name)
+        if family is not None:
+            model, protocol = family
+            for dataset_dir in sorted(child.iterdir()):
+                if dataset_dir.is_dir():
+                    yield model, protocol, dataset_dir.name, dataset_dir
+            continue
+        parsed = parse_result_dir_name(child.name)
+        if parsed is not None:
+            model, protocol, dataset = parsed
+            yield model, protocol, dataset, child
 
 
 def parse_metrics_arg(value: str) -> tuple[str, ...]:
@@ -186,9 +246,10 @@ def discover_results(results_dir: Path, protocol: str) -> dict[tuple[str, str], 
 
 def compare_models(
     results_dir: Path,
-    protocol: str,
-    model_a: str,
-    model_b: str,
+    key_a: tuple[str, str],
+    key_b: tuple[str, str],
+    tag_a: str,
+    tag_b: str,
     metrics: tuple[str, ...],
     requested_datasets: tuple[str, ...] | None = None,
 ) -> list[dict[str, Any]]:
@@ -204,8 +265,8 @@ def compare_models(
 
     rows: list[dict[str, Any]] = []
     for dataset in datasets:
-        metrics_a = read_metrics(discovered[(model_a, dataset)], metrics)
-        metrics_b = read_metrics(discovered[(model_b, dataset)], metrics)
+        metrics_a = read_metrics(discovered[(model_a, protocol_a, dataset)], metrics)
+        metrics_b = read_metrics(discovered[(model_b, protocol_b, dataset)], metrics)
         shared_ids = sorted(set(metrics_a) & set(metrics_b))
         if not shared_ids:
             continue
@@ -217,20 +278,20 @@ def compare_models(
             values_b = [metrics_b[sample_id][metric] for sample_id in shared_ids]
             deltas = [b - a for a, b in zip(values_a, values_b)]
             values_by_metric[metric] = {
-                model_a: values_a,
-                model_b: values_b,
+                tag_a: values_a,
+                tag_b: values_b,
             }
 
             mean_a, std_a = mean_std(values_a)
             mean_b, std_b = mean_std(values_b)
             delta_mean, delta_std = mean_std(deltas)
 
-            row[f"{model_a}_{metric}_mean"] = mean_a
-            row[f"{model_a}_{metric}_std"] = std_a
-            row[f"{model_b}_{metric}_mean"] = mean_b
-            row[f"{model_b}_{metric}_std"] = std_b
-            row[f"{model_b}_minus_{model_a}_{metric}_mean"] = delta_mean
-            row[f"{model_b}_minus_{model_a}_{metric}_std"] = delta_std
+            row[f"{tag_a}_{metric}_mean"] = mean_a
+            row[f"{tag_a}_{metric}_std"] = std_a
+            row[f"{tag_b}_{metric}_mean"] = mean_b
+            row[f"{tag_b}_{metric}_std"] = std_b
+            row[f"{tag_b}_minus_{tag_a}_{metric}_mean"] = delta_mean
+            row[f"{tag_b}_minus_{tag_a}_{metric}_std"] = delta_std
 
         row["_values_by_metric"] = values_by_metric
         rows.append(row)
@@ -314,17 +375,17 @@ def format_float(value: float) -> str:
     return f"{value:.4f}"
 
 
-def column_names(model_a: str, model_b: str, metrics: tuple[str, ...]) -> list[str]:
+def column_names(tag_a: str, tag_b: str, metrics: tuple[str, ...]) -> list[str]:
     columns = ["dataset"]
     for metric in metrics:
         columns.extend(
             [
-                f"{model_a}_{metric}_mean",
-                f"{model_a}_{metric}_std",
-                f"{model_b}_{metric}_mean",
-                f"{model_b}_{metric}_std",
-                f"{model_b}_minus_{model_a}_{metric}_mean",
-                f"{model_b}_minus_{model_a}_{metric}_std",
+                f"{tag_a}_{metric}_mean",
+                f"{tag_a}_{metric}_std",
+                f"{tag_b}_{metric}_mean",
+                f"{tag_b}_{metric}_std",
+                f"{tag_b}_minus_{tag_a}_{metric}_mean",
+                f"{tag_b}_minus_{tag_a}_{metric}_std",
             ]
         )
     return columns
@@ -391,8 +452,11 @@ def display_dataset_label(dataset: str) -> str:
     return DATASET_LABELS.get(dataset, dataset.upper())
 
 
-def display_model_label(model: str) -> str:
-    return MODEL_LABELS.get(model, model)
+def display_series_label(model: str, protocol: str, show_protocol: bool) -> str:
+    base = MODEL_LABELS.get(model, model)
+    if show_protocol:
+        return f"{base} ({PROTOCOL_LABELS.get(protocol, protocol)})"
+    return base
 
 
 def metric_label(metric: str) -> str:
@@ -415,8 +479,7 @@ def metric_label(metric: str) -> str:
 def plot_rows(
     rows: list[dict[str, Any]],
     plot_path: Path,
-    model_a: str,
-    model_b: str,
+    series: list[dict[str, str]],
     metrics: tuple[str, ...],
     title: str = "",
 ) -> None:
@@ -607,7 +670,7 @@ def plot_multi_model_rows(
             markeredgecolor=MODEL_COLORS.get(model, "#666666"),
             alpha=0.85,
             markersize=7,
-            label=display_model_label(model),
+            label=spec["label"],
         )
         for model in models
     ]
@@ -634,8 +697,31 @@ def main() -> None:
             "from per_sample_metrics.csv."
         )
     )
+    _PROTOCOLS = ["gt_bbox", "jitter_bbox", "text", "label", "object"]
     parser.add_argument("--results-dir", type=Path, default=Path("results"))
-    parser.add_argument("--protocol", default="gt_bbox", choices=["gt_bbox", "jitter_bbox"])
+    parser.add_argument(
+        "--protocol",
+        default="gt_bbox",
+        choices=_PROTOCOLS,
+        help="Protocol used for both series unless overridden by --protocol-a/-b.",
+    )
+    parser.add_argument(
+        "--protocol-a",
+        default=None,
+        choices=_PROTOCOLS,
+        help="Protocol for series A (defaults to --protocol).",
+    )
+    parser.add_argument(
+        "--protocol-b",
+        default=None,
+        choices=_PROTOCOLS,
+        help=(
+            "Protocol for series B (defaults to --protocol). Set this with "
+            "--model-a/--model-b equal to compare prompt styles of one model, "
+            "e.g. --model-a medicalsam3 --model-b medicalsam3 "
+            "--protocol-a label --protocol-b object."
+        ),
+    )
     parser.add_argument("--model-a", default="medsam")
     parser.add_argument("--model-b", default="samus")
     parser.add_argument(
