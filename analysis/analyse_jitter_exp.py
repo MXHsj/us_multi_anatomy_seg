@@ -102,17 +102,21 @@ def mean_std(values: list[float]) -> tuple[float, float]:
     return statistics.fmean(values), statistics.pstdev(values) if len(values) > 1 else 0.0
 
 
-def result_metrics_path(results_dir: Path, dataset: str, experiment: str, value_text: str | None) -> Path:
-    if value_text is None:
-        return results_dir / f"ultrasam_gt_bbox_{dataset}" / "per_sample_metrics.csv"
+def result_metrics_path(
+    *,
+    jitter_results_dir: Path,
+    dataset: str,
+    experiment: str,
+    value_text: str,
+) -> Path:
     if experiment == "scale":
-        return results_dir / f"ultrasam_scale_{value_text}_bbox_{dataset}" / "per_sample_metrics.csv"
-    return results_dir / f"ultrasam_trans_{value_text}_bbox_{dataset}" / "per_sample_metrics.csv"
+        return jitter_results_dir / "scale" / f"ultrasam_scale_{value_text}_bbox_{dataset}" / "per_sample_metrics.csv"
+    return jitter_results_dir / "trans" / f"ultrasam_trans_{value_text}_bbox_{dataset}" / "per_sample_metrics.csv"
 
 
 def collect_dataset_rows(
     *,
-    results_dir: Path,
+    jitter_results_dir: Path,
     dataset: str,
     experiment: str,
     values: list[tuple[str, float]],
@@ -120,27 +124,38 @@ def collect_dataset_rows(
     metrics: tuple[str, ...],
 ) -> tuple[list[dict[str, Any]], list[str]]:
     warnings: list[str] = []
-    baseline_path = result_metrics_path(results_dir, dataset, experiment=experiment, value_text=None)
-    if not baseline_path.exists():
-        return [], [f"missing baseline: {baseline_path}"]
-
-    baseline = read_metrics(baseline_path, metrics)
-    if not baseline:
-        return [], [f"empty baseline metrics: {baseline_path}"]
 
     experiment_metrics: dict[float, dict[str, dict[str, float]]] = {}
+    baseline: dict[str, dict[str, float]] | None = None
     for value_text, numeric_value in values:
-        metrics_path = result_metrics_path(results_dir, dataset, experiment=experiment, value_text=value_text)
+        metrics_path = result_metrics_path(
+            jitter_results_dir=jitter_results_dir,
+            dataset=dataset,
+            experiment=experiment,
+            value_text=value_text,
+        )
         if not metrics_path.exists():
             warnings.append(f"missing {experiment} {value_text}: {metrics_path}")
             continue
-        values = read_metrics(metrics_path, metrics)
-        if not values:
+        metric_values = read_metrics(metrics_path, metrics)
+        if not metric_values:
             warnings.append(f"empty {experiment} {value_text}: {metrics_path}")
             continue
-        experiment_metrics[numeric_value] = values
+        experiment_metrics[numeric_value] = metric_values
+        if math.isclose(numeric_value, baseline_value):
+            baseline = metric_values
 
     if not experiment_metrics:
+        return [], warnings
+    if baseline is None:
+        baseline_text = f"{baseline_value:g}"
+        baseline_path = result_metrics_path(
+            jitter_results_dir=jitter_results_dir,
+            dataset=dataset,
+            experiment=experiment,
+            value_text=baseline_text,
+        )
+        warnings.append(f"missing baseline {experiment} {baseline_text}: {baseline_path}")
         return [], warnings
 
     matched_ids = set(baseline)
@@ -173,6 +188,8 @@ def collect_dataset_rows(
     rows.append(baseline_row)
 
     for numeric_value in sorted(experiment_metrics):
+        if math.isclose(numeric_value, baseline_value):
+            continue
         row: dict[str, Any] = {
             "experiment": experiment,
             "dataset": dataset,
@@ -462,7 +479,11 @@ def plot_combined_metric_pair(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Analyze UltraSAM bbox jitter experiments.")
-    parser.add_argument("--results-dir", type=Path, default=ROOT_DIR / "results")
+    parser.add_argument(
+        "--jitter-results-dir",
+        type=Path,
+        default=ROOT_DIR / "experiments" / "prompt_robustness",
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -470,8 +491,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--datasets", default=",".join(DEFAULT_DATASETS))
     parser.add_argument("--experiment", choices=("scale", "translation", "both"), default="both")
-    parser.add_argument("--scales", type=parse_values, default=parse_values("0.75,1.25,1.5,2.0"))
-    parser.add_argument("--translations", type=parse_values, default=parse_values("0.075,0.10,0.15"))
+    parser.add_argument("--scales", type=parse_values, default=parse_values("0.85,0.9,0.95,1,1.05,1.10,1.15"))
+    parser.add_argument("--translations", type=parse_values, default=parse_values("0,0.025,0.05,0.075,0.10,0.125,0.15"))
     parser.add_argument("--metrics", type=parse_metrics_arg, default=parse_metrics_arg("dice,iou"))
     parser.add_argument("--plot-format", default="png", choices=("png", "svg", "pdf"))
     return parser.parse_args()
@@ -489,7 +510,7 @@ def main() -> None:
         baseline_value = float(EXPERIMENT_CONFIG[experiment]["baseline_value"])
         for dataset in datasets:
             rows, dataset_warnings = collect_dataset_rows(
-                results_dir=args.results_dir,
+                jitter_results_dir=args.jitter_results_dir,
                 dataset=dataset,
                 experiment=experiment,
                 values=values,

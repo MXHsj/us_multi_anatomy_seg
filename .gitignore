@@ -61,5 +61,4 @@ msam3_*.err
 *.pdf
 
 # To not track the many prompt robustness experiments results and visualizations
-results/*scale_*
-results/*trans_*
+experiments/

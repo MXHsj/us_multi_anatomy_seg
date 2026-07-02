@@ -6,6 +6,7 @@ eval "$(conda shell.bash hook)"
 conda activate UltraSam
 
 gpu_id=0
+jitter_root="experiments/prompt_robustness"
 
 # Fraction of equally-spaced frames per record to sample for UltraBones100k (huge dataset);
 # applied only to ultrabones100k below.
@@ -29,6 +30,7 @@ datasets=(
 )
 
 translation_fractions=(
+  0
   0.025
   0.05
   0.075
@@ -41,6 +43,7 @@ scale_factors=(
   0.85
   0.9
   0.95
+  1
   1.05
   1.10
   1.15
@@ -65,7 +68,7 @@ for dataset in "${datasets[@]}"; do
       --bbox-scale-factor "${scale_factor}" \
       --bbox-translation-fraction 0.0 \
       --seed 0 \
-      --output-dir "results/ultrasam_scale_${scale_factor}_bbox_${dataset}" \
+      --output-dir "${jitter_root}/scale/ultrasam_scale_${scale_factor}_bbox_${dataset}" \
       "${extra_args[@]}"
   done
 done
@@ -86,7 +89,7 @@ for dataset in "${datasets[@]}"; do
       --bbox-scale-factor 1.0 \
       --bbox-translation-fraction "${translation_fraction}" \
       --seed 0 \
-      --output-dir "results/ultrasam_trans_${translation_fraction}_bbox_${dataset}" \
+      --output-dir "${jitter_root}/trans/ultrasam_trans_${translation_fraction}_bbox_${dataset}" \
       "${extra_args[@]}"
   done
 done
@@ -97,6 +100,7 @@ scale_factors_csv="$(IFS=,; echo "${scale_factors[*]}")"
 
 python analysis/analyse_jitter_exp.py \
   --experiment both \
+  --jitter-results-dir "${jitter_root}" \
   --datasets "${datasets_csv}" \
   --scales "${scale_factors_csv}" \
   --translations "${translation_fractions_csv}" \
