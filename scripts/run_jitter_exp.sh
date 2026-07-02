@@ -5,7 +5,7 @@ set -euo pipefail
 eval "$(conda shell.bash hook)"
 conda activate UltraSam
 
-gpu_id=0
+gpu_id=1
 jitter_root="experiments/prompt_robustness"
 
 # Fraction of equally-spaced frames per record to sample for UltraBones100k (huge dataset);
@@ -47,6 +47,16 @@ scale_factors=(
   1.05
   1.10
   1.15
+)
+
+point_prompt_jitter_fractions=(
+  0
+  0.025
+  0.05
+  0.075
+  0.10
+  0.125
+  0.15
 )
 
 # The wrappers default the source tree + checkpoint to work_dir/UltraSam (the devcontainer
@@ -94,9 +104,33 @@ for dataset in "${datasets[@]}"; do
   done
 done
 
+for dataset in "${datasets[@]}"; do
+  for point_prompt_jitter_fraction in "${point_prompt_jitter_fractions[@]}"; do
+    echo "Running UltraSAM point prompt jitter ${point_prompt_jitter_fraction} inference on ${dataset}..."
+    extra_args=()
+    if [[ "${dataset}" == "ultrabones100k" ]]; then
+      extra_args+=(--ultrabones-frame-fraction "${ultrabones_frame_fraction}")
+    fi
+    python "benchmarks/test_ultrasam_gt_bbox_${dataset}.py" \
+      --ultrasam-dir UltraSam \
+      --checkpoint UltraSam/weights/UltraSam.pth \
+      --no-auto-download-checkpoint \
+      --device "cuda:${gpu_id}" \
+      --max-samples 100 \
+      --prompt-type point \
+      --bbox-scale-factor 1.0 \
+      --bbox-translation-fraction 0.0 \
+      --point-prompt-jitter-fraction "${point_prompt_jitter_fraction}" \
+      --seed 0 \
+      --output-dir "${jitter_root}/point/ultrasam_point_${point_prompt_jitter_fraction}_point_${dataset}" \
+      "${extra_args[@]}"
+  done
+done
+
 datasets_csv="$(IFS=,; echo "${datasets[*]}")"
 translation_fractions_csv="$(IFS=,; echo "${translation_fractions[*]}")"
 scale_factors_csv="$(IFS=,; echo "${scale_factors[*]}")"
+point_prompt_jitter_fractions_csv="$(IFS=,; echo "${point_prompt_jitter_fractions[*]}")"
 
 python analysis/analyse_jitter_exp.py \
   --experiment both \
@@ -104,4 +138,5 @@ python analysis/analyse_jitter_exp.py \
   --datasets "${datasets_csv}" \
   --scales "${scale_factors_csv}" \
   --translations "${translation_fractions_csv}" \
+  --point-jitters "${point_prompt_jitter_fractions_csv}" \
   --metrics "dice"

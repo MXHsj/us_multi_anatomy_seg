@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import random
 import re
@@ -99,10 +100,15 @@ def validate_prompt_args(
     prompt_type: str,
     bbox_scale_factor: float,
     bbox_translation_fraction: float,
+    point_prompt_jitter_fraction: float = 0.0,
 ) -> None:
     if prompt_type not in DEFAULT_ULTRASAM_PROMPT_CONFIGS:
         choices = ", ".join(sorted(DEFAULT_ULTRASAM_PROMPT_CONFIGS))
         raise ValueError(f"Unsupported UltraSAM prompt type: {prompt_type!r}. Expected one of: {choices}.")
+    if point_prompt_jitter_fraction < 0:
+        raise ValueError("--point-prompt-jitter-fraction must be >= 0.")
+    if prompt_type == "bbox" and point_prompt_jitter_fraction != 0.0:
+        raise ValueError("--point-prompt-jitter-fraction must be 0.0 when --prompt-type bbox.")
     if prompt_type == "point" and bbox_scale_factor != 1.0:
         raise ValueError("--bbox-scale-factor must be 1.0 when --prompt-type point.")
     if prompt_type == "point" and bbox_translation_fraction != 0.0:
@@ -338,14 +344,65 @@ def perturb_bboxes(
     ]
 
 
-def point_prompts_from_masks(component_masks: list[np.ndarray]) -> np.ndarray:
+def deterministic_direction_index(seed: int, image_id: int, instance_index: int) -> int:
+    payload = f"{seed}:{image_id}:{instance_index}".encode("utf-8")
+    digest = hashlib.blake2b(payload, digest_size=8).digest()
+    return int.from_bytes(digest, byteorder="big", signed=False) % len(TRANSLATION_DIRECTIONS)
+
+
+def jittered_centroid_point_from_mask(
+    mask: np.ndarray,
+    *,
+    jitter_fraction: float,
+    seed: int | None,
+    image_id: int,
+    instance_index: int,
+) -> np.ndarray | None:
+    indices = np.argwhere(np.asarray(mask).astype(bool))
+    if indices.size == 0:
+        return None
+
+    yx = indices.mean(axis=0)
+    y_point = float(yx[0])
+    x_point = float(yx[1])
+    if jitter_fraction > 0:
+        y_min, x_min = indices.min(axis=0)
+        y_max, x_max = indices.max(axis=0)
+        box_width = max(float(x_max - x_min + 1), 1.0)
+        box_height = max(float(y_max - y_min + 1), 1.0)
+        if seed is None:
+            direction_index = int(np.random.default_rng().integers(0, len(TRANSLATION_DIRECTIONS)))
+        else:
+            direction_index = deterministic_direction_index(seed, image_id, instance_index)
+        direction_x, direction_y = TRANSLATION_DIRECTIONS[direction_index]
+        x_point += float(direction_x) * jitter_fraction * box_width
+        y_point += float(direction_y) * jitter_fraction * box_height
+
+    height, width = np.asarray(mask).shape[:2]
+    x_point = float(np.clip(x_point, 0, width - 1))
+    y_point = float(np.clip(y_point, 0, height - 1))
+    return np.asarray([x_point, y_point], dtype=np.float32)
+
+
+def point_prompts_from_masks(
+    component_masks: list[np.ndarray],
+    *,
+    jitter_fraction: float = 0.0,
+    seed: int | None = None,
+    image_id: int = 0,
+) -> np.ndarray:
     points: list[list[float]] = []
-    for component_mask in component_masks:
-        indices = np.argwhere(np.asarray(component_mask).astype(bool))
-        if indices.size == 0:
+    for instance_index, component_mask in enumerate(component_masks):
+        point = jittered_centroid_point_from_mask(
+            component_mask,
+            jitter_fraction=jitter_fraction,
+            seed=seed,
+            image_id=image_id,
+            instance_index=instance_index,
+        )
+        if point is None:
             continue
-        yx = indices.mean(axis=0)
-        points.append([float(yx[1]), float(yx[0])])
+        points.append([float(point[0]), float(point[1])])
     return np.asarray(points, dtype=np.float32)
 
 
@@ -355,8 +412,10 @@ def export_decoder_to_coco(
     prompt_type: str,
     bbox_scale_factor: float,
     bbox_translation_fraction: float,
+    point_prompt_jitter_fraction: float,
     bbox_mode: str,
     export_dir: Path,
+    seed: int | None = None,
     rng: np.random.Generator | None = None,
 ) -> tuple[Path, list[dict[str, Any]], int]:
     if export_dir.exists():
@@ -394,7 +453,12 @@ def export_decoder_to_coco(
             )
             prompt_points = None
         else:
-            prompt_points = point_prompts_from_masks(component_masks)
+            prompt_points = point_prompts_from_masks(
+                component_masks,
+                jitter_fraction=point_prompt_jitter_fraction,
+                seed=seed,
+                image_id=image_id,
+            )
         image_uint8 = ensure_three_channels(normalize_to_uint8(sample.image))
         raw_image_path = raw_image_path_from_sample(sample)
         if raw_image_path is None:
@@ -463,8 +527,10 @@ def load_existing_coco_export_records(
     prompt_type: str,
     bbox_scale_factor: float,
     bbox_translation_fraction: float,
+    point_prompt_jitter_fraction: float,
     bbox_mode: str,
     export_dir: Path,
+    seed: int | None = None,
     rng: np.random.Generator | None = None,
 ) -> tuple[Path, list[dict[str, Any]], int] | None:
     ann_path = export_dir / "annotations.json"
@@ -508,7 +574,12 @@ def load_existing_coco_export_records(
             )
             prompt_points = None
         else:
-            prompt_points = point_prompts_from_masks(component_masks)
+            prompt_points = point_prompts_from_masks(
+                component_masks,
+                jitter_fraction=point_prompt_jitter_fraction,
+                seed=seed,
+                image_id=image_id,
+            )
         if image_id > len(images):
             return None
         image_info = images[image_id - 1]
@@ -569,6 +640,98 @@ def apply_ultrasam_runtime_patches() -> None:
     F.multi_head_attention_forward = multi_head_attention_forward
 
 
+def register_point_jitter_transform() -> None:
+    from mmcv.transforms import BaseTransform
+    from mmdet.registry import TRANSFORMS
+
+    transform_name = "UltraSAMPointPromptJitter"
+    if transform_name in TRANSFORMS.module_dict:
+        return
+
+    @TRANSFORMS.register_module(name=transform_name)
+    class UltraSAMPointPromptJitter(BaseTransform):
+        def __init__(
+            self,
+            number_of_points=1,
+            normalize: bool = False,
+            test: bool = True,
+            get_center_point: bool = True,
+            jitter_fraction: float = 0.0,
+            seed: int | None = None,
+        ):
+            if isinstance(number_of_points, int):
+                max_points = number_of_points
+            else:
+                max_points = max(number_of_points)
+            if max_points != 1:
+                raise ValueError("UltraSAM point jitter supports exactly one prompt point per instance.")
+            if not get_center_point:
+                raise ValueError("UltraSAM point jitter expects centroid point prompts.")
+            if jitter_fraction < 0:
+                raise ValueError("--point-prompt-jitter-fraction must be >= 0.")
+            self.normalize = normalize
+            self.test = test
+            self.jitter_fraction = float(jitter_fraction)
+            self.seed = seed
+
+        def transform(self, results):
+            mask_arrays = results["gt_masks"].masks
+            if self.normalize:
+                img_height, img_width = results["img_shape"]
+            else:
+                img_height, img_width = 1, 1
+            if self.test:
+                x_scale, y_scale = results["scale_factor"]
+
+            points_list = []
+            image_id = int(results.get("img_id", 0))
+            for instance_index, mask_array in enumerate(mask_arrays):
+                point = jittered_centroid_point_from_mask(
+                    mask_array,
+                    jitter_fraction=self.jitter_fraction,
+                    seed=self.seed,
+                    image_id=image_id,
+                    instance_index=instance_index,
+                )
+                if point is None:
+                    points_list.append(np.empty((0, 2), dtype=np.float32))
+                    continue
+                x_points = np.asarray([point[0]], dtype=np.float32)
+                y_points = np.asarray([point[1]], dtype=np.float32)
+                if self.test:
+                    x_points = x_points * x_scale / img_width + 0.5
+                    y_points = y_points * y_scale / img_height + 0.5
+                else:
+                    x_points = x_points / img_width
+                    y_points = y_points / img_height
+                points_list.append(np.stack((x_points, y_points), axis=-1))
+
+            results["points"] = np.asarray(points_list)
+            return results
+
+
+def configure_point_prompt_jitter(cfg: Any, jitter_fraction: float, seed: int | None) -> None:
+    if jitter_fraction == 0.0:
+        return
+    pipeline = cfg.test_dataloader.dataset.pipeline
+    for step in pipeline:
+        if step.get("type") == "GetPointFromMask":
+            step.clear()
+            step.update(
+                {
+                    "type": "UltraSAMPointPromptJitter",
+                    "number_of_points": [1],
+                    "test": True,
+                    "normalize": False,
+                    "get_center_point": True,
+                    "jitter_fraction": float(jitter_fraction),
+                    "seed": seed,
+                }
+            )
+            return
+    raise RuntimeError("Could not find GetPointFromMask in UltraSAM point test pipeline.")
+
+
 def load_ultrasam_model(
     ultrasam_dir: Path,
     config_path: Path,
@@ -595,6 +758,7 @@ def load_ultrasam_model(
     if custom_imports:
         import_modules_from_strings(**custom_imports)
     apply_ultrasam_runtime_patches()
+    register_point_jitter_transform()
 
     model = MODELS.build(cfg.model)
     # PyTorch >=2.6 defaults torch.load to weights_only=True, which rejects the
@@ -623,6 +787,8 @@ def build_ultrasam_dataloader(
     ann_path: Path,
     batch_size: int,
     num_workers: int,
+    point_prompt_jitter_fraction: float = 0.0,
+    seed: int | None = None,
 ):
     try:
         from mmengine.runner import Runner
@@ -639,6 +805,7 @@ def build_ultrasam_dataloader(
     cfg.test_dataloader.dataset.ann_file = ann_path.name
     cfg.test_dataloader.dataset.data_prefix = {"img": ""}
     cfg.test_dataloader.dataset.test_mode = True
+    configure_point_prompt_jitter(cfg, point_prompt_jitter_fraction, seed)
     if "test_evaluator" in cfg and hasattr(cfg.test_evaluator, "ann_file"):
         cfg.test_evaluator.ann_file = str(ann_path)
     return Runner.build_dataloader(cfg.test_dataloader)
@@ -756,6 +923,7 @@ def run_ultrasam_on_samples(
     config: str | Path | None = None,
     bbox_scale_factor: float = 1.0,
     bbox_translation_fraction: float = 0.0,
+    point_prompt_jitter_fraction: float = 0.0,
     bbox_mode: str = "individual",
     seed: int | None = None,
 ) -> list[InferenceResult]:
@@ -767,6 +935,7 @@ def run_ultrasam_on_samples(
         prompt_type=prompt_type,
         bbox_scale_factor=bbox_scale_factor,
         bbox_translation_fraction=bbox_translation_fraction,
+        point_prompt_jitter_fraction=point_prompt_jitter_fraction,
     )
     seed_everything(seed)
 
@@ -796,8 +965,10 @@ def run_ultrasam_on_samples(
             prompt_type=prompt_type,
             bbox_scale_factor=bbox_scale_factor,
             bbox_translation_fraction=bbox_translation_fraction,
+            point_prompt_jitter_fraction=point_prompt_jitter_fraction,
             bbox_mode=bbox_mode,
             export_dir=coco_dir,
+            seed=seed,
             rng=np.random.default_rng(seed),
         )
         if not records:
@@ -815,6 +986,8 @@ def run_ultrasam_on_samples(
             ann_path=ann_path,
             batch_size=batch_size,
             num_workers=num_workers,
+            point_prompt_jitter_fraction=point_prompt_jitter_fraction,
+            seed=seed,
         )
         records_by_image_id = {int(record["image_id"]): record for record in records}
         metrics_calculator = SegmentationMetrics()
@@ -911,6 +1084,15 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--point-prompt-jitter-fraction",
+        type=float,
+        default=0.0,
+        help=(
+            "Translate each point prompt centroid by this fraction of the target bbox size "
+            "in a random cardinal or diagonal direction (point prompts only; 0.0 = unchanged)."
+        ),
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=None,
@@ -948,6 +1130,7 @@ def main() -> None:
             prompt_type=args.prompt_type,
             bbox_scale_factor=args.bbox_scale_factor,
             bbox_translation_fraction=args.bbox_translation_fraction,
+            point_prompt_jitter_fraction=args.point_prompt_jitter_fraction,
         )
     except ValueError as exc:
         parser.error(str(exc))
@@ -985,8 +1168,10 @@ def main() -> None:
             prompt_type=args.prompt_type,
             bbox_scale_factor=args.bbox_scale_factor,
             bbox_translation_fraction=args.bbox_translation_fraction,
+            point_prompt_jitter_fraction=args.point_prompt_jitter_fraction,
             bbox_mode=args.bbox_mode,
             export_dir=coco_dir,
+            seed=args.seed,
             rng=np.random.default_rng(args.seed),
         )
     if existing_export is None:
@@ -997,8 +1182,10 @@ def main() -> None:
             prompt_type=args.prompt_type,
             bbox_scale_factor=args.bbox_scale_factor,
             bbox_translation_fraction=args.bbox_translation_fraction,
+            point_prompt_jitter_fraction=args.point_prompt_jitter_fraction,
             bbox_mode=args.bbox_mode,
             export_dir=coco_dir,
+            seed=args.seed,
             rng=np.random.default_rng(args.seed),
         )
     else:
@@ -1058,6 +1245,8 @@ def main() -> None:
             ann_path=loader_ann_path,
             batch_size=args.batch_size,
             num_workers=args.num_workers,
+            point_prompt_jitter_fraction=args.point_prompt_jitter_fraction,
+            seed=args.seed,
         )
         records_by_image_id = {int(record["image_id"]): record for record in pending}
 
@@ -1192,6 +1381,7 @@ def main() -> None:
         "max_samples": format_max_samples(args.max_samples),
         "bbox_scale_factor": args.bbox_scale_factor,
         "bbox_translation_fraction": args.bbox_translation_fraction,
+        "point_prompt_jitter_fraction": args.point_prompt_jitter_fraction,
         "seed": args.seed,
         "bbox_mode": args.bbox_mode,
         "batch_size": args.batch_size,

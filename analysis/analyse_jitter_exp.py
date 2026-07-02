@@ -74,7 +74,14 @@ EXPERIMENT_CONFIG = {
         "title": "Translation",
         "output_prefix": "ultrasam_translation_robustness",
     },
+    "point": {
+        "baseline_value": 0.0,
+        "x_label": "Point prompt jitter fraction",
+        "title": "Point prompt jitter",
+        "output_prefix": "ultrasam_point_prompt_robustness",
+    },
 }
+COMBINED_EXPERIMENTS = ("scale", "translation", "point")
 
 
 def split_csv(value: str) -> tuple[str, ...]:
@@ -111,7 +118,9 @@ def result_metrics_path(
 ) -> Path:
     if experiment == "scale":
         return jitter_results_dir / "scale" / f"ultrasam_scale_{value_text}_bbox_{dataset}" / "per_sample_metrics.csv"
-    return jitter_results_dir / "trans" / f"ultrasam_trans_{value_text}_bbox_{dataset}" / "per_sample_metrics.csv"
+    if experiment == "translation":
+        return jitter_results_dir / "trans" / f"ultrasam_trans_{value_text}_bbox_{dataset}" / "per_sample_metrics.csv"
+    return jitter_results_dir / "point" / f"ultrasam_point_{value_text}_point_{dataset}" / "per_sample_metrics.csv"
 
 
 def collect_dataset_rows(
@@ -390,7 +399,7 @@ def add_shared_legend(fig: Any, axes_flat: Any) -> None:
     if not legend_items:
         return
 
-    ncols = min(5, len(legend_items))
+    ncols = min(8, len(legend_items))
     handles = [handle for handle, _label in legend_items]
     labels = [label for _handle, label in legend_items]
     fig.legend(
@@ -398,7 +407,7 @@ def add_shared_legend(fig: Any, axes_flat: Any) -> None:
         labels,
         frameon=False,
         loc="lower center",
-        bbox_to_anchor=(0.55, -0.165),
+        bbox_to_anchor=(0.5, -0.15),
         ncol=ncols,
     )
 
@@ -408,17 +417,17 @@ def plot_combined_metric_pair(
     rows: list[dict[str, Any]],
     metric: str,
     column_kind: str,
+    experiments: tuple[str, ...],
     output_path: Path,
 ) -> None:
     configure_matplotlib()
     import matplotlib.pyplot as plt
 
-    experiments = ("scale", "translation")
     datasets = order_datasets({row["dataset"] for row in rows})
     colors = dataset_color_map(datasets)
     fig, axes = plt.subplots(
         1,
-        2,
+        len(experiments),
         figsize=(min(8.5, 2.5 * len(experiments)), 2),
         sharey=True,
         squeeze=False,
@@ -478,7 +487,7 @@ def plot_combined_metric_pair(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Analyze UltraSAM bbox jitter experiments.")
+    parser = argparse.ArgumentParser(description="Analyze UltraSAM prompt jitter experiments.")
     parser.add_argument(
         "--jitter-results-dir",
         type=Path,
@@ -490,9 +499,10 @@ def parse_args() -> argparse.Namespace:
         default=ROOT_DIR / "analysis" / "figures" / "prompt_robustness",
     )
     parser.add_argument("--datasets", default=",".join(DEFAULT_DATASETS))
-    parser.add_argument("--experiment", choices=("scale", "translation", "both"), default="both")
+    parser.add_argument("--experiment", choices=("scale", "translation", "point", "both"), default="both")
     parser.add_argument("--scales", type=parse_values, default=parse_values("0.85,0.9,0.95,1,1.05,1.10,1.15"))
     parser.add_argument("--translations", type=parse_values, default=parse_values("0,0.025,0.05,0.075,0.10,0.125,0.15"))
+    parser.add_argument("--point-jitters", type=parse_values, default=parse_values("0,0.025,0.05,0.075,0.10,0.125,0.15"))
     parser.add_argument("--metrics", type=parse_metrics_arg, default=parse_metrics_arg("dice,iou"))
     parser.add_argument("--plot-format", default="png", choices=("png", "svg", "pdf"))
     return parser.parse_args()
@@ -501,12 +511,17 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     datasets = order_datasets(split_csv(args.datasets))
-    experiments = ("scale", "translation") if args.experiment == "both" else (args.experiment,)
+    experiments = COMBINED_EXPERIMENTS if args.experiment == "both" else (args.experiment,)
     all_rows: list[dict[str, Any]] = []
     warnings: list[str] = []
 
     for experiment in experiments:
-        values = args.scales if experiment == "scale" else args.translations
+        if experiment == "scale":
+            values = args.scales
+        elif experiment == "translation":
+            values = args.translations
+        else:
+            values = args.point_jitters
         baseline_value = float(EXPERIMENT_CONFIG[experiment]["baseline_value"])
         for dataset in datasets:
             rows, dataset_warnings = collect_dataset_rows(
@@ -541,12 +556,14 @@ def main() -> None:
                 rows=all_rows,
                 metric=metric,
                 column_kind="raw",
+                experiments=experiments,
                 output_path=raw_plot_path,
             )
             plot_combined_metric_pair(
                 rows=all_rows,
                 metric=metric,
                 column_kind="delta",
+                experiments=experiments,
                 output_path=delta_plot_path,
             )
             written_plots.extend([raw_plot_path, delta_plot_path])
