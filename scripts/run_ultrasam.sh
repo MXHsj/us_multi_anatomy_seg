@@ -6,6 +6,7 @@ eval "$(conda shell.bash hook)"
 conda activate UltraSam
 
 gpu_id=1
+prompt_type=point
 
 # Fraction of equally-spaced frames per record to sample for UltraBones100k (huge dataset);
 # applied only to ultrabones100k below.
@@ -32,7 +33,8 @@ datasets=(
 # path); the args below override them for a local checkout and pass through to
 # benchmarks/ultrasam_inference.py.
 for dataset in "${datasets[@]}"; do
-  echo "Running UltraSAM GT-box inference on ${dataset}..."
+  output_dir="results/ultrasam_gt_${prompt_type}_${dataset}"
+  echo "Running UltraSAM GT-${prompt_type} inference on ${dataset}..."
   extra_args=()
   if [[ "${dataset}" == "ultrabones100k" ]]; then
     extra_args+=(--ultrabones-frame-fraction "${ultrabones_frame_fraction}")
@@ -42,5 +44,7 @@ for dataset in "${datasets[@]}"; do
     --checkpoint UltraSam/weights/UltraSam.pth \
     --no-auto-download-checkpoint \
     --device "cuda:${gpu_id}" \
+    --prompt-type "${prompt_type}" \
+    --output-dir "${output_dir}" \
     "${extra_args[@]}"
 done

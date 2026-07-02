@@ -49,7 +49,11 @@ DEFAULT_ULTRASAM_REPO = "https://github.com/CAMMA-public/UltraSam"
 DEFAULT_ULTRASAM_CHECKPOINT_URL = (
     "https://s3.unistra.fr/camma_public/github/ultrasam/UltraSam.pth"
 )
-DEFAULT_ULTRASAM_CONFIG = "configs/UltraSAM/UltraSAM_full/UltraSAM_box_refine.py"
+DEFAULT_ULTRASAM_PROMPT_CONFIGS = {
+    "bbox": "configs/UltraSAM/UltraSAM_full/UltraSAM_box_refine.py",
+    "point": "configs/UltraSAM/UltraSAM_full/UltraSAM_point_refine.py",
+}
+DEFAULT_ULTRASAM_CONFIG = DEFAULT_ULTRASAM_PROMPT_CONFIGS["bbox"]
 
 # Thin line-like targets where centerline Dice (clDice) replaces overlap Dice (still saved as "dice").
 CENTERLINE_DICE_DATASETS = {""}
@@ -88,6 +92,43 @@ def resolve_torch_device(requested_device: str) -> torch.device:
         )
         return torch.device("cpu")
     return requested
+
+
+def validate_prompt_args(
+    *,
+    prompt_type: str,
+    bbox_scale_factor: float,
+    bbox_translation_fraction: float,
+) -> None:
+    if prompt_type not in DEFAULT_ULTRASAM_PROMPT_CONFIGS:
+        choices = ", ".join(sorted(DEFAULT_ULTRASAM_PROMPT_CONFIGS))
+        raise ValueError(f"Unsupported UltraSAM prompt type: {prompt_type!r}. Expected one of: {choices}.")
+    if prompt_type == "point" and bbox_scale_factor != 1.0:
+        raise ValueError("--bbox-scale-factor must be 1.0 when --prompt-type point.")
+    if prompt_type == "point" and bbox_translation_fraction != 0.0:
+        raise ValueError("--bbox-translation-fraction must be 0.0 when --prompt-type point.")
+
+
+def default_config_for_prompt_type(prompt_type: str) -> str:
+    try:
+        return DEFAULT_ULTRASAM_PROMPT_CONFIGS[prompt_type]
+    except KeyError as exc:
+        choices = ", ".join(sorted(DEFAULT_ULTRASAM_PROMPT_CONFIGS))
+        raise ValueError(f"Unsupported UltraSAM prompt type: {prompt_type!r}. Expected one of: {choices}.") from exc
+
+
+def resolve_ultrasam_config_path(
+    *,
+    ultrasam_dir: Path,
+    prompt_type: str,
+    config: str | Path | None,
+) -> Path:
+    config_path = Path(config or default_config_for_prompt_type(prompt_type))
+    if not config_path.is_absolute():
+        config_path = ultrasam_dir / config_path
+    if not config_path.exists():
+        raise FileNotFoundError(f"UltraSAM config not found: {config_path}")
+    return config_path
 
 
 def format_duration(seconds: float) -> str:
@@ -297,9 +338,21 @@ def perturb_bboxes(
     ]
 
 
+def point_prompts_from_masks(component_masks: list[np.ndarray]) -> np.ndarray:
+    points: list[list[float]] = []
+    for component_mask in component_masks:
+        indices = np.argwhere(np.asarray(component_mask).astype(bool))
+        if indices.size == 0:
+            continue
+        yx = indices.mean(axis=0)
+        points.append([float(yx[1]), float(yx[0])])
+    return np.asarray(points, dtype=np.float32)
+
+
 def export_decoder_to_coco(
     decoder: Any,
     max_samples: int | None,
+    prompt_type: str,
     bbox_scale_factor: float,
     bbox_translation_fraction: float,
     bbox_mode: str,
@@ -330,14 +383,18 @@ def export_decoder_to_coco(
 
         image_id = len(images) + 1
         height, width = mask.shape[:2]
-        bboxes = perturb_bboxes(
-            bboxes,
-            scale_factor=bbox_scale_factor,
-            translation_fraction=bbox_translation_fraction,
-            height=height,
-            width=width,
-            rng=rng,
-        )
+        if prompt_type == "bbox":
+            bboxes = perturb_bboxes(
+                bboxes,
+                scale_factor=bbox_scale_factor,
+                translation_fraction=bbox_translation_fraction,
+                height=height,
+                width=width,
+                rng=rng,
+            )
+            prompt_points = None
+        else:
+            prompt_points = point_prompts_from_masks(component_masks)
         image_uint8 = ensure_three_channels(normalize_to_uint8(sample.image))
         raw_image_path = raw_image_path_from_sample(sample)
         if raw_image_path is None:
@@ -370,11 +427,11 @@ def export_decoder_to_coco(
                 "width": int(width),
             }
         )
-        prompt_bboxes = np.stack(bboxes).astype(np.int32)
+        record_bboxes = np.stack(bboxes).astype(np.int32)
         record_bbox = (
-            prompt_bboxes[0]
-            if bbox_mode == "union" and len(prompt_bboxes) == 1
-            else prompt_bboxes
+            record_bboxes[0]
+            if bbox_mode == "union" and len(record_bboxes) == 1
+            else record_bboxes
         )
         records.append(
             {
@@ -383,6 +440,7 @@ def export_decoder_to_coco(
                 "image": image_uint8,
                 "mask": mask,
                 "bbox": record_bbox,
+                "prompt_points": prompt_points,
             }
         )
 
@@ -402,6 +460,7 @@ def export_decoder_to_coco(
 def load_existing_coco_export_records(
     decoder: Any,
     max_samples: int | None,
+    prompt_type: str,
     bbox_scale_factor: float,
     bbox_translation_fraction: float,
     bbox_mode: str,
@@ -438,14 +497,18 @@ def load_existing_coco_export_records(
 
         image_id = len(records) + 1
         height, width = mask.shape[:2]
-        bboxes = perturb_bboxes(
-            bboxes,
-            scale_factor=bbox_scale_factor,
-            translation_fraction=bbox_translation_fraction,
-            height=height,
-            width=width,
-            rng=rng,
-        )
+        if prompt_type == "bbox":
+            bboxes = perturb_bboxes(
+                bboxes,
+                scale_factor=bbox_scale_factor,
+                translation_fraction=bbox_translation_fraction,
+                height=height,
+                width=width,
+                rng=rng,
+            )
+            prompt_points = None
+        else:
+            prompt_points = point_prompts_from_masks(component_masks)
         if image_id > len(images):
             return None
         image_info = images[image_id - 1]
@@ -468,11 +531,11 @@ def load_existing_coco_export_records(
         if existing_coco_bboxes != expected_coco_bboxes:
             return None
 
-        prompt_bboxes = np.stack(bboxes).astype(np.int32)
+        record_bboxes = np.stack(bboxes).astype(np.int32)
         record_bbox = (
-            prompt_bboxes[0]
-            if bbox_mode == "union" and len(prompt_bboxes) == 1
-            else prompt_bboxes
+            record_bboxes[0]
+            if bbox_mode == "union" and len(record_bboxes) == 1
+            else record_bboxes
         )
         records.append(
             {
@@ -481,6 +544,7 @@ def load_existing_coco_export_records(
                 "image": ensure_three_channels(normalize_to_uint8(sample.image)),
                 "mask": mask,
                 "bbox": record_bbox,
+                "prompt_points": prompt_points,
             }
         )
 
@@ -688,16 +752,22 @@ def run_ultrasam_on_samples(
     ultrasam_dir: str | Path | None = None,
     ultrasam_repo: str = DEFAULT_ULTRASAM_REPO,
     auto_clone_source: bool = False,
-    config: str | Path = DEFAULT_ULTRASAM_CONFIG,
+    prompt_type: str = "bbox",
+    config: str | Path | None = None,
     bbox_scale_factor: float = 1.0,
     bbox_translation_fraction: float = 0.0,
     bbox_mode: str = "individual",
     seed: int | None = None,
 ) -> list[InferenceResult]:
-    """Run the normal UltraSAM GT-box pipeline on already-decoded samples."""
+    """Run the UltraSAM prompt pipeline on already-decoded samples."""
     sample_list = list(samples)
     if not sample_list:
         return []
+    validate_prompt_args(
+        prompt_type=prompt_type,
+        bbox_scale_factor=bbox_scale_factor,
+        bbox_translation_fraction=bbox_translation_fraction,
+    )
     seed_everything(seed)
 
     resolved_ultrasam_dir = ensure_ultrasam_source(
@@ -705,11 +775,11 @@ def run_ultrasam_on_samples(
         auto_clone=auto_clone_source,
         repo_url=ultrasam_repo,
     )
-    config_path = Path(config)
-    if not config_path.is_absolute():
-        config_path = resolved_ultrasam_dir / config_path
-    if not config_path.exists():
-        raise FileNotFoundError(f"UltraSAM config not found: {config_path}")
+    config_path = resolve_ultrasam_config_path(
+        ultrasam_dir=resolved_ultrasam_dir,
+        prompt_type=prompt_type,
+        config=config,
+    )
 
     checkpoint_path = ensure_checkpoint(
         resolve_repo_path(checkpoint),
@@ -723,6 +793,7 @@ def run_ultrasam_on_samples(
         ann_path, records, _ = export_decoder_to_coco(
             decoder=_SampleListDecoder(sample_list),
             max_samples=None,
+            prompt_type=prompt_type,
             bbox_scale_factor=bbox_scale_factor,
             bbox_translation_fraction=bbox_translation_fraction,
             bbox_mode=bbox_mode,
@@ -770,7 +841,7 @@ def run_ultrasam_on_samples(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Test UltraSAM inference with GT box prompts")
+    parser = argparse.ArgumentParser(description="Test UltraSAM inference with GT bbox or point prompts")
     add_dataset_args(parser, include_camus=True)
     parser.add_argument("--checkpoint", type=str, default="work_dir/UltraSam/UltraSam.pth")
     parser.add_argument(
@@ -804,8 +875,17 @@ def main() -> None:
     parser.add_argument(
         "--config",
         type=str,
-        default=DEFAULT_ULTRASAM_CONFIG,
-        help="UltraSam MMDetection config path, relative to --ultrasam-dir unless absolute.",
+        default=None,
+        help=(
+            "UltraSam MMDetection config path, relative to --ultrasam-dir unless absolute. "
+            "Defaults to the config for --prompt-type."
+        ),
+    )
+    parser.add_argument(
+        "--prompt-type",
+        choices=("bbox", "point"),
+        default="bbox",
+        help="UltraSAM prompt type. 'bbox' uses box prompts; 'point' uses UltraSAM's point-prompt pipeline.",
     )
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument(
@@ -863,6 +943,14 @@ def main() -> None:
     parser.add_argument("--save-vis", type=int, default=0)
     parser.add_argument("--output-dir", type=str, default="results/ultrasam_test")
     args = parser.parse_args()
+    try:
+        validate_prompt_args(
+            prompt_type=args.prompt_type,
+            bbox_scale_factor=args.bbox_scale_factor,
+            bbox_translation_fraction=args.bbox_translation_fraction,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     seed_everything(args.seed)
 
     output_dir = resolve_repo_path(args.output_dir)
@@ -874,11 +962,11 @@ def main() -> None:
         auto_clone=args.auto_clone_source,
         repo_url=args.ultrasam_repo,
     )
-    config_path = Path(args.config)
-    if not config_path.is_absolute():
-        config_path = ultrasam_dir / config_path
-    if not config_path.exists():
-        raise FileNotFoundError(f"UltraSAM config not found: {config_path}")
+    config_path = resolve_ultrasam_config_path(
+        ultrasam_dir=ultrasam_dir,
+        prompt_type=args.prompt_type,
+        config=args.config,
+    )
 
     checkpoint = ensure_checkpoint(
         resolve_repo_path(args.checkpoint),
@@ -894,6 +982,7 @@ def main() -> None:
         existing_export = load_existing_coco_export_records(
             decoder=decoder,
             max_samples=args.max_samples,
+            prompt_type=args.prompt_type,
             bbox_scale_factor=args.bbox_scale_factor,
             bbox_translation_fraction=args.bbox_translation_fraction,
             bbox_mode=args.bbox_mode,
@@ -905,6 +994,7 @@ def main() -> None:
         ann_path, records, export_skipped = export_decoder_to_coco(
             decoder=decoder,
             max_samples=args.max_samples,
+            prompt_type=args.prompt_type,
             bbox_scale_factor=args.bbox_scale_factor,
             bbox_translation_fraction=args.bbox_translation_fraction,
             bbox_mode=args.bbox_mode,
@@ -979,6 +1069,7 @@ def main() -> None:
                 output_dir / "visualizations",
                 source_vis_indices,
                 model_label="UltraSAM",
+                prompt_label="Point Prompts" if args.prompt_type == "point" else "Box Prompts",
             )
 
         # Stream per-image results so a crash keeps the finished samples. Write the CSV row before
@@ -1008,10 +1099,10 @@ def main() -> None:
                     infer_ms=infer_ms,
                 )
 
-                # Per-bounding-box metrics: score each prompt box's prediction against its own GT
-                # component, recomputed here in prompt order (avoids holding components in RAM).
+                # Per-component metrics: score each predicted instance against its own GT component,
+                # recomputed here in component order (avoids holding components in RAM).
                 gt_components = bbox_masks_from_mask(mask, mode=args.bbox_mode, min_area=16)
-                prompt_boxes = np.atleast_2d(np.asarray(bbox))
+                component_boxes = np.atleast_2d(np.asarray(bbox))
                 boxes_payload: list[dict[str, Any]] = []
                 for box_index, gt_component in enumerate(gt_components):
                     box_pred = (
@@ -1023,8 +1114,8 @@ def main() -> None:
                     boxes_payload.append(
                         {
                             "box_index": box_index,
-                            "bbox": prompt_boxes[box_index].tolist()
-                            if box_index < len(prompt_boxes)
+                            "bbox": component_boxes[box_index].tolist()
+                            if box_index < len(component_boxes)
                             else None,
                             **{name: float(box_metrics[name]) for name in METRIC_NAMES},
                         }
@@ -1053,6 +1144,8 @@ def main() -> None:
                         bbox=bbox,
                         dice=metrics["dice"],
                         iou=metrics["iou"],
+                        prompt_bboxes=bbox if args.prompt_type == "bbox" else None,
+                        prompt_points=record.get("prompt_points") if args.prompt_type == "point" else None,
                     )
 
                 print_progress(
@@ -1093,6 +1186,7 @@ def main() -> None:
         "checkpoint": args.checkpoint,
         "checkpoint_url": args.checkpoint_url,
         "ultrasam_dir": str(ultrasam_dir),
+        "prompt_type": args.prompt_type,
         "config": str(config_path),
         "device": str(device),
         "max_samples": format_max_samples(args.max_samples),

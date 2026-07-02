@@ -201,7 +201,7 @@ def add_dataset_args(parser: argparse.ArgumentParser, include_camus: bool = True
         default=1.0,
         help=(
             "Fraction of equally-spaced frames to sample within each UltraBones "
-            "record/video (e.g. 0.05 for ~5%, at least one frame per record). "
+            "record/video (e.g. 0.05 for ~5%%, at least one frame per record). "
             "Defaults to 1.0 (all frames). This stratifies across specimen, "
             "structure, and record."
         ),
