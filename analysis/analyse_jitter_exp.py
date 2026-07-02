@@ -39,25 +39,61 @@ DEFAULT_DATASETS = (
 )
 
 BOUNDED_METRICS = {"dice", "iou", "precision", "recall", "specificity", "balanced_accuracy"}
+DATASET_COLOR_PALETTE = (
+    "#1f77b4",
+    "#ff7f0e",
+    "#2ca02c",
+    "#d62728",
+    "#9467bd",
+    "#8c564b",
+    "#e377c2",
+    "#7f7f7f",
+    "#bcbd22",
+    "#17becf",
+    "#aec7e8",
+    "#ffbb78",
+    "#98df8a",
+    "#ff9896",
+    "#c5b0d5",
+    "#c49c94",
+    "#f7b6d2",
+    "#c7c7c7",
+    "#dbdb8d",
+    "#9edae5",
+)
+EXPERIMENT_CONFIG = {
+    "scale": {
+        "baseline_value": 1.0,
+        "x_label": "BBox scale factor",
+        "title": "Scale",
+        "output_prefix": "ultrasam_scale_robustness",
+    },
+    "translation": {
+        "baseline_value": 0.0,
+        "x_label": "BBox translation fraction",
+        "title": "Translation",
+        "output_prefix": "ultrasam_translation_robustness",
+    },
+}
 
 
 def split_csv(value: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
-def parse_scales(value: str) -> list[tuple[str, float]]:
-    scales: list[tuple[str, float]] = []
+def parse_values(value: str) -> list[tuple[str, float]]:
+    values: list[tuple[str, float]] = []
     for item in split_csv(value):
         try:
-            scale = float(item)
+            numeric_value = float(item)
         except ValueError as exc:
-            raise argparse.ArgumentTypeError(f"Invalid scale value: {item}") from exc
-        if scale <= 0:
-            raise argparse.ArgumentTypeError("Scale values must be > 0.")
-        scales.append((item, scale))
-    if not scales:
-        raise argparse.ArgumentTypeError("At least one scale is required.")
-    return scales
+            raise argparse.ArgumentTypeError(f"Invalid jitter value: {item}") from exc
+        if numeric_value < 0:
+            raise argparse.ArgumentTypeError("Jitter values must be >= 0.")
+        values.append((item, numeric_value))
+    if not values:
+        raise argparse.ArgumentTypeError("At least one jitter value is required.")
+    return values
 
 
 def mean_std(values: list[float]) -> tuple[float, float]:
@@ -66,21 +102,25 @@ def mean_std(values: list[float]) -> tuple[float, float]:
     return statistics.fmean(values), statistics.pstdev(values) if len(values) > 1 else 0.0
 
 
-def result_metrics_path(results_dir: Path, dataset: str, scale_text: str | None) -> Path:
-    if scale_text is None:
+def result_metrics_path(results_dir: Path, dataset: str, experiment: str, value_text: str | None) -> Path:
+    if value_text is None:
         return results_dir / f"ultrasam_gt_bbox_{dataset}" / "per_sample_metrics.csv"
-    return results_dir / f"ultrasam_scale_{scale_text}_bbox_{dataset}" / "per_sample_metrics.csv"
+    if experiment == "scale":
+        return results_dir / f"ultrasam_scale_{value_text}_bbox_{dataset}" / "per_sample_metrics.csv"
+    return results_dir / f"ultrasam_trans_{value_text}_bbox_{dataset}" / "per_sample_metrics.csv"
 
 
 def collect_dataset_rows(
     *,
     results_dir: Path,
     dataset: str,
-    scales: list[tuple[str, float]],
+    experiment: str,
+    values: list[tuple[str, float]],
+    baseline_value: float,
     metrics: tuple[str, ...],
 ) -> tuple[list[dict[str, Any]], list[str]]:
     warnings: list[str] = []
-    baseline_path = result_metrics_path(results_dir, dataset, scale_text=None)
+    baseline_path = result_metrics_path(results_dir, dataset, experiment=experiment, value_text=None)
     if not baseline_path.exists():
         return [], [f"missing baseline: {baseline_path}"]
 
@@ -88,23 +128,23 @@ def collect_dataset_rows(
     if not baseline:
         return [], [f"empty baseline metrics: {baseline_path}"]
 
-    scale_metrics: dict[float, dict[str, dict[str, float]]] = {}
-    for scale_text, scale_value in scales:
-        metrics_path = result_metrics_path(results_dir, dataset, scale_text=scale_text)
+    experiment_metrics: dict[float, dict[str, dict[str, float]]] = {}
+    for value_text, numeric_value in values:
+        metrics_path = result_metrics_path(results_dir, dataset, experiment=experiment, value_text=value_text)
         if not metrics_path.exists():
-            warnings.append(f"missing scale {scale_text}: {metrics_path}")
+            warnings.append(f"missing {experiment} {value_text}: {metrics_path}")
             continue
         values = read_metrics(metrics_path, metrics)
         if not values:
-            warnings.append(f"empty scale {scale_text}: {metrics_path}")
+            warnings.append(f"empty {experiment} {value_text}: {metrics_path}")
             continue
-        scale_metrics[scale_value] = values
+        experiment_metrics[numeric_value] = values
 
-    if not scale_metrics:
+    if not experiment_metrics:
         return [], warnings
 
     matched_ids = set(baseline)
-    for values in scale_metrics.values():
+    for values in experiment_metrics.values():
         matched_ids &= set(values)
     matched_ids = set(sorted(matched_ids))
     if not matched_ids:
@@ -114,8 +154,9 @@ def collect_dataset_rows(
     rows: list[dict[str, Any]] = []
 
     baseline_row: dict[str, Any] = {
+        "experiment": experiment,
         "dataset": dataset,
-        "scale": 1.0,
+        "jitter_value": baseline_value,
         "n": len(matched_ids),
     }
     for metric in metrics:
@@ -131,16 +172,17 @@ def collect_dataset_rows(
         }
     rows.append(baseline_row)
 
-    for scale_value in sorted(scale_metrics):
+    for numeric_value in sorted(experiment_metrics):
         row: dict[str, Any] = {
+            "experiment": experiment,
             "dataset": dataset,
-            "scale": scale_value,
+            "jitter_value": numeric_value,
             "n": len(matched_ids),
         }
         for metric in metrics:
-            raw_values = [scale_metrics[scale_value][sample_id][metric] for sample_id in matched_ids]
+            raw_values = [experiment_metrics[numeric_value][sample_id][metric] for sample_id in matched_ids]
             deltas = [
-                scale_metrics[scale_value][sample_id][metric] - baseline[sample_id][metric]
+                experiment_metrics[numeric_value][sample_id][metric] - baseline[sample_id][metric]
                 for sample_id in matched_ids
             ]
             raw_mean, raw_std = mean_std(raw_values)
@@ -159,7 +201,7 @@ def collect_dataset_rows(
 
 
 def write_summary_csv(path: Path, rows: list[dict[str, Any]], metrics: tuple[str, ...]) -> None:
-    fieldnames = ["dataset", "scale", "n"]
+    fieldnames = ["experiment", "dataset", "jitter_value", "n"]
     for metric in metrics:
         fieldnames.extend(
             [
@@ -198,7 +240,7 @@ def configure_matplotlib() -> None:
             "axes.titlesize": 9,
             "xtick.labelsize": 8,
             "ytick.labelsize": 8,
-            "legend.fontsize": 5,
+            "legend.fontsize": 6.5,
             "axes.spines.top": False,
             "axes.spines.right": False,
             "axes.grid": True,
@@ -209,12 +251,27 @@ def configure_matplotlib() -> None:
     )
 
 
+def dataset_color_map(datasets: list[str]) -> dict[str, str]:
+    ordered_known_datasets = order_datasets(DEFAULT_DATASETS)
+    color_by_dataset = {
+        dataset: DATASET_COLOR_PALETTE[index % len(DATASET_COLOR_PALETTE)]
+        for index, dataset in enumerate(ordered_known_datasets)
+    }
+    next_color_index = len(color_by_dataset)
+    for dataset in datasets:
+        if dataset not in color_by_dataset:
+            color_by_dataset[dataset] = DATASET_COLOR_PALETTE[next_color_index % len(DATASET_COLOR_PALETTE)]
+            next_color_index += 1
+    return color_by_dataset
+
+
 def plot_metric_lines(
     *,
     rows: list[dict[str, Any]],
     metrics: tuple[str, ...],
     column_kind: str,
-    ylabel_suffix: str,
+    x_label: str,
+    baseline_value: float,
     output_path: Path,
 ) -> None:
     configure_matplotlib()
@@ -222,6 +279,7 @@ def plot_metric_lines(
     from matplotlib.lines import Line2D
 
     datasets = order_datasets({row["dataset"] for row in rows})
+    colors = dataset_color_map(datasets)
     ncols = len(metrics)
     fig, axes = plt.subplots(
         1,
@@ -235,11 +293,11 @@ def plot_metric_lines(
         for dataset in datasets:
             dataset_rows = sorted(
                 [row for row in rows if row["dataset"] == dataset],
-                key=lambda row: float(row["scale"]),
+                key=lambda row: float(row["jitter_value"]),
             )
             if not dataset_rows:
                 continue
-            x_values = [float(row["scale"]) for row in dataset_rows]
+            x_values = [float(row["jitter_value"]) for row in dataset_rows]
             mean_column = f"{metric}_mean" if column_kind == "raw" else f"{metric}_delta_mean"
             y_values = [float(row[mean_column]) * 100.0 for row in dataset_rows]
             axis.plot(
@@ -248,13 +306,14 @@ def plot_metric_lines(
                 marker="o",
                 linewidth=1.2,
                 markersize=3.5,
+                color=colors[dataset],
                 label=display_dataset_label(dataset),
             )
 
-        axis.axvline(1.0, color="#777777", linestyle="--", linewidth=0.8, zorder=0)
+        axis.axvline(baseline_value, color="#777777", linestyle="--", linewidth=0.8, zorder=0)
         if column_kind == "delta":
             axis.axhline(0.0, color="#777777", linestyle="--", linewidth=0.8, zorder=0)
-        axis.set_xlabel("BBox scale factor")
+        axis.set_xlabel(x_label)
         ylabel = (
             f"{metric_label(metric)} (%)"
             if column_kind == "raw"
@@ -291,8 +350,118 @@ def plot_metric_lines(
     plt.close(fig)
 
 
+def add_shared_legend(fig: Any, axes_flat: Any) -> None:
+    from matplotlib.lines import Line2D
+
+    seen: set[str] = set()
+    legend_items = []
+    baseline_label = "Baseline"
+    for axis in axes_flat:
+        handles, labels = axis.get_legend_handles_labels()
+        for handle, label in zip(handles, labels):
+            if not label or label == baseline_label or label in seen:
+                continue
+            seen.add(label)
+            legend_items.append((handle, label))
+
+    legend_items.append(
+        (
+            Line2D([0], [0], color="#777777", linestyle="--", linewidth=0.8),
+            baseline_label,
+        )
+    )
+    if not legend_items:
+        return
+
+    ncols = min(5, len(legend_items))
+    handles = [handle for handle, _label in legend_items]
+    labels = [label for _handle, label in legend_items]
+    fig.legend(
+        handles,
+        labels,
+        frameon=False,
+        loc="lower center",
+        bbox_to_anchor=(0.55, -0.165),
+        ncol=ncols,
+    )
+
+
+def plot_combined_metric_pair(
+    *,
+    rows: list[dict[str, Any]],
+    metric: str,
+    column_kind: str,
+    output_path: Path,
+) -> None:
+    configure_matplotlib()
+    import matplotlib.pyplot as plt
+
+    experiments = ("scale", "translation")
+    datasets = order_datasets({row["dataset"] for row in rows})
+    colors = dataset_color_map(datasets)
+    fig, axes = plt.subplots(
+        1,
+        2,
+        figsize=(min(8.5, 2.5 * len(experiments)), 2),
+        sharey=True,
+        squeeze=False,
+    )
+    axes_flat = axes.ravel()
+
+    for axis, experiment in zip(axes_flat, experiments):
+        config = EXPERIMENT_CONFIG[experiment]
+        experiment_rows = [row for row in rows if row["experiment"] == experiment]
+
+        for dataset in datasets:
+            dataset_rows = sorted(
+                [row for row in experiment_rows if row["dataset"] == dataset],
+                key=lambda row: float(row["jitter_value"]),
+            )
+            if not dataset_rows:
+                continue
+            x_values = [float(row["jitter_value"]) for row in dataset_rows]
+            mean_column = f"{metric}_mean" if column_kind == "raw" else f"{metric}_delta_mean"
+            y_values = [float(row[mean_column]) * 100.0 for row in dataset_rows]
+            axis.plot(
+                x_values,
+                y_values,
+                marker="o",
+                linewidth=1,
+                markersize=3,
+                color=colors[dataset],
+                label=display_dataset_label(dataset),
+            )
+
+        axis.axvline(
+            float(config["baseline_value"]),
+            color="#777777",
+            linestyle="--",
+            linewidth=0.8,
+            zorder=0,
+        )
+        if column_kind == "delta":
+            axis.axhline(0.0, color="#777777", linestyle="--", linewidth=0.8, zorder=0)
+        axis.set_title(str(config["title"]))
+        axis.set_xlabel(str(config["x_label"]))
+        if column_kind == "raw" and metric in BOUNDED_METRICS:
+            axis.set_ylim(0.0, 100.0)
+        axis.grid(alpha=0.35)
+
+    ylabel = (
+        f"{metric_label(metric)} (%)"
+        if column_kind == "raw"
+        else rf"$\Delta$ {metric_label(metric)} (%)"
+    )
+    axes_flat[0].set_ylabel(ylabel)
+    add_shared_legend(fig, axes_flat)
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, bbox_inches="tight")
+    plt.close(fig)
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Analyze UltraSAM bbox scaling jitter experiments.")
+    parser = argparse.ArgumentParser(description="Analyze UltraSAM bbox jitter experiments.")
     parser.add_argument("--results-dir", type=Path, default=ROOT_DIR / "results")
     parser.add_argument(
         "--output-dir",
@@ -300,7 +469,9 @@ def parse_args() -> argparse.Namespace:
         default=ROOT_DIR / "analysis" / "figures" / "prompt_robustness",
     )
     parser.add_argument("--datasets", default=",".join(DEFAULT_DATASETS))
-    parser.add_argument("--scales", type=parse_scales, default=parse_scales("0.75,1.25,1.5,2.0"))
+    parser.add_argument("--experiment", choices=("scale", "translation", "both"), default="both")
+    parser.add_argument("--scales", type=parse_values, default=parse_values("0.75,1.25,1.5,2.0"))
+    parser.add_argument("--translations", type=parse_values, default=parse_values("0.075,0.10,0.15"))
     parser.add_argument("--metrics", type=parse_metrics_arg, default=parse_metrics_arg("dice,iou"))
     parser.add_argument("--plot-format", default="png", choices=("png", "svg", "pdf"))
     return parser.parse_args()
@@ -309,47 +480,80 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     datasets = order_datasets(split_csv(args.datasets))
+    experiments = ("scale", "translation") if args.experiment == "both" else (args.experiment,)
     all_rows: list[dict[str, Any]] = []
     warnings: list[str] = []
 
-    for dataset in datasets:
-        rows, dataset_warnings = collect_dataset_rows(
-            results_dir=args.results_dir,
-            dataset=dataset,
-            scales=args.scales,
-            metrics=args.metrics,
-        )
-        all_rows.extend(rows)
-        warnings.extend(f"{dataset}: {warning}" for warning in dataset_warnings)
+    for experiment in experiments:
+        values = args.scales if experiment == "scale" else args.translations
+        baseline_value = float(EXPERIMENT_CONFIG[experiment]["baseline_value"])
+        for dataset in datasets:
+            rows, dataset_warnings = collect_dataset_rows(
+                results_dir=args.results_dir,
+                dataset=dataset,
+                experiment=experiment,
+                values=values,
+                baseline_value=baseline_value,
+                metrics=args.metrics,
+            )
+            all_rows.extend(rows)
+            warnings.extend(f"{dataset} {experiment}: {warning}" for warning in dataset_warnings)
 
     for warning in warnings:
         print(f"Warning: {warning}", file=sys.stderr)
     if not all_rows:
-        raise SystemExit("No matched UltraSAM scaling jitter results found.")
+        raise SystemExit(f"No matched UltraSAM {args.experiment} jitter results found.")
 
-    summary_path = args.output_dir / "ultrasam_scale_robustness_summary.csv"
-    raw_plot_path = args.output_dir / f"ultrasam_scale_robustness_raw.{args.plot_format}"
-    delta_plot_path = args.output_dir / f"ultrasam_scale_robustness_delta.{args.plot_format}"
+    if args.experiment == "both":
+        output_prefix = "ultrasam_jitter_robustness"
+    else:
+        output_prefix = str(EXPERIMENT_CONFIG[args.experiment]["output_prefix"])
+    summary_path = args.output_dir / f"{output_prefix}_summary.csv"
 
     write_summary_csv(summary_path, all_rows, args.metrics)
-    plot_metric_lines(
-        rows=all_rows,
-        metrics=args.metrics,
-        column_kind="raw",
-        ylabel_suffix="",
-        output_path=raw_plot_path,
-    )
-    plot_metric_lines(
-        rows=all_rows,
-        metrics=args.metrics,
-        column_kind="delta",
-        ylabel_suffix="delta vs baseline",
-        output_path=delta_plot_path,
-    )
+    written_plots: list[Path] = []
+    if args.experiment == "both":
+        for metric in args.metrics:
+            raw_plot_path = args.output_dir / f"{output_prefix}_{metric}_raw.{args.plot_format}"
+            delta_plot_path = args.output_dir / f"{output_prefix}_{metric}_delta.{args.plot_format}"
+            plot_combined_metric_pair(
+                rows=all_rows,
+                metric=metric,
+                column_kind="raw",
+                output_path=raw_plot_path,
+            )
+            plot_combined_metric_pair(
+                rows=all_rows,
+                metric=metric,
+                column_kind="delta",
+                output_path=delta_plot_path,
+            )
+            written_plots.extend([raw_plot_path, delta_plot_path])
+    else:
+        config = EXPERIMENT_CONFIG[args.experiment]
+        raw_plot_path = args.output_dir / f"{output_prefix}_raw.{args.plot_format}"
+        delta_plot_path = args.output_dir / f"{output_prefix}_delta.{args.plot_format}"
+        plot_metric_lines(
+            rows=all_rows,
+            metrics=args.metrics,
+            column_kind="raw",
+            x_label=str(config["x_label"]),
+            baseline_value=float(config["baseline_value"]),
+            output_path=raw_plot_path,
+        )
+        plot_metric_lines(
+            rows=all_rows,
+            metrics=args.metrics,
+            column_kind="delta",
+            x_label=str(config["x_label"]),
+            baseline_value=float(config["baseline_value"]),
+            output_path=delta_plot_path,
+        )
+        written_plots.extend([raw_plot_path, delta_plot_path])
 
     print(f"Wrote summary to {summary_path}")
-    print(f"Wrote raw plot to {raw_plot_path}")
-    print(f"Wrote delta plot to {delta_plot_path}")
+    for plot_path in written_plots:
+        print(f"Wrote plot to {plot_path}")
 
 
 if __name__ == "__main__":
