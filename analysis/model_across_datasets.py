@@ -49,6 +49,9 @@ def parse_result_dir_name(name: str) -> tuple[str, str, str] | None:
     if parts[1:3] == ["gt", "bbox"]:
         protocol = "gt_bbox"
         dataset = "_".join(parts[3:])
+    elif parts[1:3] == ["gt", "point"]:
+        protocol = "gt_point"
+        dataset = "_".join(parts[3:])
     elif parts[1:3] == ["jitter", "bbox"]:
         protocol = "jitter_bbox"
         dataset = "_".join(parts[3:])
