@@ -59,3 +59,6 @@ msam3_*.out
 msam3_*.err
 # large reference docs (e.g. the paper PDF) are not committed
 *.pdf
+
+# To not track the many prompt robustness experiments results and visualizations
+experiments/

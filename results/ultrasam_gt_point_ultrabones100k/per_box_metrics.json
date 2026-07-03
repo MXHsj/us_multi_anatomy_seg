@@ -1,0 +1,167 @@
+[
+  {
+    "sample_id": "specimen01_fibula_record01_24363",
+    "height": 811,
+    "width": 950,
+    "infer_ms": 214.54206549969967,
+    "num_boxes": 1,
+    "source_sample_id": "",
+    "target_uid": "",
+    "target_class_id": "",
+    "target_class_name": "",
+    "target_instance_id": "",
+    "target_color": "",
+    "boxes": [
+      {
+        "box_index": 0,
+        "bbox": [
+          533,
+          162,
+          793,
+          520
+        ],
+        "dice": 0.7067940230117418,
+        "iou": 0.5465440429356746,
+        "precision": 0.9206732351714907,
+        "recall": 0.57355333488264,
+        "specificity": 0.9948157103337306,
+        "balanced_accuracy": 0.7841845226081854,
+        "hd95": 121.0,
+        "assd": 36.66762183396025,
+        "relative_area_error": -0.37702833864198715
+      }
+    ]
+  },
+  {
+    "sample_id": "specimen01_fibula_record01_25326",
+    "height": 811,
+    "width": 950,
+    "infer_ms": 214.54206549969967,
+    "num_boxes": 1,
+    "source_sample_id": "",
+    "target_uid": "",
+    "target_class_id": "",
+    "target_class_name": "",
+    "target_instance_id": "",
+    "target_color": "",
+    "boxes": [
+      {
+        "box_index": 0,
+        "bbox": [
+          462,
+          192,
+          655,
+          529
+        ],
+        "dice": 0.5109626822541352,
+        "iou": 0.3431496821232399,
+        "precision": 0.38717903232959333,
+        "recall": 0.7510915152166899,
+        "specificity": 0.9236499506184777,
+        "balanced_accuracy": 0.8373707329175838,
+        "hd95": 122.88286975630275,
+        "assd": 68.33656420395953,
+        "relative_area_error": 0.9399075169373051
+      }
+    ]
+  },
+  {
+    "sample_id": "specimen01_fibula_record01_26320",
+    "height": 811,
+    "width": 950,
+    "infer_ms": 214.54206549969967,
+    "num_boxes": 1,
+    "source_sample_id": "",
+    "target_uid": "",
+    "target_class_id": "",
+    "target_class_name": "",
+    "target_instance_id": "",
+    "target_color": "",
+    "boxes": [
+      {
+        "box_index": 0,
+        "bbox": [
+          462,
+          205,
+          634,
+          495
+        ],
+        "dice": 0.8604799513973268,
+        "iou": 0.7551248900381201,
+        "precision": 0.9479619838029583,
+        "recall": 0.7877801879971077,
+        "specificity": 0.9978828904875751,
+        "balanced_accuracy": 0.8928315392423414,
+        "hd95": 41.64764147173785,
+        "assd": 12.783065262571203,
+        "relative_area_error": -0.16897491517881974
+      }
+    ]
+  },
+  {
+    "sample_id": "specimen01_fibula_record01_27299",
+    "height": 811,
+    "width": 950,
+    "infer_ms": 214.54206549969967,
+    "num_boxes": 1,
+    "source_sample_id": "",
+    "target_uid": "",
+    "target_class_id": "",
+    "target_class_name": "",
+    "target_instance_id": "",
+    "target_color": "",
+    "boxes": [
+      {
+        "box_index": 0,
+        "bbox": [
+          442,
+          205,
+          606,
+          453
+        ],
+        "dice": 0.7088690683037955,
+        "iou": 0.5490295762433087,
+        "precision": 0.8193421698576338,
+        "recall": 0.6246470007825525,
+        "specificity": 0.9945375469429559,
+        "balanced_accuracy": 0.8095922738627542,
+        "hd95": 69.30457504837747,
+        "assd": 23.857763803408172,
+        "relative_area_error": -0.2376237623762376
+      }
+    ]
+  },
+  {
+    "sample_id": "specimen01_fibula_record01_28242",
+    "height": 811,
+    "width": 950,
+    "infer_ms": 179.4345560047077,
+    "num_boxes": 1,
+    "source_sample_id": "",
+    "target_uid": "",
+    "target_class_id": "",
+    "target_class_name": "",
+    "target_instance_id": "",
+    "target_color": "",
+    "boxes": [
+      {
+        "box_index": 0,
+        "bbox": [
+          372,
+          162,
+          544,
+          396
+        ],
+        "dice": 0.693110389877162,
+        "iou": 0.5303511363993587,
+        "precision": 0.9357182473655019,
+        "recall": 0.550404541302362,
+        "specificity": 0.9984333561323496,
+        "balanced_accuracy": 0.7744189487173558,
+        "hd95": 76.0,
+        "assd": 24.78831436999819,
+        "relative_area_error": -0.4117838966462221
+      }
+    ]
+  }
+]
