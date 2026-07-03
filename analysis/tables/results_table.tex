@@ -1,0 +1,22 @@
+\begin{table}
+\centering
+\caption{Benchmark results by model and prompt. Dice values are reported as percentages. Best values in each metric column are bolded and second-best values are underlined.}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{l|l|cccccccccccc|cc}
+\toprule
+\multirow{2}{*}{\textbf{Model}} & \multirow{2}{*}{\textbf{Prompt}} & \multicolumn{2}{c}{\textbf{BUS-BRA}} & \multicolumn{2}{c}{\textbf{GIST514}} & \multicolumn{2}{c}{\textbf{MMOTU}} & \multicolumn{2}{c}{\textbf{TNSC}} & \multicolumn{2}{c}{\textbf{Bones}} & \multicolumn{2}{c}{\textbf{RobLUS}} & \multicolumn{2}{|c}{\textbf{Avg}} \\
+\cmidrule(lr){3-4} \cmidrule(lr){5-6} \cmidrule(lr){7-8} \cmidrule(lr){9-10} \cmidrule(lr){11-12} \cmidrule(lr){13-14} \cmidrule(lr){15-16}
+ &  & \textbf{Dice} & \textbf{ASSD} & \textbf{Dice} & \textbf{ASSD} & \textbf{Dice} & \textbf{ASSD} & \textbf{Dice} & \textbf{ASSD} & \textbf{Dice} & \textbf{ASSD} & \textbf{Dice} & \textbf{ASSD} & \textbf{Dice} & \textbf{ASSD} \\
+\midrule
+Medical SAM3~\cite{jiang2026medicalsam3} & Text (object) & 59.99 & 38.33 & - & - & - & - & 18.55 & 115.44 & 17.16 & 178.11 & 1.23 & 78.74 & 24.23 & 102.65 \\
+Medical SAM3~\cite{jiang2026medicalsam3} & Text (label) & 81.58 & 10.42 & - & - & - & - & 18.56 & 111.93 & 2.10 & 1033.64 & 0.68 & 87.80 & 25.73 & 310.95 \\
+MedSAM-3~\cite{liu2025medsam3} & Text (object) & 73.37 & 38.40 & - & - & - & - & 20.23 & 143.94 & 21.20 & 178.43 & 1.23 & 347.22 & 29.01 & 177.00 \\
+MedSAM-3~\cite{liu2025medsam3} & Text (label) & 77.88 & 15.46 & - & - & - & - & 72.73 & 47.68 & 18.48 & 223.00 & 5.34 & 427.19 & 43.61 & 178.33 \\
+SAMUS~\cite{lin2024samus} & Bbox & 77.57 & 12.67 & - & - & - & - & 76.20 & 20.12 & - & - & 3.68 & 82.03 & 52.49 & 38.27 \\
+MedSAM-3~\cite{liu2025medsam3} & Text + Bbox & 88.36 & 6.06 & - & - & - & - & 82.41 & 21.35 & 30.24 & 69.36 & \textbf{66.79} & 18.60 & 66.95 & 28.84 \\
+MedSAM~\cite{ma2024medsam} & Bbox & \underline{92.05} & \underline{3.33} & - & - & - & - & \underline{93.07} & \underline{4.56} & \underline{36.00} & \underline{34.29} & \underline{60.18} & \textbf{3.44} & \underline{70.32} & \underline{11.40} \\
+\textbf{UltraSam~\cite{meyer2025ultrasam}} & Bbox & \textbf{93.93} & \textbf{2.55} & \textbf{92.50} & \textbf{2.65} & \textbf{94.34} & \textbf{5.69} & \textbf{93.64} & \textbf{4.19} & \textbf{90.29} & \textbf{17.97} & 57.27 & \underline{4.37} & \textbf{86.99} & \textbf{6.24} \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
