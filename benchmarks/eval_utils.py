@@ -207,11 +207,13 @@ class TargetVisualizationCollector:
         vis_dir: Path,
         source_indices: set[int],
         model_label: str,
+        prompt_label: str = "Box Prompts",
         num_workers: int | None = None,
     ):
         self.vis_dir = vis_dir
         self.source_indices = source_indices
         self.model_label = model_label
+        self.prompt_label = prompt_label
         self._current_source_id: str | None = None
         self._current_group: dict[str, Any] | None = None
         self._fallback_source_index = 0
@@ -234,6 +236,7 @@ class TargetVisualizationCollector:
                     _render_and_save_group,
                     self.vis_dir,
                     self.model_label,
+                    self.prompt_label,
                     self._current_source_id,
                     self._current_group,
                 )
@@ -249,6 +252,8 @@ class TargetVisualizationCollector:
         bbox: np.ndarray,
         dice: float,
         iou: float,
+        prompt_bboxes: np.ndarray | None = None,
+        prompt_points: np.ndarray | None = None,
     ) -> bool:
         metadata = _metadata(sample)
         if has_target_metadata(sample):
@@ -285,6 +290,8 @@ class TargetVisualizationCollector:
                 "gt_mask": gt_mask.copy(),
                 "pred_mask": pred_mask.copy(),
                 "bbox": bbox.copy(),
+                "prompt_bboxes": None if prompt_bboxes is None else prompt_bboxes.copy(),
+                "prompt_points": None if prompt_points is None else prompt_points.copy(),
                 "dice": dice,
                 "iou": iou,
             }
@@ -306,6 +313,7 @@ class TargetVisualizationCollector:
 def _render_and_save_group(
     vis_dir: Path,
     model_label: str,
+    prompt_label: str,
     source_sample_id: str,
     group: dict[str, Any],
 ) -> None:
@@ -324,7 +332,7 @@ def _render_and_save_group(
     fig, axes = plt.subplots(1, 3, figsize=(13, 4.5))
     titles = [
         "Image",
-        "GT Targets + Box Prompts",
+        f"GT Targets + {prompt_label}",
         f"{model_label} Predictions",
     ]
     for axis, title in zip(axes, titles):
@@ -339,17 +347,31 @@ def _render_and_save_group(
             color = to_rgb("#d62728")
         _overlay_mask(axes[1], target["gt_mask"], color=color, alpha=0.42)
         _overlay_mask(axes[2], target["pred_mask"], color=color, alpha=0.42)
-        for bbox in _iter_bboxes(target["bbox"]):
-            axes[1].add_patch(
-                Rectangle(
-                    (bbox[0], bbox[1]),
-                    max(float(bbox[2] - bbox[0]), 1.0),
-                    max(float(bbox[3] - bbox[1]), 1.0),
-                    edgecolor=color,
-                    facecolor=(0, 0, 0, 0),
-                    linewidth=1.8,
+        if target.get("prompt_bboxes") is not None:
+            for bbox in _iter_bboxes(target["prompt_bboxes"]):
+                axes[1].add_patch(
+                    Rectangle(
+                        (bbox[0], bbox[1]),
+                        max(float(bbox[2] - bbox[0]), 1.0),
+                        max(float(bbox[3] - bbox[1]), 1.0),
+                        edgecolor=color,
+                        facecolor=(0, 0, 0, 0),
+                        linewidth=1.8,
+                    )
                 )
-            )
+        if target.get("prompt_points") is not None:
+            prompt_points = _iter_points(target["prompt_points"])
+            if prompt_points.size > 0:
+                axes[1].scatter(
+                    prompt_points[:, 0],
+                    prompt_points[:, 1],
+                    marker="o",
+                    s=42,
+                    c=[color],
+                    edgecolors="white",
+                    linewidths=0.9,
+                    zorder=5,
+                )
         label = (
             f"{target['class_name']} "
             f"D={target['dice']:.2f} I={target['iou']:.2f}"
@@ -401,3 +423,7 @@ def _overlay_mask(axis: Any, mask: np.ndarray, color: tuple[float, float, float]
 
 def _iter_bboxes(bbox: np.ndarray) -> np.ndarray:
     return np.asarray(bbox).reshape(-1, 4)
+
+
+def _iter_points(points: np.ndarray) -> np.ndarray:
+    return np.asarray(points, dtype=np.float32).reshape(-1, 2)
