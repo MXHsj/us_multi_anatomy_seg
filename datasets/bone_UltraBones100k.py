@@ -6,7 +6,10 @@ from pathlib import Path
 from typing import Dict, Iterator, Optional
 
 import numpy as np
-from scipy.ndimage import binary_fill_holes, distance_transform_edt
+from scipy.ndimage import (
+    binary_fill_holes,
+    distance_transform_edt,
+)
 from skimage import io
 
 try:
@@ -22,14 +25,44 @@ class UltraBones100kDecoder:
         label_folder: str = "Labels_full",
         thicken_radius: int = 0,
         fill_mask: bool = True,
+        frame_fraction: float = 1.0,
     ):
         self.root = Path(root)
         self.label_folder = label_folder
         self.thicken_radius = thicken_radius
         self.fill_mask = fill_mask
+        if not (0.0 < frame_fraction <= 1.0):
+            raise ValueError(f"frame_fraction must be in (0, 1], got {frame_fraction}")
+        self.frame_fraction = frame_fraction
 
         if not self.root.exists():
             raise FileNotFoundError(f"UltraBones100k root '{self.root}' not found.")
+
+    def _select_record_frames(self, image_paths: list[Path]) -> list[Path]:
+        """Stratify within a record (video): keep equally-spaced frames at
+        ``frame_fraction`` (e.g. 0.1 -> ~10% of the clip), always at least one."""
+        n = len(image_paths)
+        if n == 0 or self.frame_fraction >= 1.0:
+            return image_paths
+        k = max(1, int(round(n * self.frame_fraction)))
+        if k >= n:
+            return image_paths
+        indices = np.unique(np.linspace(0, n - 1, k).round().astype(int))
+        return [image_paths[i] for i in indices]
+
+    def _record_frame_paths(self, record_dir: Path) -> list[Path]:
+        """Sorted image paths in a record that have a matching label, after
+        applying the per-record frame sampling."""
+        image_dir = record_dir / "UltrasoundImages"
+        label_dir = record_dir / self.label_folder
+        if not label_dir.exists():
+            return []
+        valid = [
+            image_path
+            for image_path in sorted(image_dir.glob("*.png"))
+            if (label_dir / f"{image_path.stem}_label.png").exists()
+        ]
+        return self._select_record_frames(valid)
 
     def _record_dirs(self) -> list[Path]:
         # Each record folder contains sibling UltrasoundImages and label folders.
@@ -60,13 +93,63 @@ class UltraBones100kDecoder:
             "record": parts[-1],
         }
 
+    def _completed_edge_contour(self, mask: np.ndarray) -> np.ndarray:
+        mask_bin = np.asarray(mask).astype(bool)
+        completed = mask_bin.copy()
+        h, w = completed.shape
+        edge_loop = (
+            [(0, y) for y in range(h)]
+            + [(x, h - 1) for x in range(1, w)]
+            + [(w - 1, y) for y in range(h - 2, -1, -1)]
+            + [(x, 0) for x in range(w - 2, 0, -1)]
+        )
+        hit_indices = [i for i, (x, y) in enumerate(edge_loop) if mask_bin[y, x]]
+        if len(hit_indices) < 2:
+            return completed
+
+        groups = [[hit_indices[0]]]
+        for hit in hit_indices[1:]:
+            if hit == groups[-1][-1] + 1:
+                groups[-1].append(hit)
+            else:
+                groups.append([hit])
+
+        if (
+            len(groups) > 1
+            and groups[0][0] == 0
+            and groups[-1][-1] == len(edge_loop) - 1
+        ):
+            groups[0] = groups[-1] + groups[0]
+            groups.pop()
+
+        for index in range(0, len(groups) - 1, 2):
+            start = groups[index][-1]
+            stop = groups[index + 1][0]
+            if start <= stop:
+                path = edge_loop[start : stop + 1]
+            else:
+                path = edge_loop[start:] + edge_loop[: stop + 1]
+            for x, y in path:
+                completed[y, x] = True
+        return completed
+
+    def _fill_contour_mask(self, mask: np.ndarray) -> np.ndarray:
+        mask_bin = np.asarray(mask).astype(bool)
+        if not mask_bin.any():
+            return np.zeros_like(mask_bin, dtype=np.uint8)
+
+        completed = self._completed_edge_contour(mask_bin)
+        filled = binary_fill_holes(completed)
+        return filled.astype(np.uint8)
+
     def _prepare_mask(self, mask) -> np.ndarray:
         mask_bin = to_binary_mask(mask)
+        if mask_bin.ndim == 3:
+            mask_bin = mask_bin.max(axis=-1)
         if self.fill_mask:
-            # UltraBones100k is the one decoder where filling is intentional:
-            # the source labels trace the visible bone surface, while the filled
-            # region approximates the clinically meaningful acoustic shadow.
-            mask_bin = binary_fill_holes(mask_bin.astype(bool)).astype(np.uint8)
+            # UltraBones100k labels can be contours; complete edge-touching
+            # contours before filling the enclosed mask region.
+            mask_bin = self._fill_contour_mask(mask_bin)
 
         if self.thicken_radius <= 0:
             return mask_bin
@@ -78,63 +161,83 @@ class UltraBones100kDecoder:
     def count_samples(self, max_samples: Optional[int] = None) -> int:
         count = 0
         for record_dir in self._record_dirs():
-            image_dir = record_dir / "UltrasoundImages"
-            label_dir = record_dir / self.label_folder
-            if not label_dir.exists():
-                continue
-
-            for image_path in sorted(image_dir.glob("*.png")):
-                label_path = label_dir / f"{image_path.stem}_label.png"
-                if not label_path.exists():
-                    continue
+            for _ in self._record_frame_paths(record_dir):
                 count += 1
                 if max_samples is not None and count >= max_samples:
                     return count
         return count
 
+    def _load_sample(
+        self,
+        sample_id: str,
+        record_dir: Path,
+        image_path: Path,
+        label_path: Path,
+        tracking: Optional[Dict[str, Dict[str, str]]] = None,
+    ) -> DecodedSample:
+        image = io.imread(image_path)
+        mask = io.imread(label_path)
+        timestamp = image_path.stem
+        record_metadata = self._record_metadata(record_dir)
+        metadata = {
+            **record_metadata,
+            "timestamp": timestamp,
+            "raw_image_path": str(image_path),
+            "raw_mask_path": str(label_path),
+            "label_folder": self.label_folder,
+            "thicken_radius": self.thicken_radius,
+            "fill_mask": self.fill_mask,
+        }
+        if tracking is None:
+            tracking = self._tracking_map(record_dir)
+        if timestamp in tracking:
+            metadata["tracking"] = tracking[timestamp]
+
+        return DecodedSample(
+            dataset="UltraBones100k",
+            sample_id=sample_id,
+            image=normalize_to_uint8(image),
+            mask=self._prepare_mask(mask),
+            metadata=metadata,
+        )
+
+    def load_sample(self, sample_id: str) -> DecodedSample:
+        parts = sample_id.split("_", maxsplit=3)
+        if len(parts) != 4:
+            raise KeyError(f"UltraBones100k sample '{sample_id}' not found.")
+        specimen_id, anatomy, record, timestamp = parts
+        record_dir = self.root / specimen_id / anatomy / record
+        image_path = record_dir / "UltrasoundImages" / f"{timestamp}.png"
+        label_path = record_dir / self.label_folder / f"{timestamp}_label.png"
+        if not image_path.exists() or not label_path.exists():
+            raise KeyError(f"UltraBones100k sample '{sample_id}' not found.")
+        return self._load_sample(sample_id, record_dir, image_path, label_path)
+
     def iter_samples(self, max_samples: Optional[int] = None) -> Iterator[DecodedSample]:
         count = 0
         for record_dir in self._record_dirs():
-            image_dir = record_dir / "UltrasoundImages"
-            label_dir = record_dir / self.label_folder
-            if not label_dir.exists():
+            frame_paths = self._record_frame_paths(record_dir)
+            if not frame_paths:
                 continue
 
+            label_dir = record_dir / self.label_folder
             record_metadata = self._record_metadata(record_dir)
             tracking = self._tracking_map(record_dir)
 
-            for image_path in sorted(image_dir.glob("*.png")):
+            for image_path in frame_paths:
                 # UltraBones pairs 24363.png with 24363_label.png.
                 label_path = label_dir / f"{image_path.stem}_label.png"
-                if not label_path.exists():
-                    continue
 
-                image = io.imread(image_path)
-                mask = io.imread(label_path)
                 sample_id = (
                     f"{record_metadata['specimen_id']}_{record_metadata['anatomy']}_"
                     f"{record_metadata['record']}_{image_path.stem}"
                 )
-
-                metadata = {
-                    **record_metadata,
-                    "timestamp": image_path.stem,
-                    "raw_image_path": str(image_path),
-                    "raw_mask_path": str(label_path),
-                    "label_folder": self.label_folder,
-                    "thicken_radius": self.thicken_radius,
-                    "fill_mask": self.fill_mask,
-                }
-                if image_path.stem in tracking:
-                    # Keep the synchronized probe pose/tracking row available downstream.
-                    metadata["tracking"] = tracking[image_path.stem]
-
-                yield DecodedSample(
-                    dataset="UltraBones100k",
+                yield self._load_sample(
                     sample_id=sample_id,
-                    image=normalize_to_uint8(image),
-                    mask=self._prepare_mask(mask),
-                    metadata=metadata,
+                    record_dir=record_dir,
+                    image_path=image_path,
+                    label_path=label_path,
+                    tracking=tracking,
                 )
 
                 count += 1

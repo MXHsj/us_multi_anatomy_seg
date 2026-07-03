@@ -17,6 +17,11 @@ from benchmarks.metrics import METRIC_NAMES
 
 
 DEFAULT_METRICS = tuple(METRIC_NAMES)
+# Derived metrics computed per-sample from the raw columns rather than read
+# directly. hd95_norm rescales HD95 by each image's diagonal (as a percentage)
+# so boundary error is comparable across datasets of different resolutions.
+DERIVED_METRICS = ("hd95_norm", "assd_norm")
+ALLOWED_METRICS = set(DEFAULT_METRICS) | set(DERIVED_METRICS)
 MODEL_COLORS = {
     "medsam": "#4C72B0",
     "samus": "#55A868",
@@ -39,6 +44,11 @@ PROTOCOL_LABELS = {
     "label": "label",
     "object": "object",
 }
+MODEL_ALIASES = {
+    "ultrasm": "ultrasam",
+    "ultra-sm": "ultrasam",
+    "ultra_sam": "ultrasam",
+}
 DATASET_LABELS = {
     "aulid": "AULID",
     "blusg": "BLUSG",
@@ -49,7 +59,9 @@ DATASET_LABELS = {
     "roblus": "RobLUS",
     "tnsc2020": "TNSC2020",
     "ultrabones100k": "UltraBones",
+    "umud": "UMUD",
     "uns": "UNS",
+    "ussc": "USSC",
 }
 
 
@@ -123,15 +135,49 @@ def parse_metrics_arg(value: str) -> tuple[str, ...]:
     if value.strip().lower() == "all":
         return DEFAULT_METRICS
     metrics = tuple(metric.strip() for metric in value.split(",") if metric.strip())
-    unknown = sorted(set(metrics) - set(DEFAULT_METRICS))
+    unknown = sorted(set(metrics) - ALLOWED_METRICS)
     if unknown:
         raise SystemExit(
             f"Unsupported metric(s): {', '.join(unknown)}. "
-            f"Expected one of: {', '.join(DEFAULT_METRICS)}"
+            f"Expected one of: {', '.join(sorted(ALLOWED_METRICS))}"
         )
     if not metrics:
         raise SystemExit("At least one metric must be selected.")
     return metrics
+
+
+def _image_diagonal(row: dict[str, str]) -> float:
+    return math.hypot(float(row["height"]), float(row["width"]))
+
+
+def compute_metric_value(row: dict[str, str], metric: str) -> float:
+    """Read a metric from a per_sample_metrics row, computing resolution-
+    normalized variants (as % of the image diagonal) on the fly."""
+    if metric == "hd95_norm":
+        diagonal = _image_diagonal(row)
+        return float(row["hd95"]) / diagonal if diagonal > 0 else float("nan")
+    if metric == "assd_norm":
+        diagonal = _image_diagonal(row)
+        return float(row["assd"]) / diagonal if diagonal > 0 else float("nan")
+    return float(row[metric])
+
+
+def normalize_model_name(value: str) -> str:
+    model = value.strip().lower()
+    return MODEL_ALIASES.get(model, model)
+
+
+def parse_models_arg(value: str) -> tuple[str, ...]:
+    models = tuple(
+        normalize_model_name(model)
+        for model in value.split(",")
+        if model.strip()
+    )
+    if not models:
+        raise SystemExit("At least one model must be selected.")
+    if len(set(models)) != len(models):
+        raise SystemExit("Model names must be unique.")
+    return models
 
 
 def read_metrics(csv_path: Path, metrics: tuple[str, ...]) -> dict[str, dict[str, float]]:
@@ -143,8 +189,8 @@ def read_metrics(csv_path: Path, metrics: tuple[str, ...]) -> dict[str, dict[str
             if not sample_id:
                 continue
             try:
-                values = {metric: float(row[metric]) for metric in metrics}
-            except (KeyError, TypeError, ValueError):
+                values = {metric: compute_metric_value(row, metric) for metric in metrics}
+            except (KeyError, TypeError, ValueError, ZeroDivisionError):
                 continue
             if all(math.isfinite(value) for value in values.values()):
                 rows[sample_id] = values
@@ -159,13 +205,42 @@ def mean_std(values: list[float]) -> tuple[float, float]:
     return mean, std
 
 
-def discover_results(results_dir: Path) -> dict[tuple[str, str, str], Path]:
-    """Map (model, protocol, dataset) -> per_sample_metrics.csv for every run."""
-    discovered: dict[tuple[str, str, str], Path] = {}
-    for model, protocol, dataset, run_dir in iter_run_dirs(results_dir):
-        metrics_path = run_dir / "per_sample_metrics.csv"
-        if metrics_path.exists():
-            discovered[(model, protocol, dataset)] = metrics_path
+# Datasets pinned to the end of the plot, in this exact order. Everything else
+# stays alphabetical ahead of them.
+DATASET_TAIL_ORDER = ("tnsc2020", "ultrabones100k", "umud", "ussc", "roblus")
+
+
+def order_datasets(datasets: set[str] | list[str]) -> list[str]:
+    datasets = set(datasets)
+    head = sorted(d for d in datasets if d not in DATASET_TAIL_ORDER)
+    tail = [d for d in DATASET_TAIL_ORDER if d in datasets]
+    return head + tail
+
+
+def parse_datasets_arg(value: str) -> tuple[str, ...] | None:
+    """Comma-separated dataset list, or None to use all discovered datasets."""
+    if not value.strip():
+        return None
+    return tuple(dataset.strip() for dataset in value.split(",") if dataset.strip())
+
+
+def select_datasets(available: set[str], requested: tuple[str, ...] | None) -> list[str]:
+    """Requested datasets (in the given order, keeping only those with results), else all ordered."""
+    if requested:
+        return [dataset for dataset in requested if dataset in available]
+    return order_datasets(available)
+
+
+def discover_results(results_dir: Path, protocol: str) -> dict[tuple[str, str], Path]:
+    discovered: dict[tuple[str, str], Path] = {}
+    for metrics_path in sorted(results_dir.glob("*/per_sample_metrics.csv")):
+        parsed = parse_result_dir_name(metrics_path.parent.name)
+        if parsed is None:
+            continue
+        model, result_protocol, dataset = parsed
+        if result_protocol != protocol:
+            continue
+        discovered[(model, dataset)] = metrics_path
     return discovered
 
 
@@ -176,20 +251,16 @@ def compare_models(
     tag_a: str,
     tag_b: str,
     metrics: tuple[str, ...],
+    requested_datasets: tuple[str, ...] | None = None,
 ) -> list[dict[str, Any]]:
-    """Compare two series, each identified by a (model, protocol) key.
-
-    tag_a/tag_b are the column/legend identifiers; they differ from the model name
-    when both series share a model (e.g. Medical SAM3 label vs object).
-    """
-    discovered = discover_results(results_dir)
-    model_a, protocol_a = key_a
-    model_b, protocol_b = key_b
-    datasets = sorted(
-        dataset
-        for (result_model, result_protocol, dataset) in discovered
-        if (result_model, result_protocol) == key_a
-        and (model_b, protocol_b, dataset) in discovered
+    discovered = discover_results(results_dir, protocol)
+    datasets = select_datasets(
+        {
+            dataset
+            for result_model, dataset in discovered
+            if result_model == model_a and (model_b, dataset) in discovered
+        },
+        requested_datasets,
     )
 
     rows: list[dict[str, Any]] = []
@@ -228,6 +299,78 @@ def compare_models(
     return rows
 
 
+def compare_model_set(
+    results_dir: Path,
+    protocol: str,
+    models: tuple[str, ...],
+    metrics: tuple[str, ...],
+    requested_datasets: tuple[str, ...] | None = None,
+) -> list[dict[str, Any]]:
+    discovered = discover_results(results_dir, protocol)
+    # Include any dataset that at least one selected model has results for. Models
+    # missing a dataset are simply left out of that dataset's row (no bar plotted),
+    # rather than dropping the whole dataset.
+    candidate_datasets = select_datasets(
+        {
+            dataset
+            for result_model, dataset in discovered
+            if result_model in models
+        },
+        requested_datasets,
+    )
+
+    rows: list[dict[str, Any]] = []
+    nan = float("nan")
+    baseline = models[0]
+    for dataset in candidate_datasets:
+        # Each model is summarized from ALL of its own results for this dataset.
+        # No cross-model sample matching/intersection is performed: a model with
+        # no result file for a dataset is simply skipped (no bar), and result
+        # files do not need to share a common sample_id scheme.
+        model_metrics = {
+            model: read_metrics(discovered[(model, dataset)], metrics)
+            for model in models
+            if (model, dataset) in discovered
+        }
+        model_metrics = {model: values for model, values in model_metrics.items() if values}
+        present_models = [model for model in models if model in model_metrics]
+        if not present_models:
+            continue
+
+        row: dict[str, Any] = {"dataset": dataset}
+        values_by_metric: dict[str, dict[str, list[float]]] = {}
+        for metric in metrics:
+            values_by_metric[metric] = {}
+            for model in models:
+                if model in model_metrics:
+                    values = [
+                        sample[metric] for sample in model_metrics[model].values()
+                    ]
+                    mean, std = mean_std(values)
+                else:
+                    values = []
+                    mean, std = nan, nan
+                values_by_metric[metric][model] = values
+                row[f"{model}_{metric}_mean"] = mean
+                row[f"{model}_{metric}_std"] = std
+
+            # Without matched pairs the delta is an unpaired difference of means
+            # (no per-sample pairing, so no delta std).
+            baseline_mean = row[f"{baseline}_{metric}_mean"]
+            for model in models[1:]:
+                if baseline in model_metrics and model in model_metrics:
+                    delta_mean = row[f"{model}_{metric}_mean"] - baseline_mean
+                else:
+                    delta_mean = nan
+                row[f"{model}_minus_{baseline}_{metric}_mean"] = delta_mean
+                row[f"{model}_minus_{baseline}_{metric}_std"] = nan
+
+        row["_values_by_metric"] = values_by_metric
+        rows.append(row)
+
+    return rows
+
+
 def format_float(value: float) -> str:
     return f"{value:.4f}"
 
@@ -248,12 +391,30 @@ def column_names(tag_a: str, tag_b: str, metrics: tuple[str, ...]) -> list[str]:
     return columns
 
 
+def model_set_column_names(models: tuple[str, ...], metrics: tuple[str, ...]) -> list[str]:
+    columns = ["dataset"]
+    baseline = models[0]
+    for metric in metrics:
+        for model in models:
+            columns.extend([f"{model}_{metric}_mean", f"{model}_{metric}_std"])
+        for model in models[1:]:
+            columns.extend(
+                [
+                    f"{model}_minus_{baseline}_{metric}_mean",
+                    f"{model}_minus_{baseline}_{metric}_std",
+                ]
+            )
+    return columns
+
+
 def print_markdown(rows: list[dict[str, Any]], columns: list[str]) -> None:
     print("| " + " | ".join(columns) + " |")
     print("| " + " | ".join(["---"] * len(columns)) + " |")
     for row in rows:
         values = [
-            str(row[column]) if column == "dataset" else format_float(row[column])
+            str(row[column])
+            if column == "dataset"
+            else format_float(row[column])
             for column in columns
         ]
         print("| " + " | ".join(values) + " |")
@@ -267,11 +428,23 @@ def write_csv(rows: list[dict[str, Any]], columns: list[str], output_csv: Path) 
         writer.writerows({column: row[column] for column in columns} for row in rows)
 
 
-def default_plot_path(tag_a: str, tag_b: str) -> Path:
+def default_plot_path(
+    protocol: str, model_a: str, model_b: str, plot_type: str, plot_format: str
+) -> Path:
     return (
         Path("analysis")
         / "figures"
-        / f"compare_models_same_dataset_{tag_a}_vs_{tag_b}.png"
+        / f"{plot_type}_plot_per_model_per_dataset.{plot_format}"
+    )
+
+
+def default_model_set_plot_path(
+    protocol: str, models: tuple[str, ...], plot_type: str, plot_format: str
+) -> Path:
+    return (
+        Path("analysis")
+        / "figures"
+        / f"{plot_type}_plot_per_model_per_dataset.{plot_format}"
     )
 
 
@@ -295,7 +468,9 @@ def metric_label(metric: str) -> str:
         "specificity": "Specificity",
         "balanced_accuracy": "Balanced accuracy",
         "hd95": "HD95 (px)",
+        "hd95_norm": "Normalized HD95",
         "assd": "ASSD (px)",
+        "assd_norm": "Normalized ASSD",
         "relative_area_error": "Relative area error",
     }
     return labels.get(metric, metric)
@@ -308,7 +483,25 @@ def plot_rows(
     metrics: tuple[str, ...],
     title: str = "",
 ) -> None:
-    # series: two dicts, each {"tag": ..., "color": ..., "label": ...}.
+    plot_multi_model_rows(
+        rows=rows,
+        plot_path=plot_path,
+        models=(model_a, model_b),
+        metrics=metrics,
+        title=title,
+    )
+
+
+def plot_multi_model_rows(
+    rows: list[dict[str, Any]],
+    plot_path: Path,
+    models: tuple[str, ...],
+    metrics: tuple[str, ...],
+    title: str = "",
+    plot_type: str = "box",
+    show_outliers: bool = True,
+    orientation: str = "horizontal",
+) -> None:
     mpl_config_dir = Path("analysis") / ".mplconfig"
     xdg_cache_dir = Path("analysis") / ".cache"
     mpl_config_dir.mkdir(parents=True, exist_ok=True)
@@ -325,7 +518,7 @@ def plot_rows(
             "savefig.dpi": 300,
             "font.family": "serif",
             "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
-            "font.size": 8,
+            "font.size": 12,
             "axes.labelsize": 9,
             "axes.titlesize": 9,
             "xtick.labelsize": 8,
@@ -342,76 +535,121 @@ def plot_rows(
 
     labels = [display_dataset_label(row["dataset"]) for row in rows]
     x_positions = np.arange(len(rows))
-    bar_width = 0.32
+    group_width = 0.62
+    bar_width = min(0.24, group_width / len(models))
+    start_offset = -bar_width * (len(models) - 1) / 2
     offsets = {
-        series[0]["tag"]: -bar_width / 2,
-        series[1]["tag"]: bar_width / 2,
+        model: start_offset + idx * bar_width
+        for idx, model in enumerate(models)
     }
     rng = np.random.default_rng(20240515)
 
-    ncols = min(3, len(metrics))
-    nrows = int(np.ceil(len(metrics) / ncols))
-    fig_width = max(6.8, len(rows) * 0.48, ncols * 3.2)
-    fig_height = max(3.25, nrows * 2.75)
+    # Cap the figure width at US Letter (8.5 in) so it fits a normal page.
+    LETTER_WIDTH = 8.5
+    # Arrange metric panels either side by side (horizontal) or stacked (vertical).
+    if orientation == "horizontal":
+        nrows = 1
+        ncols = len(metrics)
+        panel_width = max(5.4, len(rows) * 0.7)
+        fig_width = min(LETTER_WIDTH, ncols * panel_width)
+        fig_height = max(2, nrows * 3)
+    else:
+        ncols = 1
+        nrows = len(metrics)
+        fig_width = min(LETTER_WIDTH, max(9.0, len(rows) * 0.7, ncols * 5.4))
+        fig_height = max(3.0, nrows * 2.8)
     fig, axes = plt.subplots(
         nrows=nrows,
         ncols=ncols,
         figsize=(fig_width, fig_height),
         squeeze=False,
-        constrained_layout=True,
     )
     axes_flat = axes.ravel()
 
     for axis, metric in zip(axes_flat, metrics):
-        for spec in series:
-            tag = spec["tag"]
-            color = spec["color"]
-            means = [row[f"{tag}_{metric}_mean"] for row in rows]
-            stds = [row[f"{tag}_{metric}_std"] for row in rows]
-            model_positions = x_positions + offsets[tag]
+        for model in models:
+            # These bounded, skewed metrics are poorly summarized by mean +/- SD.
+            # bar  = median + P25-P75 (IQR) whiskers; box/violin show the full
+            # distribution directly. bar/violin overlay a jittered scatter of raw
+            # values; box instead shows outliers (the scatter bloats the figure).
+            color = MODEL_COLORS.get(model, "#666666")
+            model_positions = x_positions + offsets[model]
 
-            axis.bar(
-                model_positions,
-                means,
-                width=bar_width,
-                color=color,
-                alpha=0.32,
-                edgecolor=color,
-                linewidth=1.1,
-                zorder=2,
-                label=spec["label"],
-            )
-            axis.errorbar(
-                model_positions,
-                means,
-                yerr=stds,
-                fmt="none",
-                ecolor="#222222",
-                elinewidth=1.0,
-                capsize=3,
-                capthick=1.0,
-                zorder=4,
-            )
-
+            # Only draw where the model actually has results; missing models
+            # leave an empty slot rather than an empty/zero marker.
+            data = []
+            positions = []
             for idx, row in enumerate(rows):
-                values = row["_values_by_metric"][metric][tag]
+                values = row.get("_values_by_metric", {}).get(metric, {}).get(model, [])
                 if not values:
                     continue
-                jitter = rng.uniform(-bar_width * 0.27, bar_width * 0.27, size=len(values))
-                axis.scatter(
-                    np.full(len(values), model_positions[idx]) + jitter,
-                    values,
-                    s=6,
-                    color=color,
-                    alpha=0.18,
-                    linewidths=0,
-                    zorder=3,
+                data.append(values)
+                positions.append(model_positions[idx])
+
+                if plot_type != "box":
+                    jitter = rng.uniform(-bar_width * 0.27, bar_width * 0.27, size=len(values))
+                    axis.scatter(
+                        np.full(len(values), model_positions[idx]) + jitter,
+                        values,
+                        s=3,
+                        color=color,
+                        alpha=0.14,
+                        linewidths=0,
+                        zorder=0,
+                    )
+
+            if not data:
+                continue
+
+            if plot_type == "bar":
+                medians = np.array([np.median(values) for values in data])
+                p25 = np.array([np.percentile(values, 25) for values in data])
+                p75 = np.array([np.percentile(values, 75) for values in data])
+                yerr = np.vstack([medians - p25, p75 - medians])
+                axis.bar(
+                    positions, medians, width=bar_width, color=color, alpha=0.7,
+                    edgecolor=color, linewidth=1.1, zorder=2,
                 )
+                axis.errorbar(
+                    positions, medians, yerr=yerr, fmt="none", ecolor="#222222",
+                    elinewidth=1.0, capsize=3, capthick=1.0, zorder=4,
+                )
+            elif plot_type == "violin":
+                parts = axis.violinplot(
+                    data, positions=positions, widths=bar_width,
+                    showmedians=True, showextrema=False,
+                )
+                for body in parts["bodies"]:
+                    body.set_facecolor(color)
+                    body.set_edgecolor(color)
+                    body.set_alpha(0.7)
+                    body.set_zorder(2)
+                parts["cmedians"].set_color("#222222")
+                parts["cmedians"].set_linewidth(1.2)
+                parts["cmedians"].set_zorder(2)
+            else:  # box
+                axis.boxplot(
+                    data, positions=positions, widths=bar_width, showfliers=show_outliers,
+                    patch_artist=True,
+                    medianprops={"color": "#222222", "linewidth": 1.2},
+                    boxprops={"facecolor": color, "alpha": 0.7, "edgecolor": color, "linewidth": 1.1},
+                    whiskerprops={"color": color, "linewidth": 1.0},
+                    capprops={"color": color, "linewidth": 1.0},
+                    flierprops={"marker": "o", "markersize": 2, "markerfacecolor": color,
+                                "markeredgecolor": "none", "alpha": 0.5},
+                    zorder=2,
+                )
+
+        # Subtle vertical dividers between adjacent datasets.
+        for boundary in x_positions[:-1] + 0.5:
+            axis.axvline(boundary, color="#EDEDED", linewidth=0.5, alpha=0.6, zorder=0)
 
         if metric == "relative_area_error":
             axis.axhline(0.0, color="#555555", linewidth=0.8, linestyle="--", zorder=1)
         if metric in {"dice", "iou", "precision", "recall", "specificity", "balanced_accuracy"}:
             axis.set_ylim(0.0, 1.02)
+        if metric in {"hd95_norm", "assd_norm"}:
+            axis.set_ylim(bottom=0.0)
         axis.set_title(metric_label(metric))
         axis.set_xticks(x_positions)
         axis.set_xticklabels(labels, rotation=35, ha="right")
@@ -428,24 +666,25 @@ def plot_rows(
             [0],
             marker="s",
             color="none",
-            markerfacecolor=spec["color"],
-            markeredgecolor=spec["color"],
-            alpha=0.55,
+            markerfacecolor=MODEL_COLORS.get(model, "#666666"),
+            markeredgecolor=MODEL_COLORS.get(model, "#666666"),
+            alpha=0.85,
             markersize=7,
-            label=spec["label"],
+            label=MODEL_LABELS.get(model, model),
         )
-        for spec in series
+        for model in models
     ]
     fig.legend(
         handles=handles,
         frameon=False,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.04 if not title else 1.10),
-        ncol=2,
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.05),
+        ncol=len(models),
     )
 
     if title:
         fig.suptitle(title, y=1.02, fontsize=10)
+    fig.tight_layout()
     plot_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(plot_path, bbox_inches="tight")
     plt.close(fig)
@@ -454,7 +693,7 @@ def plot_rows(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Compare two models on the same datasets using matched sample IDs "
+            "Compare models on the same datasets using matched sample IDs "
             "from per_sample_metrics.csv."
         )
     )
@@ -486,11 +725,27 @@ def main() -> None:
     parser.add_argument("--model-a", default="medsam")
     parser.add_argument("--model-b", default="samus")
     parser.add_argument(
+        "--models",
+        default=None,
+        help=(
+            "Comma-separated model list for multi-model comparison, "
+            "for example 'medsam,samus,ultrasam'. One or more models are "
+            "supported. If omitted, --model-a and --model-b are used for the "
+            "original pairwise comparison."
+        ),
+    )
+    parser.add_argument(
+        "--datasets",
+        default="",
+        help="Optional comma-separated dataset list (in plot order). Defaults to all discovered.",
+    )
+    parser.add_argument(
         "--metrics",
         default="all",
         help=(
             "Comma-separated metrics to compare/plot, or 'all'. "
-            f"Available: {', '.join(DEFAULT_METRICS)}."
+            f"Available: {', '.join(DEFAULT_METRICS)}. "
+            f"Resolution-normalized (% of image diagonal): {', '.join(DERIVED_METRICS)}."
         ),
     )
     parser.add_argument(
@@ -511,66 +766,92 @@ def main() -> None:
         help="Optional figure title. By default no title is drawn for paper-style output.",
     )
     parser.add_argument(
+        "--plot-type",
+        default="box",
+        choices=["bar", "box", "violin"],
+        help="Per-dataset plot style for each model. Default: box.",
+    )
+    parser.add_argument(
+        "--plot-format",
+        default="png",
+        choices=["png", "svg", "pdf"],
+        help="File format for the default plot path. Default: png.",
+    )
+    parser.add_argument(
+        "--show-outliers",
+        default="true",
+        choices=["true", "false"],
+        help="Show outlier markers on box plots. Default: true.",
+    )
+    parser.add_argument(
+        "--orientation",
+        default="horizontal",
+        choices=["horizontal", "vertical"],
+        help="Lay metric panels side by side (horizontal) or stacked (vertical). Default: horizontal.",
+    )
+    parser.add_argument(
         "--no-plot",
         action="store_true",
         help="Print the table without generating a figure.",
     )
     args = parser.parse_args()
     metrics = parse_metrics_arg(args.metrics)
+    requested_datasets = parse_datasets_arg(args.datasets)
 
-    protocol_a = args.protocol_a or args.protocol
-    protocol_b = args.protocol_b or args.protocol
-    key_a = (args.model_a, protocol_a)
-    key_b = (args.model_b, protocol_b)
-
-    # Disambiguate series identifiers/labels when the two share a model (e.g. one
-    # model's label vs object prompt) or differ only by protocol; otherwise keep
-    # plain model names so existing box-vs-box output is unchanged.
-    show_protocol = (args.model_a == args.model_b) or (protocol_a != protocol_b)
-    tag_a = f"{args.model_a}_{protocol_a}" if args.model_a == args.model_b else args.model_a
-    tag_b = f"{args.model_b}_{protocol_b}" if args.model_a == args.model_b else args.model_b
-
-    rows = compare_models(
-        results_dir=args.results_dir,
-        key_a=key_a,
-        key_b=key_b,
-        tag_a=tag_a,
-        tag_b=tag_b,
-        metrics=metrics,
-    )
+    if args.models is None:
+        models = (
+            normalize_model_name(args.model_a),
+            normalize_model_name(args.model_b),
+        )
+        rows = compare_models(
+            results_dir=args.results_dir,
+            protocol=args.protocol,
+            model_a=models[0],
+            model_b=models[1],
+            metrics=metrics,
+            requested_datasets=requested_datasets,
+        )
+        columns = column_names(models[0], models[1], metrics)
+    else:
+        models = parse_models_arg(args.models)
+        rows = compare_model_set(
+            results_dir=args.results_dir,
+            protocol=args.protocol,
+            models=models,
+            metrics=metrics,
+            requested_datasets=requested_datasets,
+        )
+        columns = model_set_column_names(models, metrics)
 
     if not rows:
         raise SystemExit("No datasets with matched sample IDs found.")
 
-    columns = column_names(tag_a, tag_b, metrics)
     print_markdown(rows, columns)
     if args.output_csv is not None:
         write_csv(rows, columns, args.output_csv)
         print(f"\nSaved CSV to: {args.output_csv}")
     if not args.no_plot:
-        color_a = MODEL_COLORS.get(args.model_a, "#4C72B0")
-        color_b = MODEL_COLORS.get(args.model_b, "#55A868")
-        if args.model_a == args.model_b:
-            color_b = SECOND_SERIES_COLOR
-        series = [
-            {
-                "tag": tag_a,
-                "color": color_a,
-                "label": display_series_label(args.model_a, protocol_a, show_protocol),
-            },
-            {
-                "tag": tag_b,
-                "color": color_b,
-                "label": display_series_label(args.model_b, protocol_b, show_protocol),
-            },
-        ]
-        plot_path = args.plot_path or default_plot_path(tag_a, tag_b)
-        plot_rows(
+        if args.models is None:
+            plot_path = args.plot_path or default_plot_path(
+                args.protocol,
+                models[0],
+                models[1],
+                args.plot_type,
+                args.plot_format,
+            )
+        else:
+            plot_path = args.plot_path or default_model_set_plot_path(
+                args.protocol, models, args.plot_type, args.plot_format
+            )
+        plot_multi_model_rows(
             rows=rows,
             plot_path=plot_path,
-            series=series,
+            models=models,
             metrics=metrics,
             title=args.plot_title,
+            plot_type=args.plot_type,
+            show_outliers=args.show_outliers == "true",
+            orientation=args.orientation,
         )
         print(f"Saved plot to: {plot_path}")
 

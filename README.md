@@ -83,11 +83,15 @@ Available Hugging Face zips scanned from the dataset repo:
 | Breast | BrEaST Lesions USG | `zips/Breast/BrEaST-Lesions_USG.zip` | `blusg` |
 | Breast | BUS-BRA | `zips/Breast/BUSBRA.zip` | `busbra` |
 | Breast | BUSI | `zips/Breast/BUSI.zip` | `busi` |
+| Gastrointestinal | GIST514-DB | `zips/Gastrointestinal/GIST514.zip` | `gist514` |
 | Heart | CAMUS | `zips/Heart/CAMUS.zip` | `camus` |
 | Kidney | OKU | `zips/kidney/OKU.zip` | `oku` |
 | Liver | AULID | `zips/Liver/AULID.zip` | `aulid` |
 | Lung | RobLUS | `zips/Lung/RobLUS.zip` | `roblus` |
+| Muscle | UMUD Aponeurosis | `zips/Muscle/UMUD.zip` | `umud` |
 | Nerve | UNS | `zips/Nerve/UNS.zip` | `uns` |
+| Ovary | MMOTU | `zips/Ovary/MMOTU.zip` | `mmotu` |
+| Spinal Cord | Ultrasound Spinal Cord | `zips/SpinalCord/USSC.zip` | `ussc` |
 | Thyroid | TNSC2020 | `zips/Thyroid/TNSC2020.zip` | `tnsc2020` |
 
 ### Dataset Structures
@@ -100,12 +104,16 @@ Each decoder normalizes its source dataset into the shared `DecodedSample` schem
 | `blusg` | `datasets/BLUSG` | Flat `case*.png` images; masks are sibling `case*_tumor.png` plus optional `case*_other*.png`. | One breast image with tumor mask, optionally merged with other lesion masks unless `--blusg-only-tumor` is used. |
 | `busbra` | `datasets/BUSBRA` | `Images/bus_*.png` paired with `Masks/mask_*.png` by shared suffix; `bus_data.csv` provides per-sample BI-RADS, pathology, side, device, histology, and CSV-recorded bounding box. | One breast image/tumor-mask pair per `bus_<id>` stem (1,875 total). Optional `--busbra-pathology` and `--busbra-birads` filters narrow the iteration; CSV metadata is surfaced through `DecodedSample.metadata`. |
 | `busi` | `datasets/BUSI` | Category subfolders `benign/`, `malignant/`, `normal/`, each containing `<cat> (N).png` images paired with `<cat> (N)_mask.png`. A handful of cases (mostly benign) also have `<cat> (N)_mask_<k>.png` extra masks that are OR-merged into a single binary mask. | One image per case with merged tumor mask. Default `--busi-categories benign,malignant` excludes `normal` (empty masks unusable for GT-box). `normal` can be added for sensitivity/empty-mask checks. |
+| `gist514` | `datasets/GIST514` | Raw `usd514_jpeg_roi` zip, either with nested `usd514_jpeg_roi/` or direct `images/` and `annotations/`. `all_anno_crop.json` is COCO-style and pairs each JPEG with one polygon ROI; five train/val split JSONs remain metadata/provenance and are not decoded to avoid duplicate benchmark targets. | One binary gastrointestinal submucosal tumor ROI per EUS image. The `GIST` / `lmym` category is preserved as metadata, not emitted as separate segmentation classes. Source: https://github.com/howardchina/query2 |
 | `oku` | `datasets/OKU` | Flat kidney PNG images plus `reviewed_labels_1.csv` / `reviewed_labels_2.csv` polygon annotations. | One image with polygons rasterized for selected anatomy; default benchmark anatomy is `Capsule`. |
 | `ultrabones100k` | `datasets/UltraBones100k` | Nested `specimen*/<anatomy>/record*/UltrasoundImages/*.png` paired with `<label-folder>/<timestamp>_label.png`, plus optional `tracking.csv`. | One ultrasound frame and filled bone-shadow mask per paired timestamp. Source labels often trace only the visible bone surface; filling is kept explicitly because line-based segmentation is difficult for region-prompted foundation models, and the filled region has clinical meaning as the acoustic bone shadow. Use decoder option `--no-fill-mask` only for thin-label sensitivity checks. |
 | `camus` | `datasets/CAMUS` | `patient*/patient*_2CH|4CH_ED|ES|half_sequence.nii.gz` paired with `_gt.nii.gz`; per-view `Info_*.cfg` files may also be present. | By default, ED/ES only: 500 patients x 2 views x 2 phases = 2000 samples. `--include-half-sequence` also expands cine volumes into frame-level samples. |
 | `aulid` | `datasets/AULID` | Category folders `Benign/`, `Malignant/`, `Normal/`, each with `image/*.jpg` and `segmentation/<label>/*.json` polygon masks. | One liver image with selected JSON polygon label; default label is `mass`. |
 | `uns` | `datasets/UNS` | `train/*.tif` images paired with same-stem `*_mask.tif`. | One nerve image/mask pair per training TIFF. |
 | `roblus` | `datasets/RobLUS` | Cleaned category folders `AP/`, `BM/`, `CP/`, `SG/`, and `XM/`; ultrasound frames are `US_*.jpg`, with paired `mask/pleural_line/mask_*.png` and `mask/rib_shadow/mask_*.png`. Unused `rib` and `cartilage` label folders are removed. | Class-specific lung benchmark. The current default target is pleural-line segmentation only; rib-shadow masks remain available but are not part of the default benchmark. Cleaned local data has 615 annotated frames plus 149 empty-mask negative controls. |
+| `ussc` | `datasets/USSC` | Upstream `SegmentationDataset.zip`, either with a nested `SegmentationDataset/` folder or direct split folders. `train_images/`, `val_images/`, and `test_images/` PNGs pair with same-name RGB semantic masks in `train_masks/`, `val_masks/`, and `test_masks/`. | CAMUS-style multi-class benchmark: one binary target per selected semantic class per source image. Default `--ussc-labels` uses all non-background labels: dura, CSF, pia, spinal cord, dorsal space, hematoma, dura/pia complex, dura/ventral complex, and ventral space. Source: https://github.com/avishakumar21/ultrasound-spinal-cord-dataset |
+| `umud` | `datasets/UMUD` | Raw Kaggle UMUD challenge zip. `apo_imgs_v1/apo_images_new_model_v1/*.tif` pairs with same-name `apo_masks_v1/apo_masks_new_model_v1/*.tif`. | One aponeurosis image/mask pair per shared TIFF stem. Fascicle folders and unlabeled `test_images_v2/` are intentionally ignored. Masks are binarized from `>0` and resized with nearest-neighbor to the paired image shape when needed. |
+| `mmotu` | `datasets/MMOTU` | Raw MMOTU zip, either with nested `MMOTU/OTU_2d/` or direct `OTU_2d/`. `images/*.JPG` pairs with `annotations/<stem>_binary.PNG`; `OTU_3d/`, raw annotation PNGs, and duplicated `_binary_binary.PNG` masks are ignored. | One ovarian-tumor image/mask pair per 2D case. The decoder uses `train.txt` and `val.txt` for split metadata and treats `train_cls.txt` / `val_cls.txt` as optional classification metadata, not segmentation classes. Source: https://github.com/cv516Buaa/MMOTU_DS2Net |
 
 ## Project Structure
 
@@ -120,6 +128,10 @@ us_multi_anatomy_seg/
 |   |-- heart_CAMUS.py             # CAMUS raw-data decoder
 |   |-- kidney_OKU.py              # OKU raw-data decoder
 |   |-- lung_RobLUS.py             # RobLUS cleaned lung decoder
+|   |-- spinal_cord_USSC.py        # USSC semantic spinal cord decoder
+|   |-- muscle_UMUD.py             # UMUD aponeurosis decoder
+|   |-- ovary_MMOTU.py             # MMOTU 2D ovarian tumor decoder
+|   |-- gastrointestinal_GIST514.py # GIST514-DB EUS ROI decoder
 |   `-- <dataset cache dirs>/      # ignored local materializations
 |-- benchmarks/
 |   |-- medsam_inference.py        # GT-box prompted MedSAM benchmark engine
@@ -214,7 +226,7 @@ per class and scored independently; empty-GT frames are skipped, matching the bo
 
 ### Dataset-Specific Options
 
-- `--dataset`: any key from `python -m datasets.registry`, such as `tnsc2020`, `blusg`, `busbra`, `busi`, `oku`, `aulid`, `roblus`, `uns`, or `ultrabones100k`.
+- `--dataset`: any key from `python -m datasets.registry`, such as `tnsc2020`, `blusg`, `busbra`, `busi`, `gist514`, `oku`, `aulid`, `roblus`, `uns`, `ussc`, `umud`, `mmotu`, or `ultrabones100k`.
 - `--no-auto-download`: require an existing local dataset cache.
 - `--hf-revision`: pin a Hugging Face dataset revision for reproducibility.
 - `--oku-anatomy Capsule`: choose OKU annotation anatomy.
@@ -224,7 +236,9 @@ per class and scored independently; empty-GT frames are skipped, matching the bo
 - `--busi-categories benign,malignant`: select BUSI categories to decode; default excludes `normal` (empty masks).
 - `--roblus-labels pleural_line`: choose RobLUS labels to merge into the binary lung mask. The default is `pleural_line`; avoid merged class runs for benchmark reporting.
 - `--roblus-subjects AP,BM`: optionally restrict RobLUS decoding to selected subjects.
-- `--box-padding 10`: used by the UltraBones100k wrappers to give the GT box prompt context around the filled bone-shadow mask.
+- `--ussc-labels spinal_cord,hematoma`: choose USSC semantic classes to decode as separate binary targets. The default is all non-background classes.
+- `--bbox-scale-factor 1.0`: UltraSAM bbox prompt scaling factor; values above `1.0` expand and values below `1.0` shrink the GT box around its center.
+- `--bbox-translation-fraction 0.0`: UltraSAM bbox prompt translation magnitude as a fraction of the scaled bbox size; positive values sample a random cardinal or diagonal direction per bbox.
 
 Outputs:
 
@@ -253,34 +267,46 @@ The wrapper scripts under `benchmarks/test_*_gt_bbox_*.py` are the current repro
 | `test_medsam_gt_bbox_blusg.py` | MedSAM | `blusg` | all | 0 | `mps` | 20 | `results/medsam_gt_bbox_blusg` |
 | `test_medsam_gt_bbox_busbra.py` | MedSAM | `busbra` | all | 0 | `mps` | 20 | `results/medsam_gt_bbox_busbra` |
 | `test_medsam_gt_bbox_busi.py` | MedSAM | `busi` (`benign,malignant`) | all | 0 | `mps` | 20 | `results/medsam_gt_bbox_busi` |
+| `test_medsam_gt_bbox_gist514.py` | MedSAM | `gist514` (`gastrointestinal_submucosal_tumor`) | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_gist514` |
 | `test_medsam_gt_bbox_oku.py` | MedSAM | `oku` | all | 0 | `mps` | 20 | `results/medsam_gt_bbox_oku` |
 | `test_medsam_gt_bbox_ultrabones100k.py` | MedSAM | `ultrabones100k` | all | 10 | `cuda:0` | 20 | `results/medsam_gt_bbox_ultrabones100k` |
 | `test_medsam_gt_bbox_camus.py` | MedSAM | `camus` | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_camus` |
 | `test_medsam_gt_bbox_aulid.py` | MedSAM | `aulid` | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_aulid` |
 | `test_medsam_gt_bbox_uns.py` | MedSAM | `uns` | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_uns` |
 | `test_medsam_gt_bbox_roblus.py` | MedSAM | `roblus` (`pleural_line`) | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_roblus` |
+| `test_medsam_gt_bbox_ussc.py` | MedSAM | `ussc` (all non-background classes) | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_ussc` |
+| `test_medsam_gt_bbox_umud.py` | MedSAM | `umud` (`aponeurosis`) | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_umud` |
+| `test_medsam_gt_bbox_mmotu.py` | MedSAM | `mmotu` (`ovarian_tumor`) | all | 0 | `mps` on macOS, otherwise `cuda:0` | 20 | `results/medsam_gt_bbox_mmotu` |
 | `test_samus_gt_bbox_tnsc2020.py` | SAMUS | `tnsc2020` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_tnsc2020` |
 | `test_samus_gt_bbox_blusg.py` | SAMUS | `blusg` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_blusg` |
 | `test_samus_gt_bbox_busbra.py` | SAMUS | `busbra` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_busbra` |
 | `test_samus_gt_bbox_busi.py` | SAMUS | `busi` (`benign,malignant`) | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_busi` |
+| `test_samus_gt_bbox_gist514.py` | SAMUS | `gist514` (`gastrointestinal_submucosal_tumor`) | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_gist514` |
 | `test_samus_gt_bbox_oku.py` | SAMUS | `oku` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_oku` |
 | `test_samus_gt_bbox_ultrabones100k.py` | SAMUS | `ultrabones100k` | all | 10 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_ultrabones100k` |
 | `test_samus_gt_bbox_camus.py` | SAMUS | `camus` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_camus` |
 | `test_samus_gt_bbox_aulid.py` | SAMUS | `aulid` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_aulid` |
 | `test_samus_gt_bbox_uns.py` | SAMUS | `uns` | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_uns` |
 | `test_samus_gt_bbox_roblus.py` | SAMUS | `roblus` (`pleural_line`) | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_roblus` |
+| `test_samus_gt_bbox_ussc.py` | SAMUS | `ussc` (all non-background classes) | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_ussc` |
+| `test_samus_gt_bbox_umud.py` | SAMUS | `umud` (`aponeurosis`) | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_umud` |
+| `test_samus_gt_bbox_mmotu.py` | SAMUS | `mmotu` (`ovarian_tumor`) | all | 0 | `mps` on macOS, otherwise `cuda:0` | all | `results/samus_gt_bbox_mmotu` |
 | `test_ultrasam_gt_bbox_tnsc2020.py` | UltraSAM | `tnsc2020` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_tnsc2020` |
 | `test_ultrasam_gt_bbox_blusg.py` | UltraSAM | `blusg` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_blusg` |
 | `test_ultrasam_gt_bbox_busbra.py` | UltraSAM | `busbra` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_busbra` |
 | `test_ultrasam_gt_bbox_busi.py` | UltraSAM | `busi` (`benign,malignant`) | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_busi` |
+| `test_ultrasam_gt_bbox_gist514.py` | UltraSAM | `gist514` (`gastrointestinal_submucosal_tumor`) | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_gist514` |
 | `test_ultrasam_gt_bbox_oku.py` | UltraSAM | `oku` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_oku` |
 | `test_ultrasam_gt_bbox_ultrabones100k.py` | UltraSAM | `ultrabones100k` | all | 10 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_ultrabones100k` |
 | `test_ultrasam_gt_bbox_camus.py` | UltraSAM | `camus` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_camus` |
 | `test_ultrasam_gt_bbox_aulid.py` | UltraSAM | `aulid` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_aulid` |
 | `test_ultrasam_gt_bbox_uns.py` | UltraSAM | `uns` | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_uns` |
 | `test_ultrasam_gt_bbox_roblus.py` | UltraSAM | `roblus` (`pleural_line`) | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_roblus` |
+| `test_ultrasam_gt_bbox_ussc.py` | UltraSAM | `ussc` (all non-background classes) | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_ussc` |
+| `test_ultrasam_gt_bbox_umud.py` | UltraSAM | `umud` (`aponeurosis`) | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_umud` |
+| `test_ultrasam_gt_bbox_mmotu.py` | UltraSAM | `mmotu` (`ovarian_tumor`) | all | 0 | CUDA if available, otherwise CPU | all | `results/ultrasam_gt_bbox_mmotu` |
 
-Shared wrapper defaults: GT masks are converted to bounding-box prompts; MedSAM GT wrappers disable bbox jitter with `--bbox-jitter-prob 0.0`; MedSAM, SAMUS, and UltraSAM GT wrappers use `--max-samples all` for full decoded-dataset default runs. Pass a positive integer, such as `--max-samples 100`, to run a capped smoke test with the same single parameter. SAMUS and UltraSAM wrappers request all visualizations; MedSAM wrappers save 20. UltraBones100k wrappers use `--box-padding 10`; other datasets use `0`. Dataset-specific options include `--oku-anatomy Capsule`, `--aulid-label mass`, `--roblus-labels pleural_line`, `--camus-labels 1,3`, `--include-half-sequence`, `--busbra-pathology`, `--busbra-birads`, and `--busi-categories`. RobLUS is benchmarked class-specifically; merged pleural-line/rib-shadow runs are avoided because a single combined bbox is not a valid prompt protocol for separate anatomies/instances. RobLUS negative-control samples have empty masks and are skipped by the current GT-box engines because no bounding box can be generated.
+Shared wrapper defaults: GT masks are converted to bounding-box prompts; MedSAM GT wrappers disable bbox jitter with `--bbox-jitter-prob 0.0`; MedSAM, SAMUS, and UltraSAM GT wrappers use `--max-samples all` for full decoded-dataset default runs. Pass a positive integer, such as `--max-samples 100`, to run a capped smoke test with the same single parameter. SAMUS and UltraSAM wrappers request all visualizations; MedSAM wrappers save 20. UltraSAM wrappers use `--bbox-scale-factor 1.0` and `--bbox-translation-fraction 0.0` by default. Dataset-specific options include `--oku-anatomy Capsule`, `--aulid-label mass`, `--roblus-labels pleural_line`, `--ussc-labels spinal_cord,hematoma`, `--camus-labels 1,3`, `--include-half-sequence`, `--busbra-pathology`, `--busbra-birads`, and `--busi-categories`. RobLUS is benchmarked class-specifically; merged pleural-line/rib-shadow runs are avoided because a single combined bbox is not a valid prompt protocol for separate anatomies/instances. RobLUS negative-control samples have empty masks and are skipped by the current GT-box engines because no bounding box can be generated.
 
 When rerunning into an existing output directory, old visualization PNGs are not automatically deleted. Remove or move the existing `visualizations/` folder first if you need the qualitative sample set to reflect only the latest run.
 

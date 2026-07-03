@@ -17,12 +17,14 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from datasets.common import (
-    bbox_from_mask,
+    bboxes_from_mask,
     ensure_three_channels,
+    normalize_to_uint8,
     prepare_medsam_image,
 )
 from datasets.loader import add_dataset_args, build_decoder_from_args
 from benchmarks.eval_utils import (
+    InferenceResult,
     METRIC_FIELDNAMES,
     TargetVisualizationCollector,
     build_metric_row,
@@ -186,7 +188,10 @@ def medsam_inference(medsam_model, img_embed: torch.Tensor, box_1024: np.ndarray
         align_corners=False,
     )
     low_res_pred = low_res_pred.squeeze().cpu().numpy()
-    return (low_res_pred > 0.5).astype(np.uint8)
+    pred = (low_res_pred > 0.5).astype(np.uint8)
+    if pred.ndim == 3:
+        pred = pred.max(axis=0)
+    return pred
 
 
 def jitter_bbox(
@@ -194,15 +199,16 @@ def jitter_bbox(
 ) -> np.ndarray:
     if jitter_frac <= 0:
         return bbox
-    w = bbox[2] - bbox[0]
-    h = bbox[3] - bbox[1]
+    bbox_arr = np.asarray(bbox)
+    w = bbox_arr[..., 2] - bbox_arr[..., 0]
+    h = bbox_arr[..., 3] - bbox_arr[..., 1]
     dx = np.random.uniform(-jitter_frac * w, jitter_frac * w)
     dy = np.random.uniform(-jitter_frac * h, jitter_frac * h)
-    new_x0 = np.clip(bbox[0] + dx, 0, width - 1)
-    new_y0 = np.clip(bbox[1] + dy, 0, height - 1)
-    new_x1 = np.clip(bbox[2] + dx, 0, width - 1)
-    new_y1 = np.clip(bbox[3] + dy, 0, height - 1)
-    return np.array([new_x0, new_y0, new_x1, new_y1], dtype=np.int32)
+    new_x0 = np.clip(bbox_arr[..., 0] + dx, 0, width - 1)
+    new_y0 = np.clip(bbox_arr[..., 1] + dy, 0, height - 1)
+    new_x1 = np.clip(bbox_arr[..., 2] + dx, 0, width - 1)
+    new_y1 = np.clip(bbox_arr[..., 3] + dy, 0, height - 1)
+    return np.stack([new_x0, new_y0, new_x1, new_y1], axis=-1).astype(np.int32)
 
 
 def get_total_iterations(decoder, max_samples: int | None) -> int | None:
@@ -240,16 +246,17 @@ def save_vis(
 
     ax[1].imshow(image)
     ax[1].imshow(gt_mask, alpha=0.45, cmap="Greens")
-    ax[1].add_patch(
-        plt.Rectangle(
-            (bbox[0], bbox[1]),
-            bbox[2] - bbox[0],
-            bbox[3] - bbox[1],
-            edgecolor="yellow",
-            facecolor=(0, 0, 0, 0),
-            linewidth=2,
+    for box in np.asarray(bbox).reshape(-1, 4):
+        ax[1].add_patch(
+            plt.Rectangle(
+                (box[0], box[1]),
+                box[2] - box[0],
+                box[3] - box[1],
+                edgecolor="yellow",
+                facecolor=(0, 0, 0, 0),
+                linewidth=2,
+            )
         )
-    )
     ax[1].set_title("GT + Box Prompt")
 
     ax[2].imshow(image)
@@ -261,6 +268,86 @@ def save_vis(
     fig.tight_layout()
     fig.savefig(vis_dir / f"{name}.png", dpi=140)
     plt.close(fig)
+
+
+def run_medsam_on_samples(
+    samples,
+    *,
+    device: str = "cuda:0",
+    checkpoint: str | Path = "work_dir/MedSAM/medsam_vit_b.pth",
+    checkpoint_repo_id: str = DEFAULT_MEDSAM_CHECKPOINT_REPO_ID,
+    checkpoint_filename: str = DEFAULT_MEDSAM_CHECKPOINT_FILENAME,
+    checkpoint_revision: str = "main",
+    no_auto_download_checkpoint: bool = False,
+    box_padding: int = 0,
+    bbox_mode: str = "individual",
+    bbox_jitter_prob: float = 0.0,
+    bbox_jitter_fraction: float = 0.2,
+) -> list[InferenceResult]:
+    """Run the normal MedSAM GT-box pipeline on already-decoded samples."""
+    try:
+        from segment_anything import sam_model_registry
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "segment_anything is required for MedSAM inference."
+        ) from exc
+
+    resolved_checkpoint = ensure_checkpoint(
+        checkpoint=str(checkpoint),
+        auto_download=not no_auto_download_checkpoint,
+        repo_id=checkpoint_repo_id,
+        filename=checkpoint_filename,
+        revision=checkpoint_revision,
+    )
+    torch_device = resolve_torch_device(device)
+    model = load_medsam_model(sam_model_registry, resolved_checkpoint, torch_device)
+    metrics_calculator = SegmentationMetrics()
+    results: list[InferenceResult] = []
+
+    for sample in samples:
+        image_3c = ensure_three_channels(sample.image)
+        height, width = image_3c.shape[:2]
+        gt_mask = (sample.mask > 0).astype(np.uint8)
+        bboxes = bboxes_from_mask(
+            gt_mask,
+            padding=box_padding,
+            mode=bbox_mode,
+        )
+        if bboxes is None:
+            continue
+        if bbox_jitter_fraction > 0 and np.random.rand() < bbox_jitter_prob:
+            bboxes = jitter_bbox(bboxes, bbox_jitter_fraction, height, width)
+
+        image_1024 = prepare_medsam_image(image_3c)
+        image_1024_tensor = (
+            torch.tensor(image_1024)
+            .float()
+            .permute(2, 0, 1)
+            .unsqueeze(0)
+            .to(torch_device)
+        )
+        box_1024 = bboxes / np.array([width, height, width, height]) * 1024
+
+        tic = time.perf_counter()
+        with torch.no_grad():
+            image_embedding = model.image_encoder(image_1024_tensor)
+        pred_mask = medsam_inference(model, image_embedding, box_1024, height, width)
+        infer_ms = (time.perf_counter() - tic) * 1000.0
+        metric_bbox = bboxes[0] if bbox_mode == "union" and len(bboxes) == 1 else bboxes
+        metrics = metrics_calculator.compute(gt_mask, pred_mask)
+        results.append(
+            InferenceResult(
+                sample=sample,
+                image=ensure_three_channels(normalize_to_uint8(image_3c)),
+                gt_mask=gt_mask,
+                pred_mask=pred_mask,
+                bbox=metric_bbox,
+                metrics=metrics,
+                infer_ms=infer_ms,
+            )
+        )
+
+    return results
 
 
 def main() -> None:
@@ -299,6 +386,15 @@ def main() -> None:
         help="Evaluate a positive integer cap or use 'all' for the full dataset. Defaults to 'all'.",
     )
     parser.add_argument("--box-padding", type=int, default=0)
+    parser.add_argument(
+        "--bbox-mode",
+        choices=("union", "individual"),
+        default="individual",
+        help=(
+            "Use one bbox around the full target mask (union) or one bbox "
+            "per connected component larger than 15 pixels (individual, default)."
+        ),
+    )
     parser.add_argument(
         "--bbox-jitter-prob",
         type=float,
@@ -360,8 +456,12 @@ def main() -> None:
         H, W = image_3c.shape[:2]
 
         gt_mask = (sample.mask > 0).astype(np.uint8)
-        bbox = bbox_from_mask(gt_mask, padding=args.box_padding)
-        if bbox is None:
+        bboxes = bboxes_from_mask(
+            gt_mask,
+            padding=args.box_padding,
+            mode=args.bbox_mode,
+        )
+        if bboxes is None:
             skipped += 1
             print_progress(
                 current=idx + 1,
@@ -376,13 +476,13 @@ def main() -> None:
             args.bbox_jitter_fraction > 0
             and np.random.rand() < args.bbox_jitter_prob
         ):
-            bbox = jitter_bbox(bbox, args.bbox_jitter_fraction, H, W)
+            bboxes = jitter_bbox(bboxes, args.bbox_jitter_fraction, H, W)
         
         image_1024 = prepare_medsam_image(image_3c)
         image_1024_tensor = (
             torch.tensor(image_1024).float().permute(2, 0, 1).unsqueeze(0).to(device)
         )
-        box_np = bbox[None, :]
+        box_np = bboxes
         box_1024 = box_np / np.array([W, H, W, H]) * 1024
 
         tic = time.perf_counter()
@@ -390,6 +490,7 @@ def main() -> None:
             image_embedding = model.image_encoder(image_1024_tensor)
         pred = medsam_inference(model, image_embedding, box_1024, H, W)
         infer_ms = (time.perf_counter() - tic) * 1000.0
+        metric_bbox = bboxes[0] if args.bbox_mode == "union" and len(bboxes) == 1 else bboxes
 
         metrics = metrics_calculator.compute(gt_mask, pred)
 
@@ -398,7 +499,7 @@ def main() -> None:
                 sample=sample,
                 height=H,
                 width=W,
-                bbox=bbox,
+                bbox=metric_bbox,
                 metrics=metrics,
                 infer_ms=infer_ms,
             )
@@ -409,7 +510,7 @@ def main() -> None:
             image=image_3c,
             gt_mask=gt_mask,
             pred_mask=pred,
-            bbox=bbox,
+            bbox=metric_bbox,
             dice=metrics["dice"],
             iou=metrics["iou"],
         )
@@ -420,7 +521,7 @@ def main() -> None:
                 image=image_3c,
                 gt_mask=gt_mask,
                 pred_mask=pred,
-                bbox=bbox,
+                bbox=metric_bbox,
             )
 
         print_progress(
@@ -451,6 +552,8 @@ def main() -> None:
             "dataset": args.dataset,
             "dataset_root": args.dataset_root,
             "max_samples": format_max_samples(args.max_samples),
+            "bbox_mode": args.bbox_mode,
+            "box_padding": args.box_padding,
             "num_evaluated": len(rows),
             "num_skipped_empty_mask": skipped,
             **summarize_metric_rows(rows),
@@ -465,6 +568,8 @@ def main() -> None:
             "dataset": args.dataset,
             "dataset_root": args.dataset_root,
             "max_samples": format_max_samples(args.max_samples),
+            "bbox_mode": args.bbox_mode,
+            "box_padding": args.box_padding,
             "num_evaluated": 0,
             "num_skipped_empty_mask": skipped,
             "error": "No valid samples were evaluated.",

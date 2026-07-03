@@ -24,6 +24,7 @@ huggingface_hub
 
 # Visualization outputs from benchmark scripts
 matplotlib
+seaborn
 
 # Compressed TIFF decoding for UNS
 imagecodecs

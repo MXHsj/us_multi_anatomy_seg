@@ -14,6 +14,7 @@ try:
         make_target_metadata,
         make_target_sample_id,
         normalize_to_uint8,
+        slugify_target_name,
     )
 except ModuleNotFoundError:
     from common import (
@@ -22,11 +23,15 @@ except ModuleNotFoundError:
         make_target_metadata,
         make_target_sample_id,
         normalize_to_uint8,
+        slugify_target_name,
     )
 
 
 _FILE_RE = re.compile(
     r"(?P<patient>patient\d+)_(?P<view>2CH|4CH)_(?P<phase>ED|ES|half_sequence)_gt\.nii\.gz$"
+)
+_SAMPLE_RE = re.compile(
+    r"(?P<patient>patient\d+)_(?P<view>2CH|4CH)_(?P<phase>ED|ES|half_sequence)_f(?P<frame>\d+)__(?P<target>[A-Za-z0-9_]+)$"
 )
 
 _CAMUS_LABELS = {
@@ -147,6 +152,83 @@ class HeartCAMUSDecoder:
         for frame_idx in range(arr_img.shape[-1]):
             yield arr_img[..., frame_idx], arr_msk[..., frame_idx], frame_idx
 
+    def _orient_frame(self, frame: np.ndarray) -> np.ndarray:
+        return np.ascontiguousarray(np.rot90(frame, k=-1))
+
+    def load_sample(self, sample_id: str) -> DecodedSample:
+        match = _SAMPLE_RE.fullmatch(sample_id)
+        if not match:
+            raise KeyError(f"CAMUS sample '{sample_id}' not found.")
+
+        patient = match.group("patient")
+        view = match.group("view")
+        phase = match.group("phase")
+        frame_idx = int(match.group("frame"))
+        target_slug = match.group("target")
+
+        labels = tuple(int(label) for label in self.positive_labels)
+        target_label: int | None = None
+        target_index = 0
+        target_class_name = ""
+        label_info: dict[str, str] = {}
+        for index, label in enumerate(labels):
+            info = self._label_info(label=label, target_index=index)
+            if slugify_target_name(info["name"]) == target_slug:
+                target_label = label
+                target_index = index
+                target_class_name = info["name"]
+                label_info = info
+                break
+        if target_label is None:
+            raise KeyError(f"CAMUS sample '{sample_id}' not found.")
+
+        gt_path = self.root / patient / f"{patient}_{view}_{phase}_gt.nii.gz"
+        img_path = gt_path.with_name(gt_path.name.replace("_gt", ""))
+        if not gt_path.exists() or not img_path.exists():
+            raise KeyError(f"CAMUS sample '{sample_id}' not found.")
+
+        img = self.nib.load(str(img_path)).get_fdata()
+        msk = self.nib.load(str(gt_path)).get_fdata()
+        for img_frame, msk_frame, current_frame_idx in self._iter_frames(img, msk):
+            if current_frame_idx != frame_idx:
+                continue
+
+            source_sample_id = f"{patient}_{view}_{phase}_f{frame_idx:03d}"
+            img_frame = self._orient_frame(img_frame)
+            msk_frame = self._orient_frame(msk_frame)
+            image_uint8 = normalize_to_uint8(img_frame)
+            rounded_mask = np.rint(msk_frame).astype(np.int32)
+            targets_per_source = len(labels)
+            target_metadata = make_target_metadata(
+                source_sample_id=source_sample_id,
+                target_class_id=target_label,
+                target_class_name=target_class_name,
+                target_instance_id=0,
+                target_color=label_info["color"],
+                target_index=target_index,
+                targets_per_source=targets_per_source,
+            )
+            target_metadata.update(
+                {
+                    "patient": patient,
+                    "view": view,
+                    "phase": phase,
+                    "frame_index": frame_idx,
+                    "target_description": label_info["description"],
+                    "raw_image_path": str(img_path),
+                    "raw_mask_path": str(gt_path),
+                }
+            )
+            return DecodedSample(
+                dataset="CAMUS",
+                sample_id=sample_id,
+                image=image_uint8,
+                mask=(rounded_mask == target_label).astype(np.uint8),
+                metadata=target_metadata,
+            )
+
+        raise KeyError(f"CAMUS sample '{sample_id}' not found.")
+
     def iter_samples(self, max_samples: Optional[int] = None) -> Iterator[DecodedSample]:
         if max_samples is not None and max_samples <= 0:
             return
@@ -171,6 +253,8 @@ class HeartCAMUSDecoder:
 
             for img_frame, msk_frame, frame_idx in self._iter_frames(img, msk):
                 source_sample_id = f"{patient}_{view}_{phase}_f{frame_idx:03d}"
+                img_frame = self._orient_frame(img_frame)
+                msk_frame = self._orient_frame(msk_frame)
                 image_uint8 = normalize_to_uint8(img_frame)
                 rounded_mask = np.rint(msk_frame).astype(np.int32)
 

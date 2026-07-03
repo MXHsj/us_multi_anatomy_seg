@@ -12,9 +12,42 @@ from skimage import io
 from skimage.draw import polygon
 
 try:
-    from datasets.common import DecodedSample, export_samples, normalize_to_uint8
+    from datasets.common import (
+        DecodedSample,
+        export_samples,
+        make_target_metadata,
+        make_target_sample_id,
+        normalize_to_uint8,
+        slugify_target_name,
+    )
 except ModuleNotFoundError:
-    from common import DecodedSample, export_samples, normalize_to_uint8
+    from common import (
+        DecodedSample,
+        export_samples,
+        make_target_metadata,
+        make_target_sample_id,
+        normalize_to_uint8,
+        slugify_target_name,
+    )
+
+
+# Known OKU anatomy classes, keyed by slug, with stable class ids/colors so each
+# anatomy is emitted as its own binary target (analogous to CAMUS labels).
+_OKU_LABELS = {
+    "capsule": {"id": 1, "name": "Capsule", "color": "#1f77b4"},
+    "central_echo_complex": {"id": 2, "name": "Central Echo Complex", "color": "#ff7f0e"},
+    "cortex": {"id": 3, "name": "Cortex", "color": "#2ca02c"},
+    "medulla": {"id": 4, "name": "Medulla", "color": "#d62728"},
+}
+
+_FALLBACK_COLORS = (
+    "#9467bd",
+    "#8c564b",
+    "#e377c2",
+    "#7f7f7f",
+    "#bcbd22",
+    "#17becf",
+)
 
 
 def _parse_json_like(value: str) -> dict:
@@ -100,14 +133,57 @@ class KidneyOKUDecoder:
     def _image_paths(self) -> list[Path]:
         return sorted(self.root.glob("*.png"))
 
-    def _build_mask(self, image_shape: Tuple[int, int], polys: List[Tuple[np.ndarray, np.ndarray, str]]) -> np.ndarray:
-        mask = np.zeros(image_shape, dtype=np.uint8)
-        for xs, ys, anatomy in polys:
+    def _label_info(self, anatomy: str, target_index: int) -> dict[str, object]:
+        slug = slugify_target_name(anatomy) if str(anatomy).strip() else "unlabeled"
+        if slug in _OKU_LABELS:
+            info = _OKU_LABELS[slug]
+            return {"id": info["id"], "name": info["name"], "color": info["color"], "slug": slug}
+        display_name = str(anatomy).strip() or "Unlabeled"
+        return {
+            "id": 100 + target_index,
+            "name": display_name,
+            "color": _FALLBACK_COLORS[target_index % len(_FALLBACK_COLORS)],
+            "slug": slug,
+        }
+
+    def _ordered_anatomies(
+        self, polys: List[Tuple[np.ndarray, np.ndarray, str]]
+    ) -> List[str]:
+        """Stable, de-duplicated list of anatomy classes present in an image.
+
+        Known classes come first (in canonical id order), followed by any unknown
+        classes in first-seen order. Honors ``anatomy_filter`` when provided.
+        """
+        present: List[str] = []
+        for _, _, anatomy in polys:
             if self.anatomy_filter and anatomy not in self.anatomy_filter:
+                continue
+            if anatomy not in present:
+                present.append(anatomy)
+
+        def sort_key(anatomy: str) -> Tuple[int, int, str]:
+            slug = slugify_target_name(anatomy) if str(anatomy).strip() else "unlabeled"
+            if slug in _OKU_LABELS:
+                return (0, int(_OKU_LABELS[slug]["id"]), slug)
+            return (1, present.index(anatomy), slug)
+
+        return sorted(present, key=sort_key)
+
+    def _build_mask(
+        self,
+        image_shape: Tuple[int, int],
+        polys: List[Tuple[np.ndarray, np.ndarray, str]],
+        anatomy: str,
+    ) -> Tuple[np.ndarray, int]:
+        mask = np.zeros(image_shape, dtype=np.uint8)
+        num_polygons = 0
+        for xs, ys, poly_anatomy in polys:
+            if poly_anatomy != anatomy:
                 continue
             rr, cc = polygon(ys, xs, shape=image_shape)
             mask[rr, cc] = 1
-        return mask
+            num_polygons += 1
+        return mask, num_polygons
 
     def count_samples(self, max_samples: Optional[int] = None) -> int:
         total = 0
@@ -115,46 +191,88 @@ class KidneyOKUDecoder:
             polys = self._annotations.get(img_path.name, [])
             if not polys:
                 continue
-            if self.anatomy_filter and not any(
-                anatomy in self.anatomy_filter for _, _, anatomy in polys
-            ):
-                continue
-            total += 1
+            total += len(self._ordered_anatomies(polys))
+            if max_samples is not None and total >= max_samples:
+                return max_samples
         return min(total, max_samples) if max_samples is not None else total
+
+    def _iter_image_samples(self, img_path: Path) -> Iterator[DecodedSample]:
+        filename = img_path.name
+        polys = self._annotations.get(filename, [])
+        if not polys:
+            return
+
+        anatomies = self._ordered_anatomies(polys)
+        if not anatomies:
+            return
+
+        image = io.imread(img_path)
+        if image.ndim == 3:
+            h, w = image.shape[:2]
+        else:
+            h, w = image.shape
+        image_uint8 = normalize_to_uint8(image)
+        source_sample_id = img_path.stem
+        targets_per_source = len(anatomies)
+
+        for target_index, anatomy in enumerate(anatomies):
+            mask, num_polygons = self._build_mask((h, w), polys, anatomy)
+            if mask.sum() == 0:
+                continue
+
+            label_info = self._label_info(anatomy, target_index)
+            target_class_name = str(label_info["name"])
+            target_metadata = make_target_metadata(
+                source_sample_id=source_sample_id,
+                target_class_id=label_info["id"],
+                target_class_name=target_class_name,
+                target_instance_id=0,
+                target_color=str(label_info["color"]),
+                target_index=target_index,
+                targets_per_source=targets_per_source,
+            )
+            target_metadata.update(
+                {
+                    "filename": filename,
+                    "anatomy": anatomy,
+                    "num_polygons": num_polygons,
+                }
+            )
+            target_sample_id = make_target_sample_id(
+                source_sample_id=source_sample_id,
+                target_class_name=target_class_name,
+                target_instance_id=0,
+            )
+
+            yield DecodedSample(
+                dataset="OKU",
+                sample_id=target_sample_id,
+                image=image_uint8,
+                mask=mask,
+                metadata=target_metadata,
+            )
+
+    def load_sample(self, sample_id: str) -> DecodedSample:
+        source_stem, sep, target_slug = sample_id.rpartition("__")
+        if not sep:
+            # Backward-compatible: bare image stem -> first available target.
+            source_stem, target_slug = sample_id, ""
+
+        img_path = self.root / f"{source_stem}.png"
+        if img_path.exists():
+            for sample in self._iter_image_samples(img_path):
+                if not target_slug or sample.sample_id == sample_id:
+                    return sample
+        raise KeyError(f"OKU sample '{sample_id}' not found.")
 
     def iter_samples(self, max_samples: Optional[int] = None) -> Iterator[DecodedSample]:
         count = 0
         for img_path in self._image_paths():
-            filename = img_path.name
-            polys = self._annotations.get(filename, [])
-            if not polys:
-                continue
-
-            image = io.imread(img_path)
-            if image.ndim == 3:
-                h, w = image.shape[:2]
-            else:
-                h, w = image.shape
-            mask = self._build_mask((h, w), polys)
-            if mask.sum() == 0:
-                continue
-
-            sample = DecodedSample(
-                dataset="OKU",
-                sample_id=img_path.stem,
-                image=normalize_to_uint8(image),
-                mask=mask,
-                metadata={
-                    "filename": filename,
-                    "num_polygons": len(polys),
-                    "anatomy_filter": self.anatomy_filter,
-                },
-            )
-            yield sample
-
-            count += 1
-            if max_samples is not None and count >= max_samples:
-                break
+            for sample in self._iter_image_samples(img_path):
+                yield sample
+                count += 1
+                if max_samples is not None and count >= max_samples:
+                    return
 
 
 if __name__ == "__main__":
@@ -205,6 +323,7 @@ if __name__ == "__main__":
         for sample in decoder.iter_samples(max_samples=args.max_samples):
             print(
                 f"{sample.sample_id}: image={sample.image.shape}, mask={sample.mask.shape}, "
+                f"class={sample.metadata.get('target_class_name')}, "
                 f"polygons={sample.metadata['num_polygons']}"
             )
             count += 1

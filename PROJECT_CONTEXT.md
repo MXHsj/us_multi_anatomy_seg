@@ -29,6 +29,7 @@ Registered datasets:
 | `aulid` | Liver | JPG images with JSON polygon masks for `mass`, `liver`, or `outline`. |
 | `uns` | Nerve | TIFF images paired with `_mask.tif` masks. |
 | `roblus` | Lung | Cleaned RobLUS decoder for subjects `AP`, `BM`, `CP`, `SG`, and `XM`; default benchmark target is class-specific `pleural_line`. |
+| `ussc` | Spinal Cord | RGB semantic masks from the upstream `SegmentationDataset.zip`; CAMUS-style one binary target per selected non-background class. |
 
 BCU_PD has been removed from the registry and wrapper scripts.
 
@@ -67,12 +68,27 @@ Wrapper defaults are now aligned for comparable default reruns:
 - `--max-samples 4000` for CAMUS ED/ES target rows, corresponding to 2000 source frames x 2 labels.
 - `--max-samples 764` for RobLUS, which yields 615 annotated pleural-line samples and skips 149 empty-mask frames because no GT box can be generated.
 - `--save-vis 20`.
-- `--box-padding 10` only for UltraBones100k and `0` otherwise.
+- UltraSAM GT wrappers use `--bbox-scale-factor 1.0` and `--bbox-translation-fraction 0.0` by default.
 - MedSAM GT wrappers explicitly set `--bbox-jitter-prob 0.0`.
 
 RobLUS benchmark reporting should stay class-specific. Merged pleural-line/rib-shadow runs are not a valid headline protocol because a single combined bbox is not a clean prompt for separate structures.
 
 CAMUS defaults exclude half-sequences and evaluate ED/ES only: 500 patients x 2 views x 2 phases = 2000 source frames. The CAMUS decoder now emits one binary target sample per selected label (`LV` and `LA` by default), so the default CAMUS benchmark has 4000 target evaluations. With `--include-half-sequence`, cine volumes expand into frame-level source samples before label expansion.
+
+## Running Analysis Scripts (guidance for the assistant)
+
+Whenever asked to run something (EDA, results analysis, model comparison, etc.),
+first check `scripts/` for the matching runner and run that — do not invoke the
+underlying python directly:
+
+- EDA: `scripts/run_eda_analysis.sh`
+- Results vs EDA: `scripts/run_quantitative_all.sh`
+- Compare models: `scripts/run_compare_models.sh`
+
+If parameters need to change (datasets, metrics, models, toggles), edit the
+relevant runner in place and run it. Keep these scripts as simple and plain as
+the existing ones: a venv activation, a few config variables up top, and the
+python invocation(s) — no added control flow, helpers, or complexity.
 
 ## Analysis Workspace
 
