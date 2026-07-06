@@ -53,6 +53,7 @@ MODEL_CITATIONS = {
 PROMPT_LABELS = {
     "gt_bbox": "Bbox",
     "gt_point": "Point",
+    "gt_point_bbox": "Point + Bbox",
     "label": "Text (label)",
     "object": "Text (object)",
     "text+bbox": "Text + Bbox",

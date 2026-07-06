@@ -46,7 +46,10 @@ def parse_result_dir_name(name: str) -> tuple[str, str, str] | None:
         return None
 
     model = parts[0]
-    if parts[1:3] == ["gt", "bbox"]:
+    if parts[1:4] == ["gt", "point", "bbox"]:
+        protocol = "gt_point_bbox"
+        dataset = "_".join(parts[4:])
+    elif parts[1:3] == ["gt", "bbox"]:
         protocol = "gt_bbox"
         dataset = "_".join(parts[3:])
     elif parts[1:3] == ["gt", "point"]:
