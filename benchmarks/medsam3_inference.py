@@ -18,7 +18,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from datasets.common import ensure_three_channels, normalize_to_uint8
+from datasets.common import bbox_from_mask, ensure_three_channels, normalize_to_uint8
 from datasets.label_text import LABEL_TEXT, concept_for
 from datasets.loader import add_dataset_args, build_decoder_from_args
 from benchmarks.eval_utils import (
@@ -241,11 +241,30 @@ class MedSAM3TextInference:
 
         print("✅ MedSAM3 + LoRA ready for inference!\n")
 
-    def create_datapoint(self, pil_image, text_prompt: str):
-        """Create a SAM3 datapoint from PIL image and text prompt."""
+    def create_datapoint(
+        self,
+        pil_image,
+        text_prompt: str,
+        bbox_xyxy: np.ndarray | None = None,
+    ):
+        """Create a SAM3 datapoint from a PIL image, a text prompt and an optional box.
+
+        ``bbox_xyxy`` is given in denormalized XYXY pixel coordinates of the original
+        image. The SAM3 transforms (RandomResizeAPI + NormalizeAPI) scale it to the model
+        resolution and convert it to normalized CxCyWH, mirroring the training pipeline.
+        """
         w, h = pil_image.size
 
         sam_image = self.SAMImage(data=pil_image, objects=[], size=[h, w])
+
+        input_bbox = None
+        input_bbox_label = None
+        if bbox_xyxy is not None:
+            input_bbox = torch.as_tensor(
+                np.asarray(bbox_xyxy, dtype=np.float32)
+            ).view(1, 4)
+            # The collator requires a per-box label; 1 marks a positive (inclusion) box.
+            input_bbox_label = torch.ones(1, dtype=torch.long)
 
         query = self.FindQueryLoaded(
             query_text=text_prompt,
@@ -253,6 +272,8 @@ class MedSAM3TextInference:
             object_ids_output=[],
             is_exhaustive=True,
             query_processing_order=0,
+            input_bbox=input_bbox,
+            input_bbox_label=input_bbox_label,
             inference_metadata=self.InferenceMetadata(
                 coco_image_id=0,
                 original_image_id=0,
@@ -266,13 +287,22 @@ class MedSAM3TextInference:
         return self.Datapoint(find_queries=[query], images=[sam_image])
 
     @torch.no_grad()
-    def predict(self, pil_image, text_prompt: str) -> tuple[np.ndarray | None, float]:
-        """Run text-prompted inference and return the highest-confidence mask + score."""
+    def predict(
+        self,
+        pil_image,
+        text_prompt: str,
+        bbox_xyxy: np.ndarray | None = None,
+    ) -> tuple[np.ndarray | None, float]:
+        """Run prompted inference and return the highest-confidence mask + score.
+
+        When ``bbox_xyxy`` is provided, the box is supplied to the detector alongside the
+        text concept (the paper's MedSAM-3 "T+I" protocol); otherwise this is pure text.
+        """
         from torchvision.ops import nms
         import torch.nn.functional as F
 
         # Create datapoint
-        datapoint = self.create_datapoint(pil_image, text_prompt)
+        datapoint = self.create_datapoint(pil_image, text_prompt, bbox_xyxy=bbox_xyxy)
 
         # Apply transforms
         datapoint = self.transform(datapoint)
@@ -490,6 +520,7 @@ def save_text_vis(
     pred_mask: np.ndarray,
     concept: str,
     score: float,
+    bbox: np.ndarray | None = None,
 ) -> None:
     import matplotlib
 
@@ -505,11 +536,27 @@ def save_text_vis(
 
     ax[1].imshow(image)
     ax[1].imshow(gt_mask, alpha=0.45, cmap="Greens")
-    ax[1].set_title("Ground Truth")
+    if bbox is not None and len(bbox) == 4:
+        ax[1].add_patch(
+            plt.Rectangle(
+                (bbox[0], bbox[1]),
+                bbox[2] - bbox[0],
+                bbox[3] - bbox[1],
+                edgecolor="yellow",
+                facecolor=(0, 0, 0, 0),
+                linewidth=2,
+            )
+        )
+        ax[1].set_title("GT + Box Prompt")
+    else:
+        ax[1].set_title("Ground Truth")
 
     ax[2].imshow(image)
     ax[2].imshow(pred_mask, alpha=0.45, cmap="Reds")
-    ax[2].set_title(f"MedSAM3 text='{concept}' (s={score:.2f})")
+    title = f"MedSAM3 text='{concept}'"
+    if bbox is not None and len(bbox) == 4:
+        title += "+box"
+    ax[2].set_title(f"{title} (s={score:.2f})")
 
     for axis in ax:
         axis.axis("off")
@@ -536,7 +583,8 @@ def evenly_spaced_indices(total: int | None, count: int) -> set[int]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Text-prompted MedSAM3 benchmark (concept from label taxonomy)."
+        description="MedSAM3 benchmark (concept from label taxonomy). Pure text by default; "
+        "pass --use-gt-bbox to add a ground-truth box prompt (the paper's 'T+I' protocol)."
     )
     add_dataset_args(parser, include_camus=True)
     parser.add_argument("--checkpoint", type=str, default=DEFAULT_MEDSAM3_CHECKPOINT)
@@ -564,6 +612,18 @@ def main() -> None:
         default="",
         help="Override the per-class concept from datasets/label_text.py with this single "
         "prompt for ALL samples (e.g. 'object'). Use a distinct --output-dir to keep the run separate.",
+    )
+    parser.add_argument(
+        "--use-gt-bbox",
+        action="store_true",
+        help="Also feed a bounding box derived from the GT mask alongside the text concept "
+        "(the paper's MedSAM-3 'T+I' protocol). Without this flag the run is pure text.",
+    )
+    parser.add_argument(
+        "--box-padding",
+        type=int,
+        default=0,
+        help="Pixels of padding added around the GT-derived box prompt (only with --use-gt-bbox).",
     )
     parser.add_argument(
         "--no-auto-download-checkpoint",
@@ -679,8 +739,9 @@ def main() -> None:
     metrics_calculator = SegmentationMetrics()
     benchmark_tic = time.perf_counter()
     total_label = str(total_iterations) if total_iterations is not None else "all available"
+    protocol = "text+bbox" if args.use_gt_bbox else "text"
     print(
-        f"Running MedSAM3 text benchmark for dataset '{args.dataset}' "
+        f"Running MedSAM3 {protocol} benchmark for dataset '{args.dataset}' "
         f"on {total_label} samples (device={device})..."
     )
 
@@ -692,7 +753,7 @@ def main() -> None:
         image_3c = ensure_three_channels(normalize_to_uint8(sample.image))
         H, W = image_3c.shape[:2]
         gt_mask = (sample.mask > 0).astype(np.uint8)
-        
+
         # Apply augmentation if enabled
         if args.augment:
             aug_seed = args.aug_seed + idx if args.aug_seed is not None else None
@@ -716,6 +777,23 @@ def main() -> None:
             )
             continue
 
+        # In the T+I protocol, derive the box prompt from the GT mask. An empty mask
+        # is already skipped above, so bbox_from_mask returns a valid box here.
+        bbox = None
+        if args.use_gt_bbox:
+            bbox = bbox_from_mask(gt_mask, padding=args.box_padding)
+            if bbox is None:
+                skipped += 1
+                print_progress(
+                    current=idx + 1,
+                    total=total_iterations,
+                    evaluated=len(rows),
+                    skipped=skipped,
+                    sample_id=sample.sample_id,
+                    elapsed_s=time.perf_counter() - benchmark_tic,
+                )
+                continue
+
         concept = args.text_prompt or resolve_concept(args, sample)
         pil_image = Image.fromarray(image_3c)
 
@@ -723,7 +801,7 @@ def main() -> None:
         if autocast is not None:
             autocast.__enter__()
         try:
-            pred, score = processor.predict(pil_image, concept)
+            pred, score = processor.predict(pil_image, concept, bbox_xyxy=bbox)
         finally:
             if autocast is not None:
                 autocast.__exit__(None, None, None)
@@ -739,7 +817,8 @@ def main() -> None:
             sample=sample,
             height=H,
             width=W,
-            bbox=np.array([], dtype=np.int32),  # inert for the text path
+            # Box prompt for the T+I path; an empty array (inert) for pure text.
+            bbox=bbox if bbox is not None else np.array([], dtype=np.int32),
             metrics=metrics,
             infer_ms=infer_ms,
         )
@@ -756,6 +835,7 @@ def main() -> None:
                 pred_mask=pred,
                 concept=concept,
                 score=score,
+                bbox=bbox,
             )
 
         print_progress(
@@ -779,7 +859,7 @@ def main() -> None:
     if rows:
         summary = {
             "model": "medsam3",
-            "protocol": "text",
+            "protocol": protocol,
             "dataset": args.dataset,
             "dataset_root": args.dataset_root,
             "checkpoint": str(checkpoint),
@@ -789,6 +869,8 @@ def main() -> None:
             "confidence_threshold": args.confidence_threshold,
             "nms_iou_threshold": args.nms_iou_threshold,
             "text_prompt_override": args.text_prompt or None,
+            "use_gt_bbox": args.use_gt_bbox,
+            "box_padding": args.box_padding if args.use_gt_bbox else None,
             "augmentation_enabled": args.augment,
             "aug_scale_range": args.aug_scale_range if args.augment else None,
             "aug_shift_range": args.aug_shift_range if args.augment else None,
@@ -806,7 +888,7 @@ def main() -> None:
     else:
         summary = {
             "model": "medsam3",
-            "protocol": "text",
+            "protocol": protocol,
             "dataset": args.dataset,
             "dataset_root": args.dataset_root,
             "max_samples": format_max_samples(args.max_samples),
