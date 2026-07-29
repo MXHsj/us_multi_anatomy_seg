@@ -14,7 +14,9 @@
     "point_prompt": "#00E5FF",
     "error_true_positive": "#1F9E44",
     "error_false_positive": "#D62728",
-    "error_false_negative": "#2664EB"
+    "error_false_negative": "#2664EB",
+    "comparison_gt_fill": "#00B050",
+    "comparison_prediction_fill": "#D62728 at 80% opacity"
   },
   "element_pngs": {
     "bbox_01_raw_bmode.png": "paper_figures/prompt_protocol_examples/elements/bbox_01_raw_bmode.png",
@@ -35,7 +37,8 @@
     "text_04_text_prompt_pred_overlay.png": "paper_figures/prompt_protocol_examples/elements/text_04_text_prompt_pred_overlay.png",
     "text_05_text_prompt_pred_with_gt_bbox_constraint.png": "paper_figures/prompt_protocol_examples/elements/text_05_text_prompt_pred_with_gt_bbox_constraint.png",
     "text_06_error_map.png": "paper_figures/prompt_protocol_examples/elements/text_06_error_map.png",
-    "text_07_constrained_error_map.png": "paper_figures/prompt_protocol_examples/elements/text_07_constrained_error_map.png"
+    "text_07_constrained_error_map.png": "paper_figures/prompt_protocol_examples/elements/text_07_constrained_error_map.png",
+    "comparison_01_gt_pred_overlay.png": "paper_figures/prompt_protocol_examples/elements/comparison_01_gt_pred_overlay.png"
   },
   "medsam_exact_single_sample_inference": {
     "checkpoint": "work_dir/MedSAM/medsam_vit_b.pth",
@@ -69,10 +72,27 @@
       106
     ]
   },
+  "standalone_gt_prediction_comparison": {
+    "sample_id": "case027",
+    "model": "MedSAM",
+    "checkpoint": "work_dir/MedSAM/medsam_vit_b.pth",
+    "metrics": {
+      "dice": 0.9442513089005236,
+      "iou": 0.8943902245497104,
+      "precision": 0.9657299520219328,
+      "recall": 0.9237072850938294,
+      "specificity": 0.9955224966558647,
+      "balanced_accuracy": 0.959614890874847,
+      "hd95": 12.649110640673518,
+      "assd": 4.269565022477521,
+      "relative_area_error": -0.04351389002704253
+    },
+    "rendering": "green GT fill with 20% transparent red prediction fill on white"
+  },
   "text_prompt_output": {
     "text_model": "medsam3",
-    "visualization_source": "results/medsam3_text_prompt_blusg/visualizations/case027.png",
-    "benchmark_metrics_source": "results/medsam3_text_prompt_blusg/per_sample_metrics.csv",
+    "visualization_source": "results/medsam3_label_prompt/blusg/visualizations/case027.png",
+    "benchmark_metrics_source": "results/medsam3_label_prompt/blusg/per_sample_metrics.csv",
     "benchmark_dice": 0.935957035810567,
     "benchmark_iou": 0.8796233491601165,
     "extracted_mask_metrics": {

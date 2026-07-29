@@ -61,6 +61,14 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("--sample-id", default="case027")
+    parser.add_argument(
+        "--comparison-sample-id",
+        default="case027",
+        help=(
+            "BLUSG sample used for the standalone GT-versus-prediction map. "
+            "Defaults to the same sample used by the prompt-protocol tiles."
+        ),
+    )
     parser.add_argument("--dataset-root", default=str(ROOT / "datasets/BLUSG"))
     parser.add_argument(
         "--output-dir",
@@ -326,6 +334,41 @@ def error_map(gt: np.ndarray, pred: np.ndarray) -> np.ndarray:
     return rgb
 
 
+def resize_binary_mask(mask: np.ndarray, target_shape: tuple[int, int]) -> np.ndarray:
+    if mask.shape == target_shape:
+        return mask.astype(np.uint8)
+    resized = Image.fromarray(mask.astype(np.uint8) * 255).resize(
+        (target_shape[1], target_shape[0]),
+        resample=Image.Resampling.NEAREST,
+    )
+    return (np.asarray(resized) > 0).astype(np.uint8)
+
+
+def gt_prediction_map(
+    gt: np.ndarray,
+    pred: np.ndarray,
+    target_shape: tuple[int, int],
+    prediction_opacity: float = 0.80,
+) -> np.ndarray:
+    """Render GT as green fill with a transparent red prediction overlay.
+
+    Unlike ``error_map``, this encodes the two masks directly and does not
+    partition pixels into TP/FP/FN categories. The prediction is rendered with
+    20% transparency so the GT remains visible in overlapping regions.
+    """
+    gt_b = resize_binary_mask(gt, target_shape).astype(bool)
+    pred_b = resize_binary_mask(pred, target_shape).astype(bool)
+
+    rgb = np.full((*target_shape, 3), 255, dtype=np.uint8)
+    rgb[gt_b] = GT_MASK_COLOR.astype(np.uint8)
+    rgb_float = rgb.astype(np.float32)
+    rgb_float[pred_b] = (
+        (1.0 - prediction_opacity) * rgb_float[pred_b]
+        + prediction_opacity * PRED_MASK_COLOR
+    )
+    return np.clip(rgb_float, 0, 255).astype(np.uint8)
+
+
 def save_png(path: Path, image: np.ndarray) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(normalize_to_uint8(image)).save(path)
@@ -351,6 +394,8 @@ def save_element_tiles(
     text_pred: np.ndarray,
     jittered_bbox: np.ndarray,
     click_xy: tuple[int, int],
+    comparison_gt: np.ndarray,
+    comparison_pred: np.ndarray,
 ) -> dict[str, str]:
     elements = out_dir / "elements"
     elements.mkdir(parents=True, exist_ok=True)
@@ -393,6 +438,11 @@ def save_element_tiles(
         ),
         "text_06_error_map.png": error_map(example.gt_mask, text_pred),
         "text_07_constrained_error_map.png": error_map(example.gt_mask, text_constrained),
+        "comparison_01_gt_pred_overlay.png": gt_prediction_map(
+            comparison_gt,
+            comparison_pred,
+            target_shape=example.gt_mask.shape,
+        ),
     }
 
     saved: dict[str, str] = {}
@@ -422,6 +472,15 @@ def main() -> None:
     print(f"Using device for MedSAM: {device}")
     medsam_pred = run_medsam(example, args.medsam_checkpoint, device)
     print("MedSAM prediction generated.")
+    comparison_example = load_example(args.dataset_root, args.comparison_sample_id)
+    if comparison_example.sample_id == example.sample_id:
+        comparison_pred = medsam_pred
+    else:
+        comparison_pred = run_medsam(comparison_example, args.medsam_checkpoint, device)
+    print(
+        "Standalone GT/prediction comparison generated for "
+        f"{comparison_example.sample_id}."
+    )
     samus_pred, click_xy = run_samus(example, args.samus_checkpoint, args.samus_base_checkpoint, device)
     print(f"SAMUS prediction generated with click={click_xy}.")
 
@@ -439,6 +498,8 @@ def main() -> None:
         text_pred=text_pred,
         jittered_bbox=jittered,
         click_xy=click_xy,
+        comparison_gt=comparison_example.gt_mask,
+        comparison_pred=comparison_pred,
     )
 
     metadata = {
@@ -455,6 +516,8 @@ def main() -> None:
             "error_true_positive": "#1F9E44",
             "error_false_positive": "#D62728",
             "error_false_negative": "#2664EB",
+            "comparison_gt_fill": "#00B050",
+            "comparison_prediction_fill": "#D62728 at 80% opacity",
         },
         "element_pngs": saved_tiles,
         "medsam_exact_single_sample_inference": {
@@ -465,6 +528,18 @@ def main() -> None:
             "checkpoint": relative(args.samus_checkpoint),
             "metrics": SegmentationMetrics().compute(example.gt_mask, samus_pred),
             "click_xy": list(click_xy),
+        },
+        "standalone_gt_prediction_comparison": {
+            "sample_id": comparison_example.sample_id,
+            "model": "MedSAM",
+            "checkpoint": relative(args.medsam_checkpoint),
+            "metrics": SegmentationMetrics().compute(
+                comparison_example.gt_mask,
+                comparison_pred,
+            ),
+            "rendering": (
+                "green GT fill with 20% transparent red prediction fill on white"
+            ),
         },
         "text_prompt_output": {
             "text_model": args.text_model,
