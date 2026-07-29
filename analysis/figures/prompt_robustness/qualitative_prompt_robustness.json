@@ -1,0 +1,131 @@
+{
+  "output_path": "analysis/figures/prompt_robustness/qualitative_prompt_robustness.png",
+  "seed": 812528458,
+  "selected_sample": {
+    "dataset": "camus",
+    "sample_id": "patient0009_4CH_ED_f000__lv",
+    "score": 1.8569874198997112,
+    "scale_range": 0.9125499486388529,
+    "translation_range": 0.9444374712608582,
+    "scale_dice": {
+      "0.85": 0.8920701809660713,
+      "1": 0.958339110581145,
+      "1.15": 0.0457891619422921
+    },
+    "translation_dice": {
+      "0": 0.958339110581145,
+      "0.025": 0.9598336798336798,
+      "0.05": 0.9550156362761608,
+      "0.075": 0.9476202397841388,
+      "0.10": 0.9351145380373874,
+      "0.125": 0.0179592077862617,
+      "0.15": 0.0153962085728217
+    },
+    "num_candidates": 1239
+  },
+  "visual_conditions": {
+    "scale": [
+      0.85,
+      1.0,
+      1.15
+    ],
+    "translation": [
+      0.0,
+      0.05,
+      0.1
+    ]
+  },
+  "visual_metrics": {
+    "scale_0.85": {
+      "dice": 0.8920701809660713,
+      "iou": 0.8051684913976965,
+      "precision": 1.0,
+      "recall": 0.8051684913976965,
+      "specificity": 1.0,
+      "balanced_accuracy": 0.9025842456988482,
+      "hd95": 24.0,
+      "assd": 12.807480956586367,
+      "relative_area_error": -0.19483150860230342,
+      "infer_ms": 134.4758589984849
+    },
+    "scale_1": {
+      "dice": 0.9583968795348881,
+      "iou": 0.9201171355044813,
+      "precision": 0.9984400577756379,
+      "recall": 0.9214417744916821,
+      "specificity": 0.9995822373510753,
+      "balanced_accuracy": 0.9605120059213788,
+      "hd95": 11.180339887498949,
+      "assd": 5.0081645720819745,
+      "relative_area_error": -0.07711858381913834,
+      "infer_ms": 136.47611300984863
+    },
+    "scale_1.15": {
+      "dice": 0.0456968773800457,
+      "iou": 0.02338269680436477,
+      "precision": 0.07144207144207144,
+      "recall": 0.033591639414190244,
+      "specificity": 0.8733044509773583,
+      "balanced_accuracy": 0.4534480451957743,
+      "hd95": 40.44749683231337,
+      "assd": 15.936139998367734,
+      "relative_area_error": -0.5298059149722736,
+      "infer_ms": 135.1545189972967
+    },
+    "translation_0": {
+      "dice": 0.9583968795348881,
+      "iou": 0.9201171355044813,
+      "precision": 0.9984400577756379,
+      "recall": 0.9214417744916821,
+      "specificity": 0.9995822373510753,
+      "balanced_accuracy": 0.9605120059213788,
+      "hd95": 11.180339887498949,
+      "assd": 5.0081645720819745,
+      "relative_area_error": -0.07711858381913834,
+      "infer_ms": 136.1757319973549
+    },
+    "translation_0.05": {
+      "dice": 0.9602089810334995,
+      "iou": 0.9234634301687838,
+      "precision": 0.9950814046593206,
+      "recall": 0.9276979951656477,
+      "specificity": 0.9986693485997215,
+      "balanced_accuracy": 0.9631836718826845,
+      "hd95": 11.0,
+      "assd": 4.838444449544328,
+      "relative_area_error": -0.06771647945400255,
+      "infer_ms": 138.43613100470975
+    },
+    "translation_0.1": {
+      "dice": 0.024036179894475308,
+      "iou": 0.012164281374945254,
+      "precision": 0.05598907530238002,
+      "recall": 0.015302857955353334,
+      "specificity": 0.9251276496982825,
+      "balanced_accuracy": 0.47021525382681795,
+      "hd95": 175.23981780548706,
+      "assd": 37.794011643666295,
+      "relative_area_error": -0.7266813593061282,
+      "infer_ms": 136.78343300125562
+    }
+  },
+  "reference_bbox_color": "#00d7ff",
+  "gist514": {
+    "config": "analysis/figures/qualitative/dice_0_5/run_config.json",
+    "example_index": 15,
+    "sample_id_source": "explicit",
+    "sample_id": "lmym/original_lmym064_1",
+    "metrics": {
+      "dice": 0.4767170414055781,
+      "iou": 0.3129537022100339,
+      "precision": 0.3452940338886516,
+      "recall": 0.7696580179322383,
+      "specificity": 0.918299535792817,
+      "balanced_accuracy": 0.8439787768625276,
+      "hd95": 73.97795115475078,
+      "assd": 20.214117350983713,
+      "relative_area_error": 1.228993096881695,
+      "infer_ms": 133.14281399652828
+    }
+  }
+}

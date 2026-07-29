@@ -59,6 +59,33 @@ point_prompt_jitter_fractions=(
   0.15
 )
 
+heatmap_datasets=(
+  mmotu
+  busbra
+  gist514
+  tnsc2020
+  ultrabones100k
+  umud
+  roblus
+)
+heatmap_result_label="Dice"
+heatmap_dice_threshold="1.0"
+heatmap_ultrabones_min_solidity="0.2"
+heatmap_filter_tnsc2020_target_bbox_one="true"
+heatmap_tnsc2020_min_aspect_ratio="0.2"
+heatmap_eda_metrics="target_area_fraction,target_bbox_area_ratio,solidity,circularity,aspect_ratio_feret"
+heatmap_eda_labels="Target/image,Target/bbox,Solidity,Circularity,Aspect ratio"
+heatmap_correlation="spearman"
+
+qualitative_seed="812528458"
+qualitative_gist_example_index="15"
+qualitative_scale_values="0.85,1,1.15"
+qualitative_translation_values="0,0.05,0.1"
+qualitative_output_dir="analysis/figures/prompt_robustness"
+qualitative_gist_config="analysis/figures/qualitative/dice_0_5/run_config.json"
+qualitative_gist_sample_id="lmym/original_lmym064_1"
+qualitative_reference_bbox_color="#00d7ff"
+
 # The wrappers default the source tree + checkpoint to work_dir/UltraSam (the devcontainer
 # path); the args below override them for a local checkout and pass through to
 # benchmarks/ultrasam_inference.py.
@@ -130,7 +157,7 @@ done
 datasets_csv="$(IFS=,; echo "${datasets[*]}")"
 translation_fractions_csv="$(IFS=,; echo "${translation_fractions[*]}")"
 scale_factors_csv="$(IFS=,; echo "${scale_factors[*]}")"
-point_prompt_jitter_fractions_csv="$(IFS=,; echo "${point_prompt_jitter_fractions[*]}")"
+heatmap_datasets_csv="$(IFS=,; echo "${heatmap_datasets[*]}")"
 
 python analysis/analyse_jitter_exp.py \
   --experiment both \
@@ -138,5 +165,26 @@ python analysis/analyse_jitter_exp.py \
   --datasets "${datasets_csv}" \
   --scales "${scale_factors_csv}" \
   --translations "${translation_fractions_csv}" \
-  --point-jitters "${point_prompt_jitter_fractions_csv}" \
-  --metrics "dice"
+  --metrics "dice" \
+  --heatmap-datasets "${heatmap_datasets_csv}" \
+  --heatmap-result-label "${heatmap_result_label}" \
+  --heatmap-dice-threshold "${heatmap_dice_threshold}" \
+  --heatmap-ultrabones-min-solidity "${heatmap_ultrabones_min_solidity}" \
+  --heatmap-filter-tnsc2020-target-bbox-one "${heatmap_filter_tnsc2020_target_bbox_one}" \
+  --heatmap-tnsc2020-min-aspect-ratio "${heatmap_tnsc2020_min_aspect_ratio}" \
+  --heatmap-eda-metrics "${heatmap_eda_metrics}" \
+  --heatmap-eda-labels "${heatmap_eda_labels}" \
+  --heatmap-correlation "${heatmap_correlation}"
+
+python analysis/qualitative_jitter_robustness.py \
+  --jitter-results-dir "${jitter_root}" \
+  --output-dir "${qualitative_output_dir}" \
+  --datasets "${datasets_csv}" \
+  --scale-values "${qualitative_scale_values}" \
+  --visual-translation-values "${qualitative_translation_values}" \
+  --seed "${qualitative_seed}" \
+  --gist-config "${qualitative_gist_config}" \
+  --gist-example-index "${qualitative_gist_example_index}" \
+  --gist-sample-id "${qualitative_gist_sample_id}" \
+  --reference-bbox-color "${qualitative_reference_bbox_color}" \
+  --gpu-id "${gpu_id}"
