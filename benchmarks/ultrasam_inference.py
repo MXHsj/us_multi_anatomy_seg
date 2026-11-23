@@ -53,6 +53,7 @@ DEFAULT_ULTRASAM_CHECKPOINT_URL = (
 DEFAULT_ULTRASAM_PROMPT_CONFIGS = {
     "bbox": "configs/UltraSAM/UltraSAM_full/UltraSAM_box_refine.py",
     "point": "configs/UltraSAM/UltraSAM_full/UltraSAM_point_refine.py",
+    "point_bbox": "configs/UltraSAM/UltraSAM_full/UltraSAM_box_refine.py",
 }
 DEFAULT_ULTRASAM_CONFIG = DEFAULT_ULTRASAM_PROMPT_CONFIGS["bbox"]
 
@@ -442,7 +443,7 @@ def export_decoder_to_coco(
 
         image_id = len(images) + 1
         height, width = mask.shape[:2]
-        if prompt_type == "bbox":
+        if prompt_type in {"bbox", "point_bbox"}:
             bboxes = perturb_bboxes(
                 bboxes,
                 scale_factor=bbox_scale_factor,
@@ -451,14 +452,15 @@ def export_decoder_to_coco(
                 width=width,
                 rng=rng,
             )
-            prompt_points = None
-        else:
+        if prompt_type in {"point", "point_bbox"}:
             prompt_points = point_prompts_from_masks(
                 component_masks,
                 jitter_fraction=point_prompt_jitter_fraction,
                 seed=seed,
                 image_id=image_id,
             )
+        else:
+            prompt_points = None
         image_uint8 = ensure_three_channels(normalize_to_uint8(sample.image))
         raw_image_path = raw_image_path_from_sample(sample)
         if raw_image_path is None:
@@ -469,20 +471,22 @@ def export_decoder_to_coco(
             file_name = str(raw_image_path)
 
         for component_mask, bbox in zip(component_masks, bboxes):
-            ann_id = len(annotations) + 1
-            x0, y0, x1, y1 = [int(v) for v in bbox.tolist()]
-            coco_bbox = [x0, y0, x1 - x0 + 1, y1 - y0 + 1]
-            annotations.append(
-                {
-                    "id": ann_id,
-                    "image_id": image_id,
-                    "category_id": 1,
-                    "bbox": coco_bbox,
-                    "area": int(component_mask.sum()),
-                    "iscrowd": 0,
-                    "segmentation": mask_to_coco_rle(component_mask),
-                }
-            )
+            repeat_count = 2 if prompt_type == "point_bbox" else 1
+            for _prompt_repeat in range(repeat_count):
+                ann_id = len(annotations) + 1
+                x0, y0, x1, y1 = [int(v) for v in bbox.tolist()]
+                coco_bbox = [x0, y0, x1 - x0 + 1, y1 - y0 + 1]
+                annotations.append(
+                    {
+                        "id": ann_id,
+                        "image_id": image_id,
+                        "category_id": 1,
+                        "bbox": coco_bbox,
+                        "area": int(component_mask.sum()),
+                        "iscrowd": 0,
+                        "segmentation": mask_to_coco_rle(component_mask),
+                    }
+                )
         images.append(
             {
                 "id": image_id,
@@ -505,6 +509,8 @@ def export_decoder_to_coco(
                 "mask": mask,
                 "bbox": record_bbox,
                 "prompt_points": prompt_points,
+                "num_components": len(bboxes),
+                "paired_point_bbox": prompt_type == "point_bbox",
             }
         )
 
@@ -563,7 +569,7 @@ def load_existing_coco_export_records(
 
         image_id = len(records) + 1
         height, width = mask.shape[:2]
-        if prompt_type == "bbox":
+        if prompt_type in {"bbox", "point_bbox"}:
             bboxes = perturb_bboxes(
                 bboxes,
                 scale_factor=bbox_scale_factor,
@@ -572,14 +578,15 @@ def load_existing_coco_export_records(
                 width=width,
                 rng=rng,
             )
-            prompt_points = None
-        else:
+        if prompt_type in {"point", "point_bbox"}:
             prompt_points = point_prompts_from_masks(
                 component_masks,
                 jitter_fraction=point_prompt_jitter_fraction,
                 seed=seed,
                 image_id=image_id,
             )
+        else:
+            prompt_points = None
         if image_id > len(images):
             return None
         image_info = images[image_id - 1]
@@ -596,7 +603,9 @@ def load_existing_coco_export_records(
         expected_coco_bboxes = []
         for bbox in bboxes:
             x0, y0, x1, y1 = [int(v) for v in bbox.tolist()]
-            expected_coco_bboxes.append([x0, y0, x1 - x0 + 1, y1 - y0 + 1])
+            coco_bbox = [x0, y0, x1 - x0 + 1, y1 - y0 + 1]
+            repeat_count = 2 if prompt_type == "point_bbox" else 1
+            expected_coco_bboxes.extend([coco_bbox] * repeat_count)
         existing_annotations = annotations_by_image_id.get(image_id, [])
         existing_coco_bboxes = [annotation.get("bbox") for annotation in existing_annotations]
         if existing_coco_bboxes != expected_coco_bboxes:
@@ -616,6 +625,8 @@ def load_existing_coco_export_records(
                 "mask": mask,
                 "bbox": record_bbox,
                 "prompt_points": prompt_points,
+                "num_components": len(bboxes),
+                "paired_point_bbox": prompt_type == "point_bbox",
             }
         )
 
@@ -710,6 +721,48 @@ def register_point_jitter_transform() -> None:
             return results
 
 
+def register_paired_point_bbox_prompt_type_transform() -> None:
+    from mmcv.transforms import BaseTransform
+    from mmdet.registry import TRANSFORMS
+    from endosam.datasets.transforms.custom_pipeline import PromptType
+
+    transform_name = "UltraSAMPairedPointBoxPromptType"
+    if transform_name in TRANSFORMS.module_dict:
+        return
+
+    @TRANSFORMS.register_module(name=transform_name)
+    class UltraSAMPairedPointBoxPromptType(BaseTransform):
+        """Assign alternating point and box prompt types to duplicated GT prompts."""
+
+        def transform(self, results):
+            n_boxes, _, _ = results["boxes"].shape
+            if n_boxes % 2 != 0:
+                raise ValueError(
+                    "point_bbox prompting expects duplicated annotations: "
+                    f"got {n_boxes} prompt boxes, expected an even count."
+                )
+            prompt_array = np.empty(n_boxes, dtype=np.int64)
+            prompt_array[0::2] = PromptType.POINT.value
+            prompt_array[1::2] = PromptType.BOX.value
+            results["prompt_types"] = prompt_array
+            return results
+
+
+def configure_point_bbox_prompt(cfg: Any) -> None:
+    pipeline = cfg.test_dataloader.dataset.pipeline
+    for idx, step in enumerate(pipeline):
+        if step.get("type") == "GetPointFromBox":
+            pipeline[idx] = {
+                "type": "GetPointFromMask",
+                "number_of_points": [1],
+                "test": True,
+                "normalize": False,
+                "get_center_point": True,
+            }
+        if step.get("type") == "GetPromptType":
+            pipeline[idx] = {"type": "UltraSAMPairedPointBoxPromptType"}
+
+
 def configure_point_prompt_jitter(cfg: Any, jitter_fraction: float, seed: int | None) -> None:
     if jitter_fraction == 0.0:
         return
@@ -759,6 +812,7 @@ def load_ultrasam_model(
         import_modules_from_strings(**custom_imports)
     apply_ultrasam_runtime_patches()
     register_point_jitter_transform()
+    register_paired_point_bbox_prompt_type_transform()
 
     model = MODELS.build(cfg.model)
     # PyTorch >=2.6 defaults torch.load to weights_only=True, which rejects the
@@ -787,6 +841,7 @@ def build_ultrasam_dataloader(
     ann_path: Path,
     batch_size: int,
     num_workers: int,
+    prompt_type: str,
     point_prompt_jitter_fraction: float = 0.0,
     seed: int | None = None,
 ):
@@ -805,6 +860,8 @@ def build_ultrasam_dataloader(
     cfg.test_dataloader.dataset.ann_file = ann_path.name
     cfg.test_dataloader.dataset.data_prefix = {"img": ""}
     cfg.test_dataloader.dataset.test_mode = True
+    if prompt_type == "point_bbox":
+        configure_point_bbox_prompt(cfg)
     configure_point_prompt_jitter(cfg, point_prompt_jitter_fraction, seed)
     if "test_evaluator" in cfg and hasattr(cfg.test_evaluator, "ann_file"):
         cfg.test_evaluator.ann_file = str(ann_path)
@@ -892,6 +949,19 @@ def iter_ultrasam_predictions(model: Any, dataloader: Any, records_by_image_id: 
                 tensor_mask_to_numpy(pred_instances.masks[mask_idx], record["mask"].shape)
                 for mask_idx in range(len(pred_instances))
             ]
+            if record.get("paired_point_bbox"):
+                num_components = int(record.get("num_components") or 0)
+                paired_masks = []
+                for component_idx in range(num_components):
+                    point_idx = component_idx * 2
+                    box_idx = point_idx + 1
+                    component_mask = np.zeros_like(record["mask"], dtype=np.uint8)
+                    if point_idx < len(per_box_masks):
+                        component_mask |= per_box_masks[point_idx]
+                    if box_idx < len(per_box_masks):
+                        component_mask |= per_box_masks[box_idx]
+                    paired_masks.append(component_mask)
+                per_box_masks = paired_masks
             pred_mask = np.zeros_like(record["mask"], dtype=np.uint8)
             for box_mask in per_box_masks:
                 pred_mask |= box_mask
@@ -986,6 +1056,7 @@ def run_ultrasam_on_samples(
             ann_path=ann_path,
             batch_size=batch_size,
             num_workers=num_workers,
+            prompt_type=prompt_type,
             point_prompt_jitter_fraction=point_prompt_jitter_fraction,
             seed=seed,
         )
@@ -1056,9 +1127,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--prompt-type",
-        choices=("bbox", "point"),
+        choices=("bbox", "point", "point_bbox"),
         default="bbox",
-        help="UltraSAM prompt type. 'bbox' uses box prompts; 'point' uses UltraSAM's point-prompt pipeline.",
+        help=(
+            "UltraSAM prompt type. 'bbox' uses box prompts; 'point' uses UltraSAM's "
+            "point-prompt pipeline; 'point_bbox' evaluates paired point and box prompts."
+        ),
     )
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument(
@@ -1245,6 +1319,7 @@ def main() -> None:
             ann_path=loader_ann_path,
             batch_size=args.batch_size,
             num_workers=args.num_workers,
+            prompt_type=args.prompt_type,
             point_prompt_jitter_fraction=args.point_prompt_jitter_fraction,
             seed=args.seed,
         )
@@ -1258,7 +1333,11 @@ def main() -> None:
                 output_dir / "visualizations",
                 source_vis_indices,
                 model_label="UltraSAM",
-                prompt_label="Point Prompts" if args.prompt_type == "point" else "Box Prompts",
+                prompt_label={
+                    "point": "Point Prompts",
+                    "bbox": "Box Prompts",
+                    "point_bbox": "Point + Box Prompts",
+                }[args.prompt_type],
             )
 
         # Stream per-image results so a crash keeps the finished samples. Write the CSV row before
@@ -1333,8 +1412,8 @@ def main() -> None:
                         bbox=bbox,
                         dice=metrics["dice"],
                         iou=metrics["iou"],
-                        prompt_bboxes=bbox if args.prompt_type == "bbox" else None,
-                        prompt_points=record.get("prompt_points") if args.prompt_type == "point" else None,
+                        prompt_bboxes=bbox if args.prompt_type in {"bbox", "point_bbox"} else None,
+                        prompt_points=record.get("prompt_points") if args.prompt_type in {"point", "point_bbox"} else None,
                     )
 
                 print_progress(

@@ -21,7 +21,6 @@ from analysis.compare_models_same_dataset import (
     read_metrics,
 )
 
-
 DEFAULT_DATASETS = (
     "aulid",
     "blusg",
@@ -81,7 +80,7 @@ EXPERIMENT_CONFIG = {
         "output_prefix": "ultrasam_point_prompt_robustness",
     },
 }
-COMBINED_EXPERIMENTS = ("scale", "translation", "point")
+COMBINED_EXPERIMENTS = ("scale", "translation")
 
 
 def split_csv(value: str) -> tuple[str, ...]:
@@ -291,6 +290,14 @@ def dataset_color_map(datasets: list[str]) -> dict[str, str]:
     return color_by_dataset
 
 
+def jitter_dataset_label(dataset: str) -> str:
+    if dataset == "tnsc2020":
+        return "TNSC"
+    if dataset == "ultrabones100k":
+        return "UltraBones100k"
+    return display_dataset_label(dataset)
+
+
 def plot_metric_lines(
     *,
     rows: list[dict[str, Any]],
@@ -333,7 +340,7 @@ def plot_metric_lines(
                 linewidth=1.2,
                 markersize=3.5,
                 color=colors[dataset],
-                label=display_dataset_label(dataset),
+                label=jitter_dataset_label(dataset),
             )
 
         axis.axvline(baseline_value, color="#777777", linestyle="--", linewidth=0.8, zorder=0)
@@ -412,6 +419,200 @@ def add_shared_legend(fig: Any, axes_flat: Any) -> None:
     )
 
 
+def add_line_plots_legend(fig: Any, axes_flat: Any, *, y_anchor: float = -0.05) -> None:
+    from matplotlib.lines import Line2D
+
+    seen: set[str] = set()
+    legend_items = []
+    baseline_label = "Baseline"
+    for axis in axes_flat:
+        handles, labels = axis.get_legend_handles_labels()
+        for handle, label in zip(handles, labels):
+            if not label or label == baseline_label or label in seen:
+                continue
+            seen.add(label)
+            legend_items.append((handle, label))
+
+    legend_items.append(
+        (
+            Line2D([0], [0], color="#777777", linestyle="--", linewidth=0.8),
+            baseline_label,
+        )
+    )
+    if not legend_items:
+        return
+
+    line_left = min(axis.get_position().x0 for axis in axes_flat)
+    line_right = max(axis.get_position().x1 for axis in axes_flat)
+    handles = [handle for handle, _label in legend_items]
+    labels = [label for _handle, label in legend_items]
+    fig.legend(
+        handles,
+        labels,
+        frameon=False,
+        loc="lower center",
+        bbox_to_anchor=((line_left + line_right) / 2.0, y_anchor),
+        ncol=min(5, len(legend_items)),
+    )
+
+
+def str2bool(value: str) -> bool:
+    return value.strip().lower() == "true"
+
+
+def optional_float(value: str) -> float | None:
+    if not value.strip():
+        return None
+    return float(value)
+
+
+def prepare_eda_heatmap_data(
+    *,
+    results_dir: Path,
+    eda_dir: Path,
+    model: str,
+    protocol: str,
+    datasets: tuple[str, ...],
+    result_metric: str,
+    eda_metrics_arg: str,
+    eda_labels_arg: str,
+    result_label: str,
+    correlation: str,
+    per_image: bool,
+    dice_threshold: float | None,
+    ultrabones_min_solidity: float | None,
+    filter_tnsc2020_target_bbox_one: bool,
+    tnsc2020_min_aspect_ratio: float | None,
+) -> tuple[dict[str, Any], tuple[str, ...], dict[str, str], str]:
+    from analysis import quantitative_results_analysis as qra
+
+    available_eda_metrics = qra.discover_eda_metrics(eda_dir, list(datasets))
+    if not available_eda_metrics:
+        raise SystemExit(f"No EDA sample_stats.json box metrics found under {eda_dir}.")
+    eda_metrics = qra.parse_csv_arg(eda_metrics_arg, available_eda_metrics, "EDA metric")
+    plot_labels = {
+        result_metric: result_label,
+        **qra.labels_for(eda_metrics, eda_labels_arg),
+    }
+
+    data_by_dataset: dict[str, Any] = {}
+    for dataset in datasets:
+        try:
+            data_by_dataset[dataset] = qra.load_dataset_points(
+                results_dir,
+                eda_dir,
+                model,
+                dataset,
+                protocol,
+                eda_metrics,
+                tuple(
+                    metric
+                    for condition, metric in (
+                        (dataset == "ultrabones100k" and ultrabones_min_solidity is not None, "solidity"),
+                        (dataset == "tnsc2020" and filter_tnsc2020_target_bbox_one, "target_bbox_area_ratio"),
+                        (dataset == "tnsc2020" and tnsc2020_min_aspect_ratio is not None, "aspect_ratio_feret"),
+                    )
+                    if condition
+                ),
+                (),
+            )
+        except FileNotFoundError as error:
+            print(f"Skipping EDA heatmap dataset {dataset}: {error}", file=sys.stderr)
+
+    if not data_by_dataset:
+        raise SystemExit("No heatmap datasets had both per_box_metrics.json and EDA sample_stats.json files.")
+
+    data_by_dataset = qra.filter_ultrabones_solidity(data_by_dataset, ultrabones_min_solidity)
+    data_by_dataset = qra.filter_tnsc2020_full_target_bbox(data_by_dataset, filter_tnsc2020_target_bbox_one)
+    data_by_dataset = qra.filter_tnsc2020_aspect_ratio(data_by_dataset, tnsc2020_min_aspect_ratio)
+    if per_image:
+        data_by_dataset = {
+            dataset: qra.aggregate_per_image(df, (*eda_metrics, result_metric))
+            for dataset, df in data_by_dataset.items()
+        }
+    data_by_dataset = qra.filter_by_dice_threshold(
+        data_by_dataset,
+        dice_threshold,
+        enabled=result_metric == "dice",
+    )
+    if not data_by_dataset:
+        raise SystemExit("No heatmap datasets had rows remaining after filtering.")
+
+    return data_by_dataset, eda_metrics, plot_labels, qra.effective_correlation(correlation, False)
+
+
+def draw_dataset_heatmap_axis(
+    *,
+    axis: Any,
+    plt: Any,
+    data_by_dataset: dict[str, Any],
+    y_metric: str,
+    eda_metrics: tuple[str, ...],
+    method: str,
+    plot_labels: dict[str, str],
+) -> Any:
+    from analysis import quantitative_results_analysis as qra
+
+    dataset_labels = [jitter_dataset_label(dataset) for dataset in data_by_dataset]
+    matrix = [
+        [
+            qra.corr_value(qra.finite_points(df, x_metric, y_metric, False), x_metric, y_metric, method)
+            for df in data_by_dataset.values()
+        ]
+        for x_metric in eda_metrics
+    ]
+    image = axis.imshow(matrix, cmap="RdBu_r", vmin=-1.0, vmax=1.0, aspect="auto")
+    axis.set_title("Target shape characteristics")
+    axis.set_yticks(range(len(eda_metrics)), [qra.plot_label(metric, plot_labels) for metric in eda_metrics])
+    axis.set_xticks(
+        range(len(dataset_labels)),
+        dataset_labels,
+        rotation=45,
+        ha="right",
+        rotation_mode="anchor",
+    )
+    axis.tick_params(axis="x", bottom=False)
+    axis.grid(False)
+    for row in range(len(eda_metrics)):
+        for col in range(len(dataset_labels)):
+            value = matrix[row][col]
+            if not math.isnan(value):
+                axis.text(
+                    col,
+                    row,
+                    f"{value:.2f}",
+                    ha="center",
+                    va="center",
+                    fontsize=qra.HEATMAP_CELL_FONTSIZE,
+                    color=qra.heat_text_color(plt, value),
+                )
+    return image
+
+
+def add_bottom_panel_labels(
+    fig: Any,
+    axes: tuple[Any, ...],
+    labels: tuple[str, ...],
+    *,
+    y_anchor: float,
+    fontsize: float = 14,
+) -> None:
+    for axis, label in zip(axes, labels):
+        position = axis.get_position()
+        fig.text(
+            (position.x0 + position.x1) / 2.0,
+            y_anchor,
+            label,
+            ha="center",
+            va="top",
+            fontsize=fontsize,
+        )
+
+
+def correlation_symbol_label(method: str) -> str:
+    return "ρ" if method == "spearman" else "r"
+
+
 def plot_combined_metric_pair(
     *,
     rows: list[dict[str, Any]],
@@ -419,22 +620,33 @@ def plot_combined_metric_pair(
     column_kind: str,
     experiments: tuple[str, ...],
     output_path: Path,
+    heatmap_data: dict[str, Any],
+    heatmap_eda_metrics: tuple[str, ...],
+    heatmap_plot_labels: dict[str, str],
+    heatmap_correlation: str,
 ) -> None:
     configure_matplotlib()
     import matplotlib.pyplot as plt
+    from analysis import quantitative_results_analysis as qra
 
     datasets = order_datasets({row["dataset"] for row in rows})
     colors = dataset_color_map(datasets)
     fig, axes = plt.subplots(
         1,
-        len(experiments),
-        figsize=(min(8.5, 2.5 * len(experiments)), 2),
-        sharey=True,
+        len(experiments) + 2,
+        figsize=(8.5, 2.3),
+        width_ratios=[1.0, 1.0, 0.1, 1],
+        gridspec_kw={"wspace": 0.25},
         squeeze=False,
     )
     axes_flat = axes.ravel()
+    line_axes = axes_flat[: len(experiments)]
+    spacer_axis = axes_flat[len(experiments)]
+    heatmap_axis = axes_flat[len(experiments) + 1]
+    spacer_axis.remove()
+    line_y_values: list[float] = []
 
-    for axis, experiment in zip(axes_flat, experiments):
+    for axis, experiment in zip(line_axes, experiments):
         config = EXPERIMENT_CONFIG[experiment]
         experiment_rows = [row for row in rows if row["experiment"] == experiment]
 
@@ -448,6 +660,7 @@ def plot_combined_metric_pair(
             x_values = [float(row["jitter_value"]) for row in dataset_rows]
             mean_column = f"{metric}_mean" if column_kind == "raw" else f"{metric}_delta_mean"
             y_values = [float(row[mean_column]) * 100.0 for row in dataset_rows]
+            line_y_values.extend(value for value in y_values if math.isfinite(value))
             axis.plot(
                 x_values,
                 y_values,
@@ -455,7 +668,7 @@ def plot_combined_metric_pair(
                 linewidth=1,
                 markersize=3,
                 color=colors[dataset],
-                label=display_dataset_label(dataset),
+                label=jitter_dataset_label(dataset),
             )
 
         axis.axvline(
@@ -469,24 +682,58 @@ def plot_combined_metric_pair(
             axis.axhline(0.0, color="#777777", linestyle="--", linewidth=0.8, zorder=0)
         axis.set_title(str(config["title"]))
         axis.set_xlabel(str(config["x_label"]))
-        if column_kind == "raw" and metric in BOUNDED_METRICS:
-            axis.set_ylim(0.0, 100.0)
         axis.grid(alpha=0.35)
+
+    if column_kind == "raw" and metric in BOUNDED_METRICS:
+        y_limits = (0.0, 100.0)
+    elif line_y_values:
+        y_min = min(line_y_values)
+        y_max = max(line_y_values)
+        if column_kind == "delta":
+            y_min = min(y_min, 0.0)
+            y_max = max(y_max, 0.0)
+        padding = max((y_max - y_min) * 0.05, 0.5)
+        y_limits = (y_min - padding, y_max + padding)
+    else:
+        y_limits = None
+
+    if y_limits is not None:
+        for axis in line_axes:
+            axis.set_ylim(*y_limits)
 
     ylabel = (
         f"{metric_label(metric)} (%)"
         if column_kind == "raw"
         else rf"$\Delta$ {metric_label(metric)} (%)"
     )
-    axes_flat[0].set_ylabel(ylabel)
-    add_shared_legend(fig, axes_flat)
-    fig.tight_layout()
+    line_axes[0].set_ylabel(ylabel)
+
+    image = draw_dataset_heatmap_axis(
+        axis=heatmap_axis,
+        plt=plt,
+        data_by_dataset=heatmap_data,
+        y_metric="dice",
+        eda_metrics=heatmap_eda_metrics,
+        method=heatmap_correlation,
+        plot_labels=heatmap_plot_labels,
+    )
+    fig.colorbar(
+        image,
+        ax=heatmap_axis,
+        label=correlation_symbol_label(heatmap_correlation),
+        shrink=0.82,
+        pad=0.02,
+    )
+    fig.subplots_adjust(left=0.07, right=0.95, top=0.86, bottom=0.35, wspace=0.16)
+    add_line_plots_legend(fig, line_axes, y_anchor=-0.07)
+    add_bottom_panel_labels(fig, (*line_axes, heatmap_axis), ("a)", "b)", "c)"), y_anchor=-0.1, fontsize=14)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
 
 
 def parse_args() -> argparse.Namespace:
+    correlation_methods = ("pearson", "log_pearson", "spearman")
     parser = argparse.ArgumentParser(description="Analyze UltraSAM prompt jitter experiments.")
     parser.add_argument(
         "--jitter-results-dir",
@@ -505,6 +752,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--point-jitters", type=parse_values, default=parse_values("0,0.025,0.05,0.075,0.10,0.125,0.15"))
     parser.add_argument("--metrics", type=parse_metrics_arg, default=parse_metrics_arg("dice,iou"))
     parser.add_argument("--plot-format", default="png", choices=("png", "svg", "pdf"))
+    parser.add_argument("--heatmap-results-dir", type=Path, default=ROOT_DIR / "results")
+    parser.add_argument("--heatmap-eda-dir", type=Path, default=ROOT_DIR / "analysis" / "eda")
+    parser.add_argument("--heatmap-model", default="ultrasam")
+    parser.add_argument("--heatmap-protocol", default="gt_bbox", choices=("gt_bbox", "jitter_bbox"))
+    parser.add_argument(
+        "--heatmap-datasets",
+        default="mmotu,busbra,gist514,tnsc2020,ultrabones100k,umud",
+        help="Comma-separated datasets for the Dice-vs-EDA heatmap in the combined figure.",
+    )
+    parser.add_argument(
+        "--heatmap-eda-metrics",
+        default="target_area_fraction,target_bbox_area_ratio,solidity,circularity,aspect_ratio_feret",
+    )
+    parser.add_argument(
+        "--heatmap-eda-labels",
+        default="Target/image,Target/bbox,Solidity,Circularity,Aspect ratio",
+    )
+    parser.add_argument("--heatmap-result-label", default="Dice")
+    parser.add_argument("--heatmap-correlation", default="spearman", choices=correlation_methods)
+    parser.add_argument("--heatmap-per-image", type=str2bool, default=False)
+    parser.add_argument("--heatmap-dice-threshold", type=optional_float, default=1.0)
+    parser.add_argument("--heatmap-ultrabones-min-solidity", type=optional_float, default=0.2)
+    parser.add_argument("--heatmap-filter-tnsc2020-target-bbox-one", type=str2bool, default=True)
+    parser.add_argument("--heatmap-tnsc2020-min-aspect-ratio", type=optional_float, default=0.2)
     return parser.parse_args()
 
 
@@ -549,6 +820,23 @@ def main() -> None:
     write_summary_csv(summary_path, all_rows, args.metrics)
     written_plots: list[Path] = []
     if args.experiment == "both":
+        heatmap_data, heatmap_eda_metrics, heatmap_plot_labels, heatmap_correlation = prepare_eda_heatmap_data(
+            results_dir=args.heatmap_results_dir,
+            eda_dir=args.heatmap_eda_dir,
+            model=args.heatmap_model,
+            protocol=args.heatmap_protocol,
+            datasets=split_csv(args.heatmap_datasets),
+            result_metric="dice",
+            eda_metrics_arg=args.heatmap_eda_metrics,
+            eda_labels_arg=args.heatmap_eda_labels,
+            result_label=args.heatmap_result_label,
+            correlation=args.heatmap_correlation,
+            per_image=args.heatmap_per_image,
+            dice_threshold=args.heatmap_dice_threshold,
+            ultrabones_min_solidity=args.heatmap_ultrabones_min_solidity,
+            filter_tnsc2020_target_bbox_one=args.heatmap_filter_tnsc2020_target_bbox_one,
+            tnsc2020_min_aspect_ratio=args.heatmap_tnsc2020_min_aspect_ratio,
+        )
         for metric in args.metrics:
             raw_plot_path = args.output_dir / f"{output_prefix}_{metric}_raw.{args.plot_format}"
             delta_plot_path = args.output_dir / f"{output_prefix}_{metric}_delta.{args.plot_format}"
@@ -558,6 +846,10 @@ def main() -> None:
                 column_kind="raw",
                 experiments=experiments,
                 output_path=raw_plot_path,
+                heatmap_data=heatmap_data,
+                heatmap_eda_metrics=heatmap_eda_metrics,
+                heatmap_plot_labels=heatmap_plot_labels,
+                heatmap_correlation=heatmap_correlation,
             )
             plot_combined_metric_pair(
                 rows=all_rows,
@@ -565,6 +857,10 @@ def main() -> None:
                 column_kind="delta",
                 experiments=experiments,
                 output_path=delta_plot_path,
+                heatmap_data=heatmap_data,
+                heatmap_eda_metrics=heatmap_eda_metrics,
+                heatmap_plot_labels=heatmap_plot_labels,
+                heatmap_correlation=heatmap_correlation,
             )
             written_plots.extend([raw_plot_path, delta_plot_path])
     else:
